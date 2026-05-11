@@ -1,6 +1,8 @@
-# Watch - سیستم مانیتورینگ و اسکن امنیتی Bug Bounty
+# Watch - Bug Bounty Monitoring & Security Scanner
 
-سیستم خودکار کشف، مانیتورینگ و اسکن امنیتی زیردامنه‌ها برای برنامه‌های Bug Bounty.
+سیستم خودکار کشف، مانیتورینگ و اسکن امنیتی زیردامنه‌ها برای برنامه‌های Bug Bounty
+
+---
 
 ## 📋 فهرست مطالب
 
@@ -13,24 +15,26 @@
 - [نحوه استفاده](#نحوه-استفاده)
 - [API](#api)
 - [ساختار پروژه](#ساختار-پروژه)
+- [عیب‌یابی](#عیبیابی)
 
 ---
 
 ## معرفی
 
-**Watch** یک پلتفرم جامع برای مانیتورینگ خودکار برنامه‌های Bug Bounty است که شامل موارد زیر می‌شود:
+**Watch** یک پلتفرم جامع برای مانیتورینگ خودکار برنامه‌های Bug Bounty است که شامل:
 
-- **Enumeration**: کشف زیردامنه‌ها از منابع مختلف (Subfinder, crt.sh, Wayback Machine, AbuseIPDB)
-- **DNS Resolution**: رزولو کردن و شناسایی زیردامنه‌های زنده با قابلیت brute-force
-- **HTTP Scanning**: اسکن HTTP/HTTPS با httpx و استخراج اطلاعات (title, status, headers, favicon)
-- **Vulnerability Scanning**: اسکن آسیب‌پذیری با Nuclei
-- **Notification System**: اطلاع‌رسانی از طریق Telegram
-- **REST API**: دسترسی به داده‌ها از طریق Flask API
+- 🔍 **Enumeration** - کشف زیردامنه‌ها از منابع مختلف
+- 🌐 **DNS Resolution** - رزولو و شناسایی زیردامنه‌های زنده
+- 🌍 **HTTP Scanning** - اسکن HTTP/HTTPS با httpx
+- 🔐 **Vulnerability Scanning** - اسکن آسیب‌پذیری با Nuclei
+- 📢 **Notification System** - اطلاع‌رسانی تلگرام
+- 🔄 **REST API** - دسترسی به داده‌ها
 
 ---
 
 ## معماری سیستم
 
+```
 ┌─────────────────┐
 │  Programs JSON  │ ← تعریف برنامه‌ها و scope
 └────────┬────────┘
@@ -44,8 +48,6 @@
          ▼
 ┌─────────────────┐
 │ watch_enum_all  │ ← کشف زیردامنه‌ها
-│  (subfinder,    │   (Subfinder, crt.sh,
-│   crtsh, etc)   │    Wayback, AbuseIPDB)
 └────────┬────────┘
          │
          ▼
@@ -60,19 +62,18 @@
          │
          ▼
 ┌─────────────────┐
-│watch_nuclei_all │ ← اسکن آسیب‌پذیری (اختیاری)
+│watch_nuclei_all │ ← اسکن آسیب‌پذیری
 └─────────────────┘
          │
          ▼
     ┌─────────┐
-    │ MongoDB │ ← ذخیره‌سازی داده
+    │ MongoDB │ ← ذخیره‌سازی
     └─────────┘
          │
          ▼
     ┌─────────┐
-    │Flask API│ ← دسترسی به داده‌ها
+    │Flask API│ ← دسترسی به داده
     └─────────┘
-
 
 ---
 
@@ -80,7 +81,7 @@
 
 ### ابزارهای خارجی
 
-```bash
+bash
 # Subfinder
 go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 
@@ -90,11 +91,9 @@ go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
 # Nuclei (اختیاری)
 go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
 
-# massdns (برای DNS brute-force)
+# massdns
 git clone https://github.com/blechschmidt/massdns.git
-cd massdns && make
-sudo make install
-```
+cd massdns && make && sudo make install
 
 ### نرم‌افزارها
 
@@ -106,96 +105,55 @@ sudo make install
 
 ## نصب و راه‌اندازی
 
-### 1. کلون کردن پروژه
+### 1. کلون پروژه
 
-```bash
-git clone <repository-url>
+bash
+git clone https://github.com/pouyaGit/watch.git
 cd watch
-```
 
-### 2. نصب وابستگی‌های Python
+### 2. نصب وابستگی‌ها
 
-```bash
+bash
 pip install -r requirements.txt
-```
 
-**محتویات `requirements.txt`:**
-flask
-mongoengine
-python-telegram-bot
-tldextract
-psycopg2-binary
+### 3. تنظیم متغیرهای محیطی
 
+bash
+# کپی فایل نمونه
+cp .env.example .env
 
-### 3. راه‌اندازی MongoDB
+# ویرایش و تنظیم مقادیر
+nano .env
 
-#### با Docker Compose (توصیه می‌شود):
+**محتویات `.env`:**
 
-```bash
+bash
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_CHAT_ID=your_chat_id_here
+HTTPX_BIN=/root/go/bin/httpx
+WATCH_DIR=/opt/watch
+
+### 4. راه‌اندازی MongoDB
+
+bash
+cd database
 docker-compose up -d
-```
 
-این دستور MongoDB را روی `127.0.0.1:27017` اجرا می‌کند و داده‌ها در volume به نام `watchtower-data` ذخیره می‌شوند.
+### 5. اجرایی کردن اسکریپت‌ها
 
-#### نصب مستقیم:
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install mongodb
-
-# macOS
-brew install mongodb-community
-```
-
-### 4. اجرایی کردن اسکریپت‌ها
-
-```bash
+bash
 chmod +x watch.sh
-chmod +x programs/*.py
-chmod +x enum/*.py
-chmod +x ns/*.py
-chmod +x http/*.py
-chmod +x nuclei/*.py
-```
-
-### 5. تنظیم Aliases (اختیاری)
-
-محتویات `README.txt` را به `~/.bashrc` یا `~/.zshrc` اضافه کنید:
-
-```bash
-alias watch_sync_programs='python3 /opt/watch/programs/watch_sync_programs.py'
-alias watch_subfinder='python3 /opt/watch/enum/watch_subfinder.py'
-alias watch_crtsh='python3 /opt/watch/enum/watch_crtsh.py'
-alias watch_abuseipdb='python3 /opt/watch/enum/watch_abuseipdb.py'
-alias watch_wayback='python3 /opt/watch/enum/watch_wayback.py'
-alias watch_enum_all='python3 /opt/watch/enum/watch_enum_all.py'
-alias watch_ns='python3 /opt/watch/ns/watch_ns.py'
-alias watch_ns_all='python3 /opt/watch/ns/watch_ns_all.py'
-alias watch_httpx='python3 /opt/watch/http/watch_http_all.py'
-alias watch_nuclei_all='python3 /opt/watch/nuclei/watch_nuclei_all.py'
-```
-
-**توجه:** مسیر `/opt/watch/` را با مسیر واقعی پروژه خود جایگزین کنید.
+chmod +x programs/*.py enum/*.py ns/*.py http/*.py nuclei/*.py
 
 ---
 
 ## پیکربندی
 
-### 1. تنظیمات اصلی (`config.py`)
+### تعریف برنامه‌ها
 
-```python
-WATCH_DIR = "/opt/watch"
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # توکن ربات تلگرام
-HTTPX_BIN = "/root/go/bin/httpx"            # مسیر باینری httpx
-```
+فایل JSON در `programs/` ایجاد کنید:
 
-### 2. تعریف برنامه‌ها
-
-فایل‌های JSON در دایرکتوری `programs/` ایجاد کنید:
-
-**مثال: `programs/example.json`**
-
-```json
+json
 {
   "program_name": "example",
   "scopes": [
@@ -203,8 +161,7 @@ HTTPX_BIN = "/root/go/bin/httpx"            # مسیر باینری httpx
     "*.example.com"
   ],
   "ooscopes": [
-    "test.example.com",
-    "dev.example.com"
+    "test.example.com"
   ],
   "config": {
     "telegram_chat_id": "-1001234567890",
@@ -212,34 +169,17 @@ HTTPX_BIN = "/root/go/bin/httpx"            # مسیر باینری httpx
     "notify_new_http": true
   }
 }
-```
 
-**فیلدها:**
-- `program_name`: نام یکتای برنامه
-- `scopes`: لیست دامنه‌های در محدوده
-- `ooscopes`: لیست دامنه‌های خارج از محدوده (Out of Scope)
-- `config.telegram_chat_id`: شناسه چت تلگرام برای اطلاع‌رسانی
-- `config.notify_new_subdomain`: فعال‌سازی نوتیفیکیشن زیردامنه جدید
-- `config.notify_new_http`: فعال‌سازی نوتیفیکیشن HTTP جدید
+### تنظیمات Nuclei
 
-### 3. تنظیمات Nuclei (`nuclei/public-config.yaml`)
+فایل `nuclei/public-config.yaml`:
 
-```yaml
-# HTTP Headers
+yaml
 header:
-  - 'X-BugBounty-hacker: Hackerone'
-  - 'User-Agent: Mozilla/5.0 ...'
+  - 'X-BugBounty-hacker: YourHandle'
 
-# Performance
 concurrency: 25
 rate-limit: 100
-
-# Template filtering
-exclude-tags:
-  - technologies
-  - tech
-  - ssl
-  - dns
 
 severity:
   - critical
@@ -247,404 +187,203 @@ severity:
   - medium
   - low
 
-# Exclude specific templates
-exclude-templates:
-  - wordpress/wordpress-user-enumeration.yaml
-  - gitlab/gitlab-public-repos.yaml
-  # ... (لیست کامل در فایل)
-```
+exclude-tags:
+  - technologies
+  - ssl
 
-### 4. فایل Resolvers (`resolvers.txt`)
-
-لیست DNS resolverها برای massdns:
-
-8.8.8.8
-1.1.1.1
-9.9.9.9
-208.67.222.222
-
+---
 
 ## امکانات
 
-### 🔍 Enumeration (کشف زیردامنه)
+### 🔍 Enumeration
 
-#### 1. Subfinder
-- استفاده از منابع عمومی (Certificate Transparency, DNS databases)
-- پشتیبانی از API keyها برای منابع پریمیوم
+کشف زیردامنه از منابع مختلف:
 
-#### 2. crt.sh
-- جستجوی Certificate Transparency logs
-- کشف زیردامنه‌های صادر شده با SSL
+- **Subfinder** - منابع عمومی و API
+- **crt.sh** - Certificate Transparency
+- **Wayback Machine** - آرشیو وب
+- **AbuseIPDB** - گزارش‌های سوء استفاده
 
-#### 3. Wayback Machine
-- استخراج زیردامنه‌ها از آرشیو وب
-- کشف زیردامنه‌های قدیمی و حذف شده
-
-#### 4. AbuseIPDB
-- کشف زیردامنه‌ها از گزارش‌های سوء استفاده
-
-#### 5. Enum All
-- اجرای همزمان تمام ماژول‌های enumeration
-- ادغام نتایج و حذف تکراری
-
-**استفاده:**
-
-```bash
-watch_sync_programs
+bash
 # تک تک
 watch_subfinder example.com
 watch_crtsh example.com
-watch_wayback example.com
-watch_abuseipdb example.com
 
 # همه با هم
 watch_enum_all example.com
-```
-
----
 
 ### 🌐 DNS Resolution
 
-#### 1. Basic Resolution (`watch_ns.py`)
-- رزولو کردن زیردامنه‌ها با massdns
-- شناسایی IP addresses
-- تشخیص CDN (Cloudflare, Akamai, etc.)
-- **فیلتر کردن wildcard domains**
+رزولو و شناسایی زیردامنه‌های زنده:
 
-#### 2. DNS Brute-force (`watch_ns_brute.py`)
-- Brute-force با wordlist
-- کشف زیردامنه‌های پنهان
+- تشخیص wildcard domains
+- شناسایی CDN (Cloudflare, Akamai, etc.)
+- DNS brute-force
 
-#### 3. NS All (`watch_ns_all.py`)
-- اجرای resolution برای تمام برنامه‌ها
-- پردازش batch
-
-**ویژگی Wildcard Detection:**
-- تست با زیردامنه‌های تصادفی
-- شناسایی الگوهای wildcard
-- جلوگیری از false positive
-
-**استفاده:**
-
-```bash
-# رزولو تک دامنه
+bash
 watch_ns example.com
-
-# رزولو همه برنامه‌ها
 watch_ns_all
-
-# DNS brute-force
-watch_ns_brute example.com
-```
-
----
 
 ### 🌍 HTTP Scanning
 
-#### ویژگی‌ها:
-- اسکن HTTP/HTTPS با httpx
-- استخراج اطلاعات:
-  - Title صفحه
-  - Status code
-  - Headers
-  - Final URL (بعد از redirect)
-  - Favicon hash
-  - IP addresses
-- **فیلتر خودکار CDN internal** (زیردامنه‌هایی با `cdn="internal"` اسکن نمی‌شوند)
+اسکن HTTP/HTTPS با httpx:
 
-**استفاده:**
+- استخراج title, status, headers
+- شناسایی تکنولوژی
+- **فیلتر خودکار CDN internal**
 
-```bash
-# اسکن تک دامنه
-python3 http/watch_http.py example.com
-
-# اسکن همه برنامه‌ها
+bash
 watch_httpx
-# یا
-python3 http/watch_http_all.py
-```
 
----
+### 🔐 Vulnerability Scanning
 
-### 🔐 Vulnerability Scanning (Nuclei)
+اسکن با Nuclei templates:
 
-#### ویژگی‌ها:
-- اسکن با Nuclei templates
-- فیلتر severity (critical, high, medium, low)
-- Exclude templates خاص
-- Custom templates در `nuclei/private_templates/`
-
-**استفاده:**
-
-```bash
+bash
 watch_nuclei_all
-```
-
-**توجه:** در حال حاضر در `watch.sh` غیرفعال است (commented out).
-
----
-
-### 📢 Notification System
-
-#### Telegram Integration:
-- اطلاع‌رسانی زیردامنه جدید
-- اطلاع‌رسانی HTTP endpoint جدید
-- اطلاع‌رسانی آسیب‌پذیری (Nuclei)
-
-**پیکربندی:**
-1. ربات تلگرام بسازید (@BotFather)
-2. توکن را در `config.py` قرار دهید
-3. Chat ID را در فایل JSON برنامه تنظیم کنید
-
----
 
 ### 🔄 Automation
 
-#### اسکریپت اصلی (`watch.sh`)
+اجرای کامل pipeline:
 
-```bash
-#!/bin/bash
-
-# همگام‌سازی برنامه‌ها
-python3 programs/watch_sync_programs.py
-
-# کشف زیردامنه‌ها
-python3 enum/watch_enum_all.py
-
-# رزولو DNS
-python3 ns/watch_ns_all.py
-
-# اسکن HTTP
-python3 http/watch_http_all.py
-
-# اسکن Nuclei (غیرفعال)
-# python3 nuclei/watch_nuclei_all.py
-```
-
-**اجرا:**
-
-```bash
+bash
 ./watch.sh
-```
 
 **زمان‌بندی با Cron:**
 
-```bash
-# هر 6 ساعت یکبار
-0 */6 * * * /path/to/watch/watch.sh >> /var/log/watch.log 2>&1
-
-# هر روز ساعت 2 صبح
-0 2 * * * /path/to/watch/watch.sh >> /var/log/watch.log 2>&1
-```
+bash
+# هر 6 ساعت
+0 */6 * * * /opt/watch/watch.sh >> /var/log/watch.log 2>&1
 
 ---
 
 ## API
 
-### راه‌اندازی Flask API
+### راه‌اندازی
 
-```bash
+bash
 python3 app.py
-```
 
 سرور روی `http://0.0.0.0:5000` اجرا می‌شود.
 
 ### Endpoints
 
-#### 1. لیست برنامه‌ها
+#### لیست برنامه‌ها
 
-```http
+http
 GET /programs
-```
 
-**پاسخ:**
-```json
-[
-  {
-    "program_name": "example",
-    "scopes": ["example.com"],
-    "ooscopes": ["test.example.com"],
-    "config": {...},
-    "created_date": "2025-05-11T10:00:00"
-  }
-]
-```
+#### جزئیات برنامه
 
-#### 2. جزئیات یک برنامه
-
-```http
+http
 GET /programs/<program_name>
-```
 
-#### 3. لیست زیردامنه‌ها
+#### لیست زیردامنه‌ها
 
-```http
+http
 GET /subdomains?program=<program_name>
 GET /subdomains?scope=<domain>
-GET /subdomains?subdomain=<subdomain>
-```
+
+#### زیردامنه‌های زنده
+
+http
+GET /live-subdomains?program=<program_name>
 
 **مثال:**
-```bash
+
+bash
 curl "http://localhost:5000/subdomains?program=example"
-```
-
-#### 4. لیست زیردامنه‌های زنده
-
-```http
-GET /live-subdomains?program=<program_name>
-GET /live-subdomains?scope=<domain>
-GET /live-subdomains?subdomain=<subdomain>
-```
-
-**پاسخ:**
-```json
-[
-  {
-    "subdomain": "api.example.com",
-    "scope": "example.com",
-    "ips": ["1.2.3.4"],
-    "cdn": "cloudflare",
-    "created_date": "2025-05-11T10:00:00"
-  }
-]
-```
 
 ---
 
 ## ساختار پروژه
 
+
 watch/
 ├── app.py                    # Flask API
-├── config.py                 # تنظیمات اصلی
-├── watch.sh                  # اسکریپت اجرای اصلی
-├── requirements.txt          # وابستگی‌های Python
-├── README.txt                # Aliases و دستورات
-├── domains.txt               # Wordlist برای brute-force
-├── resolvers.txt             # DNS resolvers
-├── resume.cfg                # فایل resume (خودکار)
+├── config.py                 # تنظیمات
+├── watch.sh                  # اسکریپت اصلی
+├── requirements.txt
+├── .env.example
+├── .gitignore
 │
-├── database/                 # لایه دیتابیس
+├── database/
 │   ├── db.py                 # مدل‌های MongoDB
-│   ├── notifications.py      # سیستم نوتیفیکیشن
-│   ├── telegram.py           # Telegram bot
-│   └── docker-compose.yml    # MongoDB container
+│   ├── notifications.py
+│   ├── telegram.py
+│   └── docker-compose.yml
 │
-├── programs/                 # مدیریت برنامه‌ها
-│   ├── *.json                # فایل‌های تعریف برنامه
+├── programs/
+│   ├── test_program.json     # نمونه
 │   └── watch_sync_programs.py
 │
-├── enum/                     # ماژول‌های Enumeration
+├── enum/                     # Enumeration
 │   ├── watch_subfinder.py
 │   ├── watch_crtsh.py
 │   ├── watch_wayback.py
 │   ├── watch_abuseipdb.py
 │   └── watch_enum_all.py
 │
-├── ns/                       # ماژول‌های DNS
+├── ns/                       # DNS Resolution
 │   ├── watch_ns.py
 │   ├── watch_ns_all.py
 │   ├── watch_ns_brute.py
 │   └── wildcard_detector.py
 │
-├── http/                     # ماژول‌های HTTP
+├── http/                     # HTTP Scanning
 │   ├── watch_http.py
 │   └── watch_http_all.py
 │
-├── nuclei/                   # ماژول‌های Nuclei
+├── nuclei/                   # Vulnerability Scanning
 │   ├── watch_nuclei_all.py
-│   ├── public-config.yaml    # تنظیمات Nuclei
-│   └── private_templates/    # Custom templates
-│       └── xss.yaml
+│   ├── public-config.yaml
+│   └── private_templates/
 │
-└── utils/                    # توابع کمکی
+└── utils/
     └── common.py
-
 
 ---
 
-## مدل‌های داده (MongoDB)
+## مدل‌های داده
 
-### 1. Programs
+### Programs
 
-```python
+python
 {
   "program_name": "example",
   "scopes": ["example.com"],
   "ooscopes": ["test.example.com"],
-  "config": {...},
-  "created_date": datetime
+  "config": {...}
 }
-```
 
-### 2. Subdomains
+### Subdomains
 
-```python
+python
 {
-  "program_name": "example",
   "subdomain": "api.example.com",
   "scope": "example.com",
-  "providers": ["subfinder", "crtsh"],
-  "created_date": datetime,
-  "last_update": datetime
+  "providers": ["subfinder", "crtsh"]
 }
-```
 
-### 3. LiveSubdomains
+### LiveSubdomains
 
-```python
+python
 {
-  "program_name": "example",
   "subdomain": "api.example.com",
-  "scope": "example.com",
   "ips": ["1.2.3.4"],
-  "cdn": "cloudflare",  # یا "internal" یا null
-  "created_date": datetime,
-  "last_update": datetime
+  "cdn": "cloudflare"  # یا "internal"
 }
-```
 
-### 4. Http
+### Http
 
-```python
+python
 {
-  "program_name": "example",
   "subdomain": "api.example.com",
-  "scope": "example.com",
-  "ips": ["1.2.3.4"],
-  "tech": ["nginx", "php"],
-  "title": "API Documentation",
-  "status_code": 200,
-  "headers": {...},
   "url": "https://api.example.com",
-  "final_url": "https://api.example.com/v1",
-  "favicon": "hash...",
-  "created_date": datetime,
-  "last_update": datetime
+  "status_code": 200,
+  "title": "API Documentation",
+  "tech": ["nginx", "php"]
 }
-```
-
----
-
-## نکات امنیتی
-
-1. **توکن تلگرام:** هرگز `config.py` را commit نکنید. از environment variable استفاده کنید:
-
-```python
-import os
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'default_token')
-```
-
-2. **MongoDB:** در production از authentication استفاده کنید:
-
-```yaml
-# docker-compose.yml
-environment:
-  MONGO_INITDB_ROOT_USERNAME: admin
-  MONGO_INITDB_ROOT_PASSWORD: secure_password
-```
-
-3. **API:** در production از authentication و rate limiting استفاده کنید.
 
 ---
 
@@ -652,47 +391,45 @@ environment:
 
 ### MongoDB متصل نمی‌شود
 
-```bash
-# بررسی وضعیت
+bash
 docker ps | grep mongo
-
-# لاگ‌ها
 docker logs mongo
-
-# ریستارت
 docker-compose restart
-```
 
 ### httpx کار نمی‌کند
 
-```bash
-# بررسی نصب
+bash
 which httpx
-
-# آپدیت مسیر در config.py
-HTTPX_BIN = "/path/to/httpx"
-```
+# مسیر را در .env تنظیم کنید
 
 ### massdns نصب نیست
 
-```bash
-# نصب
+bash
 git clone https://github.com/blechschmidt/massdns.git
 cd massdns && make && sudo make install
-```
+
+---
+
+## نکات امنیتی
+
+⚠️ **هرگز فایل `.env` را commit نکنید**
+
+✅ در production از MongoDB authentication استفاده کنید
+
+✅ برای API از rate limiting استفاده کنید
 
 ---
 
 ## مشارکت
 
-برای گزارش باگ یا پیشنهاد ویژگی جدید، Issue ایجاد کنید.
+برای گزارش باگ یا پیشنهاد، Issue ایجاد کنید.
 
 ---
 
 ## تماس
 
-pouya.gh@outlook.com
+📧 pouya.gh@outlook.com
 
 ---
 
-**نکته:** این پروژه برای استفاده شخصی و برنامه‌های Bug Bounty قانونی طراحی شده است. از آن برای اسکن غیرمجاز استفاده نکنید.
+**⚠️ هشدار:** این پروژه فقط برای استفاده قانونی در برنامه‌های Bug Bounty طراحی شده است.
