@@ -1,0 +1,6 @@
+flask
+mongoengine
+python-telegram-bot
+tldextract
+psycopg2-binary
+python-dotenv

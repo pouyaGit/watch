@@ -1,0 +1,59 @@
+# Headers to include with all HTTP requests
+header:
+  - 'X-BugBounty-hacker: Hackerone'
+  - 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:108.0) Gecko/20100101 Firefox/108.0'
+
+# maximum number of templates executed in parallel
+concurrency: 25
+rate-limit: 100
+
+# Template Denylist
+exclude-tags: technologies,tech,ssl,dns
+severity: critical,high,medium,low
+exclude-templates:
+  - vulnerabilities/wordpress/wp-license-file.yaml
+  - vulnerabilities/wordpress/wordpress-rdf-user-enum.yaml
+  - vulnerabilities/generic/request-based-interaction.yaml
+  - vulnerabilities/wordpress/wordpress-user-enum.yaml
+  - vulnerabilities/wordpress/wordpress-xmlrpc-listmethods.yaml
+  - vulnerabilities/wordpress/wordpress-xmlrpc.yaml
+  - vulnerabilities/generic/cors-misconfig.yaml
+  - vulnerabilities/wordpress/wp-full-path-disclosure.yaml
+  - vulnerabilities/wordpress/wp-altair-listing.yaml
+  - vulnerabilities/wordpress/wordpress-tmm-db-migrate.yaml
+  - vulnerabilities/wordpress/wp-l23contactform-plugin-listing.yaml
+  - vulnerabilities/wordpress/wp-iwp-client-listing.yaml
+  - vulnerabilities/wordpress/wordpress-uodraftplus-pem-key.yaml
+  - vulnerabilities/wordpress/wordpress-elementor-plugin-listing.yaml
+  - vulnerabilities/wordpress/wp-enabled-registration.yaml
+  - vulnerabilities/wordpress/easy-media-gallery-pro-listing.yaml
+  - misconfiguration/gitlab/gitlab-user-enum.yaml
+  - misconfiguration/gitlab/gitlab-public-repos.yaml
+  - misconfiguration/cloudflare-image-ssrf.yaml
+  - misconfiguration/adobe/adobe-connect-version.yaml
+  - misconfiguration/ktor/ktor-public-detect.yaml
+  - misconfiguration/sonarqube-public-projects.yaml
+  - miscellaneous/trace-method.yaml
+  - miscellaneous/options-method.yaml
+  - miscellaneous/apple-app-site-association.yaml
+  - miscellaneous/clientaccesspolicy.yaml
+  - miscellaneous/security-txt.yaml
+  - miscellaneous/old-copyright.yaml
+  - miscellaneous/robots-txt.yaml
+  - miscellaneous/robots-txt-endpoint.yaml
+  - misconfiguration/httponly-cookie-detect.yaml
+  - misconfiguration/httponly-cookie-detect.yaml
+  - exposures/configs/debug-vars.yaml
+  - exposures/tokens/generic/general-token.yaml
+  - exposures/files/crossdomain-xml.yaml
+  - exposures/files/ds-store-file.yaml
+  - exposures/tokens/generic/credentials-disclosure.yaml
+  - exposures/tokens/google/google-client-id.yaml
+  - exposures/configs/keycloak-openid-config.yaml
+  - exposures/configs/azure-domain-tenant.yaml
+  - exposures/tokens/google/google-api-key.yaml
+  - miscellaneous/adventlistener-detect.yaml
+  - miscellaneous/email-extractor.yaml
+  - technologies/metatag-cms.yaml
+  - technologies/wordpress-detect.yaml
+  - technologies/wordpress/plugins/wp-pagen

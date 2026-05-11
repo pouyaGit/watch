@@ -1,0 +1,24 @@
+(venv) DESKTOP-G0VG53D% subfinder -d icollab.info
+[INF] Enumerating subdomains for icollab.info
+attacker.icollab.info
+bxss.icollab.info
+hash-att.icollab.info
+ish.icollab.info
+ns2.icollab.info
+r.icollab.info
+www.icollab.info
+x.icollab.info
+ns1.icollab.info
+root.icollab.info
+thezodd.icollab.info
+
+
+(venv) DESKTOP-G0VG53D% subfinder -d icollab.info | dnsx -silent -wd icollab.info
+[INF] Enumerating subdomains for icollab.info
+[INF] Found 8 subdomains for icollab.info in 30 seconds 2 milliseconds
+hash-att.icollab.info
+r.icollab.info
+www.icollab.info
+ish.icollab.info
+
+dnsx -l subs.txt -silent -wd icollab.info
