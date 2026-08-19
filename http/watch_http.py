@@ -1,56 +1,89 @@
 #!/usr/bin/env python3
-import sys, os, json, tempfile, subprocess
-from datetime import datetime
-
+import sys, os, json, tempfile
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from database.db import *
 from config import config
-from utils.common import (
-    colors,
-    current_time,
-    run_command_in_zsh_http,
-)
+from utils.common import colors, current_time, run_command_in_zsh_http
 
-def httpx(subdomains_array, domain):
-    for subdomain in subdomains_array:
+def httpx_bulk(subdomains, domain):
+    if not subdomains:
+        return
+
+    # نوشتن ساب‌دامین‌ها در فایل موقت
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+        for sub in subdomains:
+            f.write(sub + '\n')
+        temp_file = f.name
+
+    try:
+        httpx_bin = config().get('HTTPX_BIN', '/root/go/bin/httpx')
+
+        # تنظیمات خیلی سریع‌تر
         command = (
-            f"echo {subdomain} | {config().get('HTTPX_BIN')} "
+            f"{httpx_bin} -l {temp_file} "
             "-silent -json -favicon -fhr -tech-detect -irh -include-chain "
-            "-timeout 5 -retries 3 -threads 5 -rate-limit 4 -ports 443 -extract-fqdn "
-            "-H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:108.0) Gecko/20100101 Firefox/108.0' "
-            f"-H 'Referer: https://{subdomain}'"
+            "-timeout 7 -retries 2 "
+            "-threads 15 -rate-limit 15 "
+            "-ports 443 "
+            "-random-agent"
         )
 
-        print(f"{colors.GRAY}Executing HTTPx: {command}{colors.RESET}")
+        print(f"{colors.GRAY}[{current_time()}] Running bulk httpx on {len(subdomains)} subdomains for {domain}{colors.RESET}")
+        print(f"{colors.GRAY}Command: {command}{colors.RESET}")
+
         results = run_command_in_zsh_http(command)
-        
-        if results != '':
-            json_obj = json.loads(results)
-            upsert_http({
-                "subdomain": subdomain,
-                "scope": domain,
-                "ips": json_obj.get("a", ''),
-                "tech": json_obj.get("tech", []),
-                "title": json_obj.get("title", ''),
-                "status_code": json_obj.get("status_code", ''),
-                "headers": json_obj.get("header", {}),
-                "url": json_obj.get("url", ''),
-                "final_url": json_obj.get("final_url", ''),
-                "favicon": json_obj.get("favicon", ''),
-            })
-    
-    return True
-        
+
+        if not results:
+            print(f"[{current_time()}] No results from httpx for {domain}")
+            return
+
+        count = 0
+        for line in results.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                json_obj = json.loads(line)
+                subdomain = json_obj.get("input") or json_obj.get("host") or ""
+                if not subdomain:
+                    continue
+
+                upsert_http({
+                    "subdomain": subdomain,
+                    "scope": domain,
+                    "ips": json_obj.get("a", []) or json_obj.get("ip", []),
+                    "tech": json_obj.get("tech", []) or [],
+                    "title": json_obj.get("title", "") or "",
+                    "status_code": json_obj.get("status_code", 0) or 0,
+                    "headers": json_obj.get("header", {}) or {},
+                    "url": json_obj.get("url", "") or "",
+                    "final_url": json_obj.get("final_url", "") or "",
+                    "favicon": json_obj.get("favicon", "") or "",
+                })
+                count += 1
+            except Exception as e:
+                print(f"[{current_time()}] Error parsing line: {e}")
+                continue
+
+        print(f"[{current_time()}] Finished {domain} → {count} HTTP results saved")
+
+    finally:
+        os.unlink(temp_file)
+
 
 if __name__ == "__main__":
     domain = sys.argv[1] if len(sys.argv) > 1 else False
 
-    if domain is False:
-        print("Usage: watch_httpx domain")
-        sys.exit()
+    if not domain:
+        print("Usage: watch_http.py domain")
+        sys.exit(1)
 
-    obj_lives = LiveSubdomains.objects(scope=domain, cdn__ne="internal")
+    # فقط ساب‌دامین‌های زنده و غیر internal
+    obj_lives = LiveSubdomains.objects(scope=domain, cdn__ne="Internal")
+    subdomains = [obj.subdomain for obj in obj_lives]
 
-    if obj_lives:
-        print(f"[{current_time()}] running HTTPx module for '{domain}'")
-        httpx([obj_live.subdomain for obj_live in obj_lives], domain)
+    if subdomains:
+        print(f"[{current_time()}] Running HTTPx for '{domain}' ({len(subdomains)} live subdomains)")
+        httpx_bulk(subdomains, domain)
+    else:
+        print(f"[{current_time()}] No live subdomains found for {domain}")

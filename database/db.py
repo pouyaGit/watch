@@ -19,7 +19,11 @@ def get_domain_name(url):
     return f"{ext.domain}.{ext.suffix}"
 
 # Connect to MongoDB
-connect(db='watch', host='mongodb://127.0.0.1:27017/watch')
+# connect(db='watch', host='mongodb://127.0.0.1:27017/watch')
+connect(
+    db='watch',
+    host='mongodb://pouya:YourStrongPassword123@127.0.0.1:27017/watch?authSource=admin'
+)
 
 # Define the Programs model
 class Programs(Document):
@@ -196,7 +200,7 @@ def upsert_lives(obj):
             last_update=datetime.now()
         )
         new_live_subdomain.save()
-        notify_new_live_subdomain(obj.get('subdomain'), program_name)
+        # notify_new_live_subdomain(obj.get('subdomain'), program_name)
         print(f"[{current_time()}] Inserted new live subdomain: {obj.get('subdomain')}")
 
     return True

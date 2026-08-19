@@ -11,3 +11,7 @@ def config():
         'TELEGRAM_CHAT_ID': os.getenv('TELEGRAM_CHAT_ID', ''),
         'HTTPX_BIN': os.getenv('HTTPX_BIN', '/usr/local/bin/httpx'),
     }
+
+def get_path(*paths):
+    """Helper function to safely join paths"""
+    return os.path.join(config()['WATCH_DIR'], *paths)

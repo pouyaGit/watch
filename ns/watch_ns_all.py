@@ -81,7 +81,7 @@ if __name__ == "__main__":
     for program in programs:
         for scope in program.scopes:
             domain = scope
-            obj_subs = Subdomains.objects(scope=domain, cdn__ne="internal")
+            obj_subs = Subdomains.objects(scope=domain)
 
             if obj_subs:
                 print(f"[{current_time()}] running Dnsx module for '{domain}'")

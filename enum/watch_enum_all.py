@@ -3,7 +3,7 @@ import sys, os, subprocess, psycopg2, re, datetime, requests, random, time
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'database')))
 from db import *
-from config import config
+from config import config, get_path
 
 def run_command_in_zsh(command):
     try:
@@ -25,9 +25,12 @@ if __name__ == "__main__":
 
         for scope in scopes:
             print(f"    [*] [{current_time()}] Scope: Enumerating {scope}")
-            enum_path = config().get("WATCH_DIR") + "enum/"
+            # enum_path = config().get("WATCH_DIR") + "enum/"
+            enum_path = get_path("enum")
             run_command_in_zsh(f"python {enum_path}/watch_crtsh.py {scope}")
             run_command_in_zsh(f"python {enum_path}/watch_subfinder.py {scope}")
             run_command_in_zsh(f"python {enum_path}/watch_abuseipdb.py {scope}")
             run_command_in_zsh(f"python {enum_path}/watch_wayback.py {scope}")
+            run_command_in_zsh(f"python {enum_path}/watch_findomain.py {scope}")
+            run_command_in_zsh(f"python {enum_path}/watch_assetfinder.py {scope}")
        

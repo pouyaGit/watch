@@ -3,9 +3,13 @@ services:
     image: mongo:latest
     container_name: mongo
     ports:
-      - "127.0.0.1:27017:27017"
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: pouya
+      MONGO_INITDB_ROOT_PASSWORD: YourStrongPassword123
     volumes:
       - watchtower-data:/data/db
+    restart: unless-stopped
 
 volumes:
   watchtower-data:

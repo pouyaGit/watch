@@ -62,19 +62,22 @@ def make_html_list(items, title="Results"):
 @app.route('/')
 def index():
     programs = list(Programs.objects().all())
-    providers = ["subfinder", "crtsh", "findomain", "assetfinder", "abuseipdb", "waybackurls"]
+    providers = ["subfinder", "crtsh", "findomain", "assetfinder", "amass", "abuseipdb", "waybackurls"]
 
+    # Programs
     programs_html = '<a href="/api/programs/all" target="_blank">/api/programs/all</a>'
 
-    # HTTP Section
+    # HTTP
     http_html = '''
         <a href="/api/http/all" target="_blank">/api/http/all</a>
         <a href="/api/http/fresh" target="_blank">/api/http/fresh (24h)</a>
         <br><br>
     '''
+
     for program in programs:
         http_html += f'<div style="margin-top:16px;"><b style="color:#58a6ff;">{program.program_name}</b></div>'
-        
+
+        # Providers per program
         http_html += '<div style="margin:6px 0 4px 8px;color:#8b949e;">Providers:</div>'
         http_html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-left:8px;margin-bottom:10px;">'
         for p in providers:
@@ -95,7 +98,7 @@ def index():
                 http_html += f'<a href="/api/http/tech/{program.program_name}/{tech}" target="_blank" style="padding:4px 10px;background:#21262d;">{tech}</a>'
             http_html += '</div>'
 
-    # Subdomains Section
+    # Subdomains
     sub_html = '<a href="/api/subdomains/all" target="_blank">/api/subdomains/all</a><br><br>'
     for program in programs:
         sub_html += f'<div style="margin-top:14px;"><b style="color:#58a6ff;">{program.program_name}</b></div>'
@@ -107,7 +110,7 @@ def index():
                 sub_html += f'<a href="/api/subdomains/domain/{scope}" target="_blank" style="padding:4px 10px;">{scope}</a>'
         sub_html += '</div>'
 
-    # Lives Section
+    # Lives
     lives_html = '''
         <a href="/api/lives/all" target="_blank">/api/lives/all</a>
         <a href="/api/lives/fresh" target="_blank">/api/lives/fresh (24h)</a>
@@ -116,7 +119,7 @@ def index():
     for program in programs:
         lives_html += f'<div style="margin-top:14px;"><b style="color:#58a6ff;">{program.program_name}</b></div>'
         lives_html += f'<a href="/api/lives/program/{program.program_name}" target="_blank">/api/lives/program/{program.program_name}</a>'
-        
+
         lives_html += '<div style="margin:6px 0 4px 8px;color:#8b949e;">Domains:</div>'
         lives_html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-left:8px;margin-bottom:8px;">'
         for scope in program.scopes:
@@ -124,6 +127,7 @@ def index():
                 lives_html += f'<a href="/api/lives/domain/{scope}" target="_blank" style="padding:4px 10px;">{scope}</a>'
         lives_html += '</div>'
 
+        # Providers per program
         lives_html += '<div style="margin:6px 0 4px 8px;color:#8b949e;">Providers:</div>'
         lives_html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-left:8px;">'
         for p in providers:
@@ -351,7 +355,11 @@ def http_provider_program(program_name, provider):
 
 @app.route('/api/http/tech/<program_name>/<tech>')
 def http_by_tech(program_name, tech):
-    items = [h.url for h in Http.objects(program_name=program_name, tech=tech) if h.url]
+    items = []
+    http_objs = Http.objects(program_name=program_name, tech=tech)
+    for h in http_objs:
+        if h.url:
+            items.append(h.url)
     if not items:
         return f"No results found for tech '{tech}' in program '{program_name}'", 404
     if request.args.get('raw') == '1':

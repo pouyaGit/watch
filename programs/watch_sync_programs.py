@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from db import upsert_program, delete_program_and_related, Programs
-from config import config
+from config import config, get_path
 
 def scan_directory_for_json_files(directory):
     found_programs = set()
@@ -49,6 +49,7 @@ def delete_missing_programs(found_programs):
         delete_program_and_related(program_name)
 
 if __name__ == "__main__":
-    directory_to_scan = config().get("WATCH_DIR") + "programs/"
+    # directory_to_scan = config().get("WATCH_DIR") + "/programs/"
+    directory_to_scan = get_path("programs")
     found_programs = scan_directory_for_json_files(directory_to_scan)
     delete_missing_programs(found_programs)
