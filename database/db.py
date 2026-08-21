@@ -1,7 +1,9 @@
-from mongoengine import Document, StringField, DateTimeField, ListField, DictField, IntField, connect
+from mongoengine import Document, StringField, BooleanField, DateTimeField, ListField, DictField, IntField, connect
 from datetime import datetime
+from urllib.parse import urlparse, parse_qs
 import tldextract
 import config
+import re
 from database.notifications import (
     notify_new_live_subdomain,
     notify_updated_live_subdomain_ip,
@@ -89,6 +91,49 @@ class LiveSubdomains(Document):
             {'fields': ['program_name', 'subdomain'], 'unique': True}  # Create a unique index on program_name + subdomain
         ]
     }
+
+# --- مدل جدید: نتایج کرال ---
+class Urls(Document):
+    program_name = StringField(required=True)
+    subdomain    = StringField(required=True)
+    url          = StringField(required=True)
+    path         = StringField()
+    params       = ListField(StringField())
+    sources      = ListField(StringField())      # ["katana", "wayback-robots", ...]
+    status_code  = IntField()
+    created_date = DateTimeField(default=datetime.now())
+    last_update  = DateTimeField(default=datetime.now())
+ 
+    meta = {
+        'indexes': [
+            {'fields': ['program_name', 'url'], 'unique': True}
+        ]
+    }
+
+# --- مدل جدید: اندپوینت یکتا (سطح path، نه URL کامل) ---
+class Endpoints(Document):
+    program_name       = StringField(required=True)
+    subdomain          = StringField(required=True)
+    path               = StringField(required=True)
+    example_url        = StringField()             # یه URL نمونه، برای اجرای x8 روش
+    params             = ListField(StringField())          # مجموع همه‌ی پارامترها (کرال + x8)
+    params_from_crawl  = ListField(StringField())
+    params_from_x8     = ListField(StringField())
+    x8_checked         = BooleanField(default=False)
+    x8_last_checked    = DateTimeField()
+    hit_count          = IntField(default=1)       # چندبار این path تو کرال دیده شده
+    created_date       = DateTimeField(default=datetime.now())
+    last_update        = DateTimeField(default=datetime.now())
+ 
+    meta = {
+        'indexes': [
+            {'fields': ['program_name', 'subdomain', 'path'], 'unique': True},
+            {'fields': ['x8_checked']},
+            {'fields': ['-hit_count']},
+        ]
+    }
+ 
+
 
 # Upsert Programs
 def upsert_program(program_name, scopes, ooscopes, config):
@@ -265,3 +310,171 @@ def delete_program_and_related(program_name: str):
         f"Programs: {prog_count}, Subdomains: {sub_count}, "
         f"LiveSubdomains: {live_count}, Http: {http_count}"
     )
+
+# --- جایگزین upsert_url قبلی کن (خط upsert_endpoint اضافه شده وسطش) ---
+def upsert_url(program_name, subdomain, url, source):
+    """
+    ثبت یا آپدیت یک URL کشف‌شده از کرال، با استخراج خودکار پارامترهای query.
+    هم‌زمان کالکشن Endpoints (سطح path، بدون انفجار حجم) رو هم آپدیت می‌کنه.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+ 
+    path = parsed.path or "/"
+    params = sorted(set(parse_qs(parsed.query).keys()))
+ 
+    # --- سطح endpoint (dedup شده بر اساس path، نه URL کامل) ---
+    try:
+        upsert_endpoint(program_name, subdomain, path, url, params)
+    except Exception:
+        pass
+ 
+    existing = Urls.objects(program_name=program_name, url=url).first()
+    if existing:
+        changed = False
+        if source not in (existing.sources or []):
+            existing.sources = (existing.sources or []) + [source]
+            changed = True
+        new_params = set(params) - set(existing.params or [])
+        if new_params:
+            existing.params = sorted(set((existing.params or []) + params))
+            changed = True
+        if changed:
+            existing.last_update = datetime.now()
+            existing.save()
+        return False
+ 
+    Urls(
+        program_name=program_name,
+        subdomain=subdomain,
+        url=url,
+        path=path,
+        params=params,
+        sources=[source],
+        created_date=datetime.now(),
+        last_update=datetime.now()
+    ).save()
+    return True
+ 
+
+_UUID_RE = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+_NUM_RE  = re.compile(r'^\d+$')
+_HEX_RE  = re.compile(r'^[0-9a-fA-F]{16,}$')   # هش‌های طولانی (session id, hash, ...)
+
+
+def normalize_path(path):
+    """
+    segmentهای متغیر (ID عددی، UUID، هش) رو با placeholder جایگزین می‌کنه
+    تا /user/12345/profile و /user/67890/profile یه اندپوینت حساب بشن.
+    """
+    if not path:
+        return "/"
+    parts = path.split("/")
+    normalized = []
+    for seg in parts:
+        if not seg:
+            normalized.append(seg)
+        elif _UUID_RE.match(seg):
+            normalized.append("{uuid}")
+        elif _NUM_RE.match(seg):
+            normalized.append("{id}")
+        elif _HEX_RE.match(seg):
+            normalized.append("{hash}")
+        else:
+            normalized.append(seg)
+    return "/".join(normalized)
+
+
+# --- تغییر داخل upsert_endpoint: خط اول تابع رو اضافه کن ---
+def upsert_endpoint(program_name, subdomain, path, url, params):
+    path = normalize_path(path)   # <-- این خط رو اضافه کن، قبل از هر چیز دیگه
+
+    existing = Endpoints.objects(program_name=program_name, subdomain=subdomain, path=path).first()
+    if existing:
+        changed = False
+        if url and not existing.example_url:
+            existing.example_url = url
+        new_params = set(params) - set(existing.params_from_crawl or [])
+        if new_params:
+            existing.params_from_crawl = sorted(set((existing.params_from_crawl or []) + params))
+            existing.params = sorted(set((existing.params or []) + params))
+            changed = True
+        existing.hit_count = (existing.hit_count or 0) + 1
+        if changed:
+            existing.last_update = datetime.now()
+        existing.save()
+        return False
+
+    Endpoints(
+        program_name=program_name,
+        subdomain=subdomain,
+        path=path,
+        example_url=url,
+        params=params,
+        params_from_crawl=params,
+        hit_count=1,
+    ).save()
+    return True
+
+
+
+# =========================DnsBrute===================================
+# extends DnsBruteStatus with static/dynamic run tracking
+# ==========================DnsBrute==================================
+
+class DnsBruteStatus(Document):
+    program_name      = StringField(required=True)
+    domain            = StringField(required=True, unique=True)
+    feasible          = BooleanField()          # None = never checked yet
+    wildcard_ips      = ListField(StringField())
+    last_checked      = DateTimeField()         # feasibility precheck
+    last_static_run   = DateTimeField()         # watch_dns_static.py
+    last_dynamic_run  = DateTimeField()         # watch_dns_dynamic.py
+
+    meta = {
+        'indexes': [
+            {'fields': ['domain'], 'unique': True}
+        ]
+    }
+
+
+def upsert_dns_brute_status(program_name, domain, feasible, wildcard_ips):
+    existing = DnsBruteStatus.objects(domain=domain).first()
+    if existing:
+        existing.feasible = feasible
+        existing.wildcard_ips = sorted(wildcard_ips)
+        existing.last_checked = datetime.now()
+        existing.save()
+    else:
+        DnsBruteStatus(
+            program_name=program_name,
+            domain=domain,
+            feasible=feasible,
+            wildcard_ips=sorted(wildcard_ips),
+            last_checked=datetime.now(),
+        ).save()
+
+
+def mark_static_run(domain):
+    DnsBruteStatus.objects(domain=domain).update_one(
+        set__last_static_run=datetime.now(), upsert=True
+    )
+
+
+def mark_dynamic_run(domain):
+    DnsBruteStatus.objects(domain=domain).update_one(
+        set__last_dynamic_run=datetime.now(), upsert=True
+    )
+
+
+def get_feasible_domains_ordered(run_field):
+    """
+    Returns [(program_name, domain), ...] for domains marked feasible=True,
+    ordered least-recently-run first for the given run_field
+    ('last_static_run' or 'last_dynamic_run'). Never-run domains come first.
+    """
+    statuses = list(DnsBruteStatus.objects(feasible=True))
+    statuses.sort(key=lambda s: getattr(s, run_field) or datetime.min)
+    return [(s.program_name, s.domain) for s in statuses]

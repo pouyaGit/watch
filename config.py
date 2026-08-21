@@ -10,6 +10,7 @@ def config():
         'TELEGRAM_BOT_TOKEN': os.getenv('TELEGRAM_BOT_TOKEN', ''),
         'TELEGRAM_CHAT_ID': os.getenv('TELEGRAM_CHAT_ID', ''),
         'HTTPX_BIN': os.getenv('HTTPX_BIN', '/usr/local/bin/httpx'),
+        'API_KEY': os.getenv('API_KEY', '')
     }
 
 def get_path(*paths):
