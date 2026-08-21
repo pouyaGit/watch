@@ -44,11 +44,11 @@ BAD_EXT = re.compile(
 
 # ---------------- تنظیمات قابل تنظیم برای کنترل بار سرور ----------------
 KATANA_DEPTH        = 3   # قبلاً 5 بود؛ حجم درخواست‌ها رو نمایی زیاد می‌کرد
-KATANA_CONCURRENCY  = 8   # -c  : تعداد request همزمان روی هر هدف
+KATANA_CONCURRENCY  = 5   # -c  8->5 : تعداد request همزمان روی هر هدف
 KATANA_PARALLELISM  = 3   # -p  : تعداد هدف همزمان
-KATANA_RATE_LIMIT   = 60  # -rl : request در ثانیه (کل)
-KATANA_TIMEOUT      = 10
-ROBOTS_WORKERS       = 10  # موازی‌سازی fetch تاریخچه‌ی robots.txt
+KATANA_RATE_LIMIT   = 40  # -rl 60->40: request در ثانیه (کل)
+KATANA_TIMEOUT      = 8
+ROBOTS_WORKERS      = 5  # موازی‌سازی fetch تاریخچه‌ی robots.txt 10 -> 5
 # --------------------------------------------------------------------------
 
 
@@ -91,10 +91,20 @@ def group_by_root_domain(urls):
     return dict(by_domain)
 
 
+PROGRAM_CACHE = {}
+
 def resolve_program(host):
-    """پیدا کردن program_name از روی subdomain، با فال‌بک امن."""
+    """پیدا کردن program_name از روی subdomain با cache.
+    اگر host خارج از scope باشد، Unknown برمی‌گرداند.
+    """
+    if host in PROGRAM_CACHE:
+        return PROGRAM_CACHE[host]
+
     doc = Http.objects(subdomain=host).first()
-    return doc.program_name if doc else "Unknown"
+    program_name = doc.program_name if doc else "Unknown"
+
+    PROGRAM_CACHE[host] = program_name
+    return program_name
 
 
 def run_katana(targets_file, out_file):
