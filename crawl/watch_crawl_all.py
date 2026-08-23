@@ -25,15 +25,17 @@ import time
 import argparse
 import subprocess
 import requests
+import gzip
+import shutil
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import config
-from database.db import Http, Urls, upsert_url
+from database.db import Http, bulk_store_crawl_results
 
 OUT_DIR = Path("/opt/watch/crawl/output")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -47,13 +49,21 @@ BAD_EXT = re.compile(
     re.I
 )
 
-# ---------------- همون تنظیمات محافظه‌کارانه‌ی watch_crawl_fresh.py ----------------
+# ---------------- server-load tuning ----------------
 KATANA_DEPTH        = 3
-KATANA_CONCURRENCY  = 8
+KATANA_CONCURRENCY  = 5
 KATANA_PARALLELISM  = 3
-KATANA_RATE_LIMIT    = 60
-KATANA_TIMEOUT       = 10
-ROBOTS_WORKERS        = 10
+KATANA_RATE_LIMIT   = 40
+KATANA_TIMEOUT      = 8
+KATANA_CRAWL_DURATION = "5m"  # a bit more room than fresh since this runs weekly
+ROBOTS_WORKERS      = 5
+
+# -kf all (sitemap.xml/robots.txt) IS kept here since this is the weekly,
+# thorough pass -- but a hard per-domain cap still applies, since a single
+# large sitemap can otherwise produce hundreds of thousands of URLs from
+# one domain and stall MongoDB on insert.
+MAX_URLS_PER_DOMAIN = 50000
+TELEGRAM_MAX_FILE_MB = 45
 # -----------------------------------------------------------------------------------
 
 START_TIME = time.time()
@@ -124,11 +134,15 @@ def resolve_program(host):
 
 
 def run_katana(targets_file, out_file):
+    # -kf all kept here (weekly thorough pass), but -ct caps wall-clock time
+    # so a crawler trap or huge sitemap can't run forever. Verify flag name
+    # with `katana -h`, it may differ across versions.
     cmd = (
         f'katana -list "{targets_file}" '
         f'-d {KATANA_DEPTH} -jc -kf all -fs rdn '
         f'-c {KATANA_CONCURRENCY} -p {KATANA_PARALLELISM} '
         f'-rl {KATANA_RATE_LIMIT} -timeout {KATANA_TIMEOUT} -retry 1 '
+        f'-ct {KATANA_CRAWL_DURATION} '
         f'-silent -o "{out_file}"'
     )
     log(f"$ {cmd}")
@@ -173,6 +187,7 @@ def send_telegram_message(text):
 
 def crawl_domain(domain, urls):
     log(f"\n--- Crawling {domain} ({len(urls)} seeds) ---")
+    send_telegram_message(f"Now crawling {domain} [crawlAll]\nSeeds: {len(urls)}")
     domain_dir = OUT_DIR / f"all_{domain}_{DATE}"
     domain_dir.mkdir(parents=True, exist_ok=True)
 
@@ -181,6 +196,12 @@ def crawl_domain(domain, urls):
 
     katana_out = domain_dir / "katana.txt"
     crawled = set(run_katana(seeds_file, katana_out))
+
+    if len(crawled) > MAX_URLS_PER_DOMAIN:
+        log(f"{domain}: WARNING -- katana returned {len(crawled)} URLs, "
+            f"likely a crawler trap or huge sitemap. Capping to {MAX_URLS_PER_DOMAIN}.")
+        crawled = set(sorted(crawled)[:MAX_URLS_PER_DOMAIN])
+
     all_urls = sorted(set(urls) | crawled)
 
     hosts = sorted({get_host(u) for u in urls if get_host(u)})
@@ -192,8 +213,8 @@ def crawl_domain(domain, urls):
     if robots_urls:
         all_urls = sorted(set(all_urls) | robots_urls)
 
-    # ---------- ذخیره در دیتابیس (فقط اسکوپ واقعی، نه لینک‌های third-party) ----------
-    saved_new = 0
+    # ---------- build entries and store in one bulk_write (in-scope only) ----------
+    entries = []
     skipped_out_of_scope = 0
     for u in all_urls:
         host = get_host(u)
@@ -209,16 +230,27 @@ def crawl_domain(domain, urls):
             source = "wayback-robots"
         else:
             source = "http-seed"
-        try:
-            if upsert_url(program_name, host, u, source):
-                saved_new += 1
-        except Exception as e:
-            log(f"DB error for {u}: {e}")
+
+        parsed = urlparse(u)
+        entries.append({
+            "program_name": program_name,
+            "subdomain": host,
+            "url": u,
+            "path": parsed.path or "/",
+            "params": sorted(set(parse_qs(parsed.query).keys())),
+            "source": source,
+        })
 
     if skipped_out_of_scope:
         log(f"{domain}: skipped {skipped_out_of_scope} out-of-scope/third-party URLs")
 
+    saved_new = bulk_store_crawl_results(entries)
+
     log(f"{domain}: total {len(all_urls)} URLs | {saved_new} new in DB")
+    send_telegram_message(
+        f"Result -- {domain} [crawlAll]\n"
+        f"Seeds: {len(urls)} | Final: {len(all_urls)} | New in DB: {saved_new}"
+    )
     return len(all_urls), saved_new
 
 
@@ -241,6 +273,12 @@ def main():
     by_domain = group_by_root_domain(targets)
     ordered = order_by_least_recently_crawled(by_domain)
     log(f"{len(ordered)} root domains, ordered oldest-crawled-first")
+
+    domain_list = "\n".join(f"  - {d} ({len(by_domain[d])} seeds)" for d in [x[0] for x in ordered])
+    send_telegram_message(
+        f"Starting crawlAll run\nTime budget: {args.max_minutes or 'unlimited'} min\n"
+        f"Queued domains ({len(ordered)}):\n{domain_list}"
+    )
 
     total_urls = 0
     total_new = 0

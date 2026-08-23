@@ -77,7 +77,11 @@ PAGE_CSS = """
   .techs { margin-top:8px; }
   ul { padding-left:20px; } li { margin:4px 0; word-break:break-all; }
   .pagenav { color:#8b949e; margin:12px 0; }
-  .note { color:#8b949e; font-size:13px; }
+  .badge-bf { background:#3d1a00; border:1px solid #ff8c00; color:#ffb84d; font-weight:600; }
+  .badge-bf:hover { background:#ff8c00; color:#0d1117; }
+  .fresh-banner { display:block; background:#122a1a; border:1px solid #2ea043; border-radius:8px;
+                  padding:10px 16px; margin:16px 0; color:#3fb950; font-weight:600; }
+  .fresh-banner:hover { background:#2ea043; color:#0d1117; text-decoration:none; }
 </style>
 """
 
@@ -105,10 +109,19 @@ def html_list_page(title, items, page, limit, total, base_path):
     return HTMLResponse(render_page(title, body))
 
 
+PROVIDERS = ["subfinder", "crtsh", "findomain", "assetfinder", "abuseipdb", "waybackurls"]
+BF_PROVIDERS = ["staticBF", "dynamicBF"]  # shown first, styled distinctly -- highest-value finds
+
+
 # ====================== داشبورد اصلی ======================
 @app.get("/", response_class=HTMLResponse)
 def dashboard():
     programs = list(Programs.objects().all())
+
+    fresh_count = Http.objects(created_date__gte=datetime.now() - timedelta(hours=24)).count()
+    fresh_link = build_url("/ui/http/fresh")
+    fresh_banner = f'<a class="fresh-banner" href="{fresh_link}">🆕 Fresh HTTP results (last 24h): {fresh_count}</a>'
+
     sections = ""
     for p in programs:
         name = p.program_name
@@ -127,6 +140,21 @@ def dashboard():
             f'<a class="badge" href="{build_url(f"/ui/http/tech/{name}/{t}")}">{t}</a>'
             for t in sorted(techs)
         )
+
+        # bruteforce providers first and visually distinct, then the rest
+        bf_html = ""
+        for provider in BF_PROVIDERS:
+            count = Subdomains.objects(program_name=name, providers=provider).count()
+            if count:
+                link = build_url(f"/ui/http/provider/{name}/{provider}")
+                bf_html += f'<a class="badge badge-bf" href="{link}">🔥 {provider} ({count})</a>'
+
+        provider_html = ""
+        for provider in PROVIDERS:
+            count = Subdomains.objects(program_name=name, providers=provider).count()
+            if count:
+                link = build_url(f"/ui/http/provider/{name}/{provider}")
+                provider_html += f'<a class="badge" href="{link}">{provider} ({count})</a>'
 
         sub_link = build_url(f"/ui/subdomains/program/{name}")
         live_link = build_url(f"/ui/lives/program/{name}")
@@ -147,6 +175,7 @@ def dashboard():
             <a href="{wl_link}">Wordlist (txt)</a>
           </div>
           <div class="techs">{tech_html}</div>
+          <div class="techs">{bf_html}{provider_html}</div>
         </div>
         """
 
@@ -154,11 +183,35 @@ def dashboard():
     stats_link = build_url("/api/stats/by-program")
     body = (
         f"<h1>🔍 Watch Dashboard</h1>"
-        f"<p class='note'>مستندات کامل API: <a href='{docs_link}'>/docs</a> | "
-        f"آمار خام JSON: <a href='{stats_link}'>/api/stats/by-program</a></p>"
+        f"{fresh_banner}"
+        f"<p class='note'>Full API docs: <a href='{docs_link}'>/docs</a> | "
+        f"Raw stats JSON: <a href='{stats_link}'>/api/stats/by-program</a></p>"
         f"{sections}"
     )
     return HTMLResponse(render_page("Watch Dashboard", body))
+
+
+@app.get("/ui/http/fresh", response_class=HTMLResponse)
+def ui_http_fresh(hours: int = 24, page: int = 1, limit: int = 100):
+    cutoff = datetime.now() - timedelta(hours=hours)
+    qs = Http.objects(created_date__gte=cutoff).only("url")
+    total = qs.count()
+    items = [h.url for h in paginate(qs, page, limit) if h.url]
+    return html_list_page(f"Fresh HTTP ({hours}h)", items, page, limit, total, f"/ui/http/fresh?hours={hours}")
+
+
+@app.get("/ui/http/provider/{program_name}/{provider}", response_class=HTMLResponse)
+def ui_http_provider(program_name: str, provider: str, page: int = 1, limit: int = 100):
+    """Http results don't store 'provider' directly -- it lives on Subdomains.
+    Join: find subdomains tagged with this provider, then their Http records."""
+    sub_names = [
+        s.subdomain for s in Subdomains.objects(program_name=program_name, providers=provider).only("subdomain")
+    ]
+    qs = Http.objects(subdomain__in=sub_names).only("url")
+    total = qs.count()
+    items = [h.url for h in paginate(qs, page, limit) if h.url]
+    title = f"{program_name} — Provider: {provider}"
+    return html_list_page(title, items, page, limit, total, f"/ui/http/provider/{program_name}/{provider}")
 
 
 # ====================== صفحات HTML قابل مرور ======================

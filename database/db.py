@@ -1,6 +1,7 @@
 from mongoengine import Document, StringField, BooleanField, DateTimeField, ListField, DictField, IntField, connect
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
+from pymongo import UpdateOne
 import tldextract
 import config
 import re
@@ -226,10 +227,10 @@ def upsert_lives(obj):
         existing.save()
 
         if changed_ip:
-            notify_updated_live_subdomain_ip(obj.get('subdomain'), program_name)
+            # notify_updated_live_subdomain_ip(obj.get('subdomain'), program_name)
             print(f"[{current_time()}] Updated Live subdomain: {obj.get('subdomain')} (ips changed)")
         if changed_cdn:
-            notify_updated_live_subdomain_cdn(obj.get('subdomain'), program_name, new_cdn)
+            # notify_updated_live_subdomain_cdn(obj.get('subdomain'), program_name, new_cdn)
             print(f"[{current_time()}] Updated Live subdomain: {obj.get('subdomain')} (cdn changed)")
         else:
             print(f"[{current_time()}] Live subdomain unchanged: {obj.get('subdomain')}")
@@ -478,3 +479,90 @@ def get_feasible_domains_ordered(run_field):
     statuses = list(DnsBruteStatus.objects(feasible=True))
     statuses.sort(key=lambda s: getattr(s, run_field) or datetime.min)
     return [(s.program_name, s.domain) for s in statuses]
+
+# ============================================================
+# Add to db.py -- replaces the per-URL upsert_url() loop in crawl scripts
+# with a single bulk_write per domain. This is what actually fixes the
+# "MongoDB hangs on 2M URLs" problem -- one query+save per document does
+# not scale, bulk_write with server-side $addToSet/$inc does.
+# ============================================================
+from pymongo import UpdateOne
+
+
+def bulk_store_crawl_results(entries):
+    """
+    entries: list of dicts {program_name, subdomain, url, path, params, source}
+    (params already extracted from the query string by the caller)
+
+    Upserts into both Urls (per full URL) and Endpoints (per normalized path,
+    reusing normalize_path so /user/123 and /user/456 collapse into one row)
+    using bulk_write, in batches, instead of one round-trip per document.
+
+    Returns the number of genuinely new Urls documents created.
+    """
+    if not entries:
+        return 0
+
+    now = datetime.now()
+    urls_coll = Urls._get_collection()
+    ep_coll = Endpoints._get_collection()
+
+    url_ops = []
+    ep_agg = {}  # (program, subdomain, normalized_path) -> {params:set, example_url, count}
+
+    for e in entries:
+        params = e.get("params") or []
+
+        url_ops.append(UpdateOne(
+            {"program_name": e["program_name"], "url": e["url"]},
+            {
+                "$addToSet": {
+                    "sources": e["source"],
+                    "params": {"$each": params},
+                },
+                "$set": {
+                    "subdomain": e["subdomain"],
+                    "path": e["path"],
+                    "last_update": now,
+                },
+                "$setOnInsert": {"created_date": now},
+            },
+            upsert=True
+        ))
+
+        norm_path = normalize_path(e["path"])
+        key = (e["program_name"], e["subdomain"], norm_path)
+        if key not in ep_agg:
+            ep_agg[key] = {"params": set(params), "example_url": e["url"], "count": 1}
+        else:
+            ep_agg[key]["params"].update(params)
+            ep_agg[key]["count"] += 1
+
+    ep_ops = []
+    for (program, subdomain, path), data in ep_agg.items():
+        params = sorted(data["params"])
+        ep_ops.append(UpdateOne(
+            {"program_name": program, "subdomain": subdomain, "path": path},
+            {
+                "$addToSet": {
+                    "params": {"$each": params},
+                    "params_from_crawl": {"$each": params},
+                },
+                "$set": {"example_url": data["example_url"], "last_update": now},
+                "$inc": {"hit_count": data["count"]},
+                "$setOnInsert": {"created_date": now, "x8_checked": False},
+            },
+            upsert=True
+        ))
+
+    BATCH = 2000
+    new_urls = 0
+
+    for i in range(0, len(url_ops), BATCH):
+        result = urls_coll.bulk_write(url_ops[i:i + BATCH], ordered=False)
+        new_urls += result.upserted_count
+
+    for i in range(0, len(ep_ops), BATCH):
+        ep_coll.bulk_write(ep_ops[i:i + BATCH], ordered=False)
+
+    return new_urls

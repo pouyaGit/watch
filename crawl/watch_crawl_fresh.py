@@ -19,16 +19,18 @@ import sys
 import re
 import subprocess
 import requests
+import gzip
+import shutil
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import config
 # مسیر import رو با ساختار واقعی پروژه‌ت هماهنگ کن (database/db.py یا db.py)
-from database.db import Http, upsert_url
+from database.db import Http, bulk_store_crawl_results
 
 OUT_DIR = Path("/opt/watch/crawl/output")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -42,13 +44,19 @@ BAD_EXT = re.compile(
     re.I
 )
 
-# ---------------- تنظیمات قابل تنظیم برای کنترل بار سرور ----------------
-KATANA_DEPTH        = 3   # قبلاً 5 بود؛ حجم درخواست‌ها رو نمایی زیاد می‌کرد
-KATANA_CONCURRENCY  = 5   # -c  8->5 : تعداد request همزمان روی هر هدف
-KATANA_PARALLELISM  = 3   # -p  : تعداد هدف همزمان
-KATANA_RATE_LIMIT   = 40  # -rl 60->40: request در ثانیه (کل)
+# ---------------- server-load tuning ----------------
+KATANA_DEPTH        = 3   # was 5; requests were growing exponentially
+KATANA_CONCURRENCY  = 5   # -c  8->5 : concurrent requests per host
+KATANA_PARALLELISM  = 3   # -p  : concurrent hosts
+KATANA_RATE_LIMIT   = 40  # -rl 60->40: requests/sec (total)
 KATANA_TIMEOUT      = 8
-ROBOTS_WORKERS      = 5  # موازی‌سازی fetch تاریخچه‌ی robots.txt 10 -> 5
+KATANA_CRAWL_DURATION = "3m"  # -ct hard ceiling per run, defense against crawler traps
+ROBOTS_WORKERS      = 5   # parallel robots.txt history fetches, 10 -> 5
+
+# hard cap on URLs stored per domain per run -- a single seed can otherwise
+# pull in an entire sitemap.xml (hundreds of thousands of URLs for a site
+# like dell.com/indeed.com) and grind MongoDB to a halt
+MAX_URLS_PER_DOMAIN = 5000
 # --------------------------------------------------------------------------
 
 
@@ -108,11 +116,20 @@ def resolve_program(host):
 
 
 def run_katana(targets_file, out_file):
+    # NOTE: -kf all (robots.txt/sitemap.xml) intentionally dropped here --
+    # a single sitemap on a large site can contain 100k-1M+ URLs, which is
+    # exactly what caused the 2M-URL blowup from 3 seed hosts. That's kept
+    # for the weekly watch_crawl_all.py run only, where it's an acceptable
+    # one-time cost, not something we want every 12 hours.
+    # -ct is a hard wall-clock ceiling so a crawler trap can't run forever
+    # even if it generates near-infinite unique links (verify flag name
+    # with `katana -h`, it may differ across versions).
     cmd = (
         f'katana -list "{targets_file}" '
-        f'-d {KATANA_DEPTH} -jc -kf all -fs rdn '
+        f'-d {KATANA_DEPTH} -jc -fs rdn '
         f'-c {KATANA_CONCURRENCY} -p {KATANA_PARALLELISM} '
         f'-rl {KATANA_RATE_LIMIT} -timeout {KATANA_TIMEOUT} -retry 1 '
+        f'-ct {KATANA_CRAWL_DURATION} '
         f'-silent -o "{out_file}"'
     )
     log(f"$ {cmd}")
@@ -140,21 +157,65 @@ def fetch_robots_history(domain):
         return []
 
 
+TELEGRAM_MAX_FILE_MB = 45  # bot API hard limit is 50MB, leave margin
+
+
 def send_telegram_file(file_path, caption=""):
     token = config().get("TELEGRAM_BOT_TOKEN")
     chat_id = config().get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         log("Telegram not configured")
         return False
+
+    size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    upload_path = file_path
+
+    if size_mb > TELEGRAM_MAX_FILE_MB:
+        gz_path = f"{file_path}.gz"
+        try:
+            with open(file_path, "rb") as f_in, gzip.open(gz_path, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+            gz_size_mb = os.path.getsize(gz_path) / (1024 * 1024)
+            if gz_size_mb <= TELEGRAM_MAX_FILE_MB:
+                log(f"File was {size_mb:.1f}MB, gzip brought it to {gz_size_mb:.1f}MB")
+                upload_path = gz_path
+            else:
+                log(f"File still {gz_size_mb:.1f}MB after gzip, skipping upload, "
+                    f"sending summary only. Full file stays at: {file_path}")
+                return send_telegram_message(
+                    f"{caption}\n\n(File too large to send: {size_mb:.1f}MB, "
+                    f"kept on server at {file_path})"
+                )
+        except Exception as e:
+            log(f"gzip error: {e}, sending summary only")
+            return send_telegram_message(caption)
+
     url = f"https://api.telegram.org/bot{token}/sendDocument"
     try:
-        with open(file_path, "rb") as f:
+        with open(upload_path, "rb") as f:
             r = requests.post(
                 url,
                 data={"chat_id": chat_id, "caption": caption[:1000]},
                 files={"document": f},
-                timeout=120
+                timeout=180
             )
+        return r.status_code == 200
+    except Exception as e:
+        log(f"Telegram exception: {e}")
+        return False
+
+
+def send_telegram_message(text):
+    token = config().get("TELEGRAM_BOT_TOKEN")
+    chat_id = config().get("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return False
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": chat_id, "text": text[:4000]},
+            timeout=30
+        )
         return r.status_code == 200
     except Exception as e:
         log(f"Telegram exception: {e}")
@@ -172,11 +233,15 @@ def main():
     by_domain = group_by_root_domain(targets)
     log(f"Grouped into {len(by_domain)} root domains: {list(by_domain.keys())}")
 
+    domain_list = "\n".join(f"  - {d} ({len(u)} seeds)" for d, u in by_domain.items())
+    send_telegram_message(f"Starting crawlFresh run\nDomains queued ({len(by_domain)}):\n{domain_list}")
+
     total_new = 0
     total_urls = 0
 
     for domain, urls in by_domain.items():
         log(f"\n--- Crawling {domain} ({len(urls)} seeds) ---")
+        send_telegram_message(f"Now crawling {domain} [crawlFresh]\nSeeds: {len(urls)}")
         domain_dir = OUT_DIR / f"{domain}_{DATE}"
         domain_dir.mkdir(parents=True, exist_ok=True)
 
@@ -186,6 +251,12 @@ def main():
         # ---------- Katana ----------
         katana_out = domain_dir / "katana.txt"
         crawled = set(run_katana(seeds_file, katana_out))
+
+        if len(crawled) > MAX_URLS_PER_DOMAIN:
+            log(f"{domain}: WARNING -- katana returned {len(crawled)} URLs, "
+                f"likely a crawler trap or huge sitemap. Capping to {MAX_URLS_PER_DOMAIN}.")
+            crawled = set(sorted(crawled)[:MAX_URLS_PER_DOMAIN])
+
         all_urls = sorted(set(urls) | crawled)
         log(f"{domain}: katana added {len(all_urls) - len(urls)} new URLs")
 
@@ -200,8 +271,8 @@ def main():
             log(f"{domain}: historical robots added {len(robots_urls)} URLs")
             all_urls = sorted(set(all_urls) | robots_urls)
 
-        # ---------- ذخیره در دیتابیس (فقط اسکوپ واقعی، نه لینک‌های third-party) ----------
-        saved_new = 0
+        # ---------- Build entries and store in one bulk_write (not per-URL) ----------
+        entries = []
         skipped_out_of_scope = 0
         for u in all_urls:
             host = get_host(u)
@@ -209,8 +280,8 @@ def main():
                 continue
             program_name = resolve_program(host)
             if program_name == "Unknown":
-                # این هاست تو کالکشن Http نیست -- یعنی جزو اسکوپ برنامه‌ها نیست
-                # (مثلاً لینک third-party که katana از JS استخراج کرده). ذخیره نمی‌کنیم.
+                # host not in Http -- out of scope (e.g. third-party link katana
+                # pulled from JS). Skip, don't store.
                 skipped_out_of_scope += 1
                 continue
             if u in crawled:
@@ -219,31 +290,43 @@ def main():
                 source = "wayback-robots"
             else:
                 source = "http-seed"
-            try:
-                is_new = upsert_url(program_name, host, u, source)
-                if is_new:
-                    saved_new += 1
-            except Exception as e:
-                log(f"DB error for {u}: {e}")
+
+            parsed = urlparse(u)
+            entries.append({
+                "program_name": program_name,
+                "subdomain": host,
+                "url": u,
+                "path": parsed.path or "/",
+                "params": sorted(set(parse_qs(parsed.query).keys())),
+                "source": source,
+            })
 
         if skipped_out_of_scope:
             log(f"{domain}: skipped {skipped_out_of_scope} out-of-scope/third-party URLs")
 
+        saved_new = bulk_store_crawl_results(entries)
+        log(f"{domain}: bulk-stored {len(entries)} entries, {saved_new} new")
+
         total_new += saved_new
         total_urls += len(all_urls)
 
-        # ---------- خروجی فایل + تلگرام (اختیاری، برای مرور سریع) ----------
+        # ---------- output file + telegram (best-effort, for quick review) ----------
         final_file = domain_dir / f"{domain}_final.txt"
         final_file.write_text("\n".join(all_urls) + "\n")
 
         caption = (
-            f"🕷 Crawl Fresh: {domain}\n"
-            f"Seeds: {len(urls)} | Final: {len(all_urls)} | New in DB: {saved_new}\n"
-            f"Time: {DATE}"
+            f"Result -- {domain} [crawlFresh]\n"
+            f"Seeds: {len(urls)} | Final: {len(all_urls)} | New in DB: {saved_new}"
         )
         send_telegram_file(str(final_file), caption)
 
+    summary = (
+        f"crawlFresh run finished\n"
+        f"Domains processed: {len(by_domain)}\n"
+        f"Total URLs: {total_urls} | New in DB: {total_new}"
+    )
     log(f"=== Done | Domains: {len(by_domain)} | Total URLs: {total_urls} | New in DB: {total_new} ===")
+    send_telegram_message(summary)
 
 
 if __name__ == "__main__":

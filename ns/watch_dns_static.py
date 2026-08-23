@@ -26,7 +26,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from database.db import upsert_subdomain, upsert_lives, upsert_http, mark_static_run, get_feasible_domains_ordered
 from utils.common import detect_cdn, normalize_ips
 from wildcard_detector import WildcardDetector
-from dns_brute_common import log, send_telegram, run_puredns, run_httpx_quick, WORKDIR
+from dns_brute_common import (
+    log, send_telegram, run_puredns, run_httpx_quick, WORKDIR,
+    estimate_minutes, count_lines
+)
 
 START_TIME = time.time()
 MERGED_WORDLIST = WORKDIR / "static-merged.txt"
@@ -111,6 +114,13 @@ def process_domain(program_name, domain):
         shell=True
     )
 
+    candidate_count = count_lines(candidates_file)
+    eta = estimate_minutes(candidate_count)
+    send_telegram(
+        f"Now bruteforcing {program_name} ({domain}) [staticBF]\n"
+        f"Candidates: {candidate_count:,} | ETA: ~{eta} min"
+    )
+
     resolved_file = WORKDIR / f"{domain}.static.resolved.txt"
     resolved_names = run_puredns(candidates_file, resolved_file)
     log(f"{domain}: puredns resolved {len(resolved_names)} names")
@@ -126,11 +136,17 @@ def process_domain(program_name, domain):
     confirmed_live = resolve_ip_and_store(program_name, domain, new_names)
     mark_static_run(domain)
 
+    result_lines = [
+        f"Result -- {program_name} ({domain}) [staticBF]",
+        f"Tested: {candidate_count:,} | Resolved: {len(resolved_names):,} | "
+        f"New: {len(new_names)} | Confirmed live (post-wildcard-filter): {len(confirmed_live)}",
+    ]
+
     if not confirmed_live:
+        send_telegram("\n".join(result_lines))
         return 0
 
     httpx_results = run_httpx_quick(confirmed_live)
-    lines = [f"New subdomains via staticBF -- {program_name} ({domain}): {len(confirmed_live)}"]
     for r in httpx_results:
         upsert_http({
             "subdomain": r.get("host") or r.get("input"),
@@ -144,9 +160,9 @@ def process_domain(program_name, domain):
             "final_url": r.get("final_url", r.get("url")),
             "favicon": r.get("favicon_md5") or r.get("favicon"),
         })
-        lines.append(f"  - {r.get('url')} [{r.get('status_code')}] {r.get('title', '')}")
+        result_lines.append(f"  - {r.get('url')} [{r.get('status_code')}] {r.get('title', '')}")
 
-    send_telegram("\n".join(lines))
+    send_telegram("\n".join(result_lines))
     return len(confirmed_live)
 
 
@@ -163,6 +179,17 @@ def main():
     log(f"=== Static DNS Bruteforce | {len(domains)} feasible domains | "
         f"max_minutes={args.max_minutes or 'unlimited'} ===")
 
+    if domains:
+        domain_list = "\n".join(f"  - {p} -> {d}" for p, d in domains)
+        send_telegram(
+            f"Starting staticBF run\n"
+            f"Time budget: {args.max_minutes or 'unlimited'} min\n"
+            f"Queued domains ({len(domains)}):\n{domain_list}"
+        )
+    else:
+        send_telegram("staticBF run: no feasible domains queued (run watch_dns_precheck.py first)")
+        return
+
     total_new = 0
     processed = 0
     for program_name, domain in domains:
@@ -172,7 +199,18 @@ def main():
         total_new += process_domain(program_name, domain)
         processed += 1
 
-    log(f"=== Done | domains processed: {processed}/{len(domains)} | new live subdomains: {total_new} ===")
+    remaining = len(domains) - processed
+    summary = (
+        f"staticBF run finished\n"
+        f"Domains processed: {processed}/{len(domains)}\n"
+        f"New live subdomains: {total_new}\n"
+        f"Elapsed: {elapsed_minutes():.1f} min"
+    )
+    if remaining:
+        summary += f"\n{remaining} domains left for next scheduled run"
+
+    log(summary)
+    send_telegram(summary)
 
 
 if __name__ == "__main__":

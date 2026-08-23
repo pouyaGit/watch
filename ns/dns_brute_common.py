@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import config
 
-RESOLVERS = os.path.expanduser("~/.resolvers")
+RESOLVERS = "/opt/watch/resolvers.txt"
 WORKDIR = Path("/opt/watch/dns-bruteforce/work")
 WORKDIR.mkdir(parents=True, exist_ok=True)
 
@@ -39,6 +39,25 @@ def send_telegram(text):
         )
     except Exception as e:
         log(f"Telegram error: {e}")
+
+
+# ====================== ETA estimation ======================
+# Based on the throughput already benchmarked in static.sh for these exact
+# puredns settings: ~30M records/hour at -t 100 --wildcard-tests 1
+# --rate-limit-trusted 1000 --wildcard-batch 100000
+PUREDNS_RECORDS_PER_MINUTE = 30_000_000 / 60
+
+
+def estimate_minutes(candidate_count):
+    return max(1, round(candidate_count / PUREDNS_RECORDS_PER_MINUTE))
+
+
+def count_lines(path):
+    try:
+        with open(path, "r", errors="ignore") as f:
+            return sum(1 for _ in f)
+    except Exception:
+        return 0
 
 
 # ====================== Resolution (puredns, same tuning as static.sh) ======================
