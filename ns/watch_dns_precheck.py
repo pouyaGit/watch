@@ -18,7 +18,7 @@ Resumable, just like watch_crawl_all.py:
   watch_dns_static.py / watch_dns_dynamic.py read to know which domains to run on.
 
 Usage:
-  python3 watch_dns_precheck.py --max-minutes 60
+  python3 ns/watch_dns_precheck.py --max-minutes 60
   python3 watch_dns_precheck.py --filter dell.com --max-minutes 10
 """
 

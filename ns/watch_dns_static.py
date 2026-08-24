@@ -10,7 +10,7 @@ Resumable: --max-minutes stops cleanly, next run picks up the
 least-recently-run domain first (DnsBruteStatus.last_static_run).
 
 Usage:
-  python3 watch_dns_static.py --max-minutes 180
+  python3 ns/watch_dns_static.py --max-minutes 300
   python3 watch_dns_static.py --filter dell.com --max-minutes 20
 """
 
