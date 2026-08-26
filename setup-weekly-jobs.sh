@@ -27,7 +27,7 @@ After=network.target
 Type=oneshot
 User=root
 WorkingDirectory=/opt/watch
-Environment="PATH=/opt/watch/venv/bin"
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=/opt/watch/venv/bin/python3 /opt/watch/ns/watch_dns_precheck.py --max-minutes 60
 UNIT
 
@@ -55,7 +55,7 @@ After=network.target
 Type=oneshot
 User=root
 WorkingDirectory=/opt/watch
-Environment="PATH=/opt/watch/venv/bin"
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=/opt/watch/venv/bin/python3 /opt/watch/crawl/watch_crawl_all.py --max-minutes 300
 UNIT
 
@@ -83,7 +83,7 @@ After=network.target
 Type=oneshot
 User=root
 WorkingDirectory=/opt/watch
-Environment="PATH=/opt/watch/venv/bin"
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=/opt/watch/venv/bin/python3 /opt/watch/crawl/watch_param_discovery.py --max-minutes 300
 UNIT
 
@@ -111,7 +111,7 @@ After=network.target
 Type=oneshot
 User=root
 WorkingDirectory=/opt/watch
-Environment="PATH=/opt/watch/venv/bin"
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=/opt/watch/venv/bin/python3 /opt/watch/ns/watch_dns_static.py --max-minutes 300
 UNIT
 
@@ -139,7 +139,7 @@ After=network.target
 Type=oneshot
 User=root
 WorkingDirectory=/opt/watch
-Environment="PATH=/opt/watch/venv/bin"
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=/opt/watch/venv/bin/python3 /opt/watch/ns/watch_dns_dynamic.py --max-minutes 300
 UNIT
 

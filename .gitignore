@@ -54,4 +54,6 @@ resolvers.txt
 temp/
 programs/*
 !programs/test_program.json
-!programs/watch_sync_programs.py
+!programs/watch_sync_programs.pyai_data/raw/
+ai_data/research/
+ai_data/cve/

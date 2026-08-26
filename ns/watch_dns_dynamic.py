@@ -16,7 +16,7 @@ Resumable: --max-minutes stops cleanly, next run picks up the
 least-recently-run domain first (DnsBruteStatus.last_dynamic_run).
 
 Usage:
-  python3 watch_dns_dynamic.py --max-minutes 180
+  python3 ns/watch_dns_dynamic.py --max-minutes 300
   python3 watch_dns_dynamic.py --filter dell.com --max-minutes 20
 """
 
@@ -131,6 +131,13 @@ def process_domain(program_name, domain):
     resolved_file = WORKDIR / f"{domain}.dynamic.resolved.txt"
     resolved_names = run_puredns(candidates_file, resolved_file)
     log(f"{domain}: puredns resolved {len(resolved_names)} names")
+
+    # clean up temp files -- same disk-fill risk as the static script
+    for f in (known_file, alterx_out, candidates_file, resolved_file):
+        try:
+            f.unlink(missing_ok=True)
+        except Exception as e:
+            log(f"Could not remove {f}: {e}")
 
     existing = set(known)
     new_names = [n for n in resolved_names if n not in existing]
