@@ -35,7 +35,7 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import config
-from database.db import Http, bulk_store_crawl_results
+from database.db import Http, Urls, bulk_store_crawl_results
 
 OUT_DIR = Path("/opt/watch/crawl/output")
 OUT_DIR.mkdir(parents=True, exist_ok=True)

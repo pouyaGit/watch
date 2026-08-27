@@ -6,11 +6,12 @@ from ai.schemas.http import HTTPAsset
 from ai.schemas.source import ResearchDocument
 
 
+# ------------------------------------------------------------
 # Explicit technology aliases.
 #
-# This is intentionally small at first.
-# We will expand it based on real Watch data instead of
-# creating a huge guessed mapping.
+# These are exact/family-level relationships that we trust.
+# ------------------------------------------------------------
+
 TECHNOLOGY_ALIASES = {
     "nginx": {
         "nginx",
@@ -28,27 +29,115 @@ TECHNOLOGY_ALIASES = {
 }
 
 
+# ------------------------------------------------------------
+# Product ecosystem mapping.
+#
+# IMPORTANT:
+# This does NOT mean the product is installed.
+# It only means the product belongs to the ecosystem.
+#
+# Example:
+#
+# WP Responsive Images
+#       ↓
+# WordPress ecosystem
+#       ↓
+# WordPress asset = candidate
+#
+# Vulnerability/version status remains UNKNOWN until verified.
+# ------------------------------------------------------------
+
+PRODUCT_ECOSYSTEMS = {
+    "wordpress": {
+        "wordpress",
+    },
+
+    "wp responsive images": {
+        "wordpress",
+    },
+
+    "woocommerce": {
+        "wordpress",
+    },
+
+    "yoast seo": {
+        "wordpress",
+    },
+
+    "elementor": {
+        "wordpress",
+    },
+
+    "wordfence": {
+        "wordpress",
+    },
+}
+
+
 def technology_matches_product(
     technology: str,
     product: str,
 ) -> bool:
-    tech = normalize(technology)
-    prod = normalize(product)
+
+    tech = normalize(
+        technology
+    )
+
+    prod = normalize(
+        product
+    )
 
     if not tech or not prod:
         return False
 
-    # Exact normalized match.
+    # --------------------------------------------------------
+    # Exact normalized match
+    # --------------------------------------------------------
+
     if tech == prod:
         return True
 
-    # Explicit aliases only.
-    aliases = TECHNOLOGY_ALIASES.get(tech)
+    # --------------------------------------------------------
+    # Explicit technology aliases
+    # --------------------------------------------------------
+
+    aliases = TECHNOLOGY_ALIASES.get(
+        tech
+    )
 
     if aliases and prod in aliases:
         return True
 
     return False
+
+
+def product_matches_ecosystem(
+    technology: str,
+    product: str,
+) -> bool:
+
+    tech = normalize(
+        technology
+    )
+
+    prod = normalize(
+        product
+    )
+
+    if not tech or not prod:
+        return False
+
+    ecosystems = PRODUCT_ECOSYSTEMS.get(
+        prod
+    )
+
+    if not ecosystems:
+        return False
+
+    return tech in {
+        normalize(item)
+        for item in ecosystems
+    }
 
 
 def candidate_assets(
@@ -57,18 +146,29 @@ def candidate_assets(
 ) -> list[HTTPAsset]:
 
     candidates: list[HTTPAsset] = []
+
     seen: set[str] = set()
 
     for product in cve.products:
-        product_norm = normalize(product)
+
+        product_norm = normalize(
+            product
+        )
 
         if not product_norm:
             continue
 
-        # Exact index lookup first.
-        assets = index.get(product_norm)
+        # ----------------------------------------------------
+        # Strategy 1:
+        # Exact product lookup
+        # ----------------------------------------------------
+
+        assets = index.get(
+            product_norm
+        )
 
         for asset in assets:
+
             key = (
                 f"{asset.program_name}:"
                 f"{asset.subdomain}"
@@ -77,8 +177,6 @@ def candidate_assets(
             if key in seen:
                 continue
 
-            # Re-check identity. This prevents a future index
-            # expansion from silently creating false positives.
             if any(
                 technology_matches_product(
                     technology,
@@ -87,6 +185,53 @@ def candidate_assets(
                 for technology in asset.tech
             ):
                 seen.add(key)
-                candidates.append(asset)
+                candidates.append(
+                    asset
+                )
+
+        # ----------------------------------------------------
+        # Strategy 2:
+        # Ecosystem lookup
+        #
+        # Example:
+        # WP Responsive Images -> WordPress
+        # ----------------------------------------------------
+
+        ecosystems = PRODUCT_ECOSYSTEMS.get(
+            product_norm,
+            set(),
+        )
+
+        for ecosystem in ecosystems:
+
+            ecosystem_norm = normalize(
+                ecosystem
+            )
+
+            assets = index.get(
+                ecosystem_norm
+            )
+
+            for asset in assets:
+
+                key = (
+                    f"{asset.program_name}:"
+                    f"{asset.subdomain}"
+                )
+
+                if key in seen:
+                    continue
+
+                if any(
+                    product_matches_ecosystem(
+                        technology,
+                        product,
+                    )
+                    for technology in asset.tech
+                ):
+                    seen.add(key)
+                    candidates.append(
+                        asset
+                    )
 
     return candidates

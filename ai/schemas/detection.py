@@ -17,6 +17,10 @@ class DetectionSpec(BaseModel):
         default_factory=list
     )
 
+    query_parameter_values: dict[str, str] = Field(
+        default_factory=dict
+    )
+
     headers: dict[str, str] = Field(
         default_factory=dict
     )
@@ -32,6 +36,7 @@ class DetectionSpec(BaseModel):
     )
 
     version_required: bool = True
+
     affected_versions: list[str] = Field(
         default_factory=list
     )

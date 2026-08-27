@@ -27,7 +27,7 @@ import requests
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import config
-from database.db import Endpoints, ProgramParams
+from database.db import Endpoints
 
 WORDLIST = os.getenv(
     "X8_WORDLIST",
@@ -45,7 +45,6 @@ CHECKPOINT_EVERY = 200     # send one Telegram progress ping every N endpoints,
                            # not per-endpoint -- avoids the notification spam
                            # you already ran into with upsert_lives
 
-_wordlist_cache = {}
 START_TIME = time.time()
 
 
@@ -72,31 +71,12 @@ def send_telegram(text):
         log(f"Telegram error: {e}")
 
 
-def get_combined_wordlist(program_name):
-    """Base (burp) wordlist + this program's own discovered params (from
-    fallparams, if any), combined once and cached, so x8 tests both common
-    param names and ones actually seen in that site's code."""
-    if program_name in _wordlist_cache:
-        return _wordlist_cache[program_name]
-
-    base_params = set()
-    try:
-        with open(WORDLIST, "r", errors="ignore") as f:
-            base_params = {l.strip() for l in f if l.strip()}
-    except Exception:
-        pass
-
-    pp = ProgramParams.objects(program_name=program_name).first()
-    extra = set(pp.params) if pp else set()
-
-    combined_path = WORDLIST_DIR / f"_combined_{program_name}.txt"
-    combined_path.write_text("\n".join(sorted(base_params | extra)) + "\n")
-
-    if extra:
-        log(f"{program_name}: wordlist = {len(base_params)} base + {len(extra)} from fallparams")
-
-    _wordlist_cache[program_name] = str(combined_path)
-    return _wordlist_cache[program_name]
+def get_wordlist_for_program(program_name):
+    """Just the base (burp) wordlist for now -- there's no per-program extra
+    source anymore (fallparams was tried and dropped). Kept as a function
+    (not a bare constant) so a future per-program source can slot back in
+    without touching call sites."""
+    return WORDLIST
 
 
 def run_x8(url, wordlist_path):
@@ -218,7 +198,7 @@ def main():
         if not ep.example_url:
             continue
 
-        new_params = run_x8(ep.example_url, get_combined_wordlist(ep.program_name))
+        new_params = run_x8(ep.example_url, get_wordlist_for_program(ep.program_name))
         if new_params:
             merged = sorted(set((ep.params_from_x8 or []) + new_params))
             ep.params_from_x8 = merged

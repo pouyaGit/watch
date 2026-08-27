@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, quote, urlsplit
 
 import yaml
 
@@ -11,8 +11,7 @@ class NucleiTemplateParser:
     """
     Extract a DetectionSpec from an existing Nuclei template.
 
-    This parser only reads the YAML.
-    It never executes the template.
+    This parser only reads YAML and never executes the template.
     """
 
     def parse(
@@ -47,6 +46,8 @@ class NucleiTemplateParser:
         path = None
 
         query_parameters = []
+        query_parameter_values = {}
+
         headers = {}
 
         response_matchers = []
@@ -78,11 +79,7 @@ class NucleiTemplateParser:
 
                 if len(parts) >= 2:
 
-                    method = (
-                        parts[0]
-                        .upper()
-                    )
-
+                    method = parts[0].upper()
                     target = parts[1]
 
                     parsed = urlsplit(
@@ -91,13 +88,16 @@ class NucleiTemplateParser:
 
                     path = parsed.path
 
-                    query_parameters = [
-                        key
-                        for key, _ in parse_qsl(
-                            parsed.query,
-                            keep_blank_values=True,
+                    query_pairs = parse_qsl(
+                        parsed.query,
+                        keep_blank_values=True,
+                    )
+
+                    for key, value in query_pairs:
+                        query_parameters.append(
+                            key
                         )
-                    ]
+                        query_parameter_values[key] = value
 
                     for line in lines[1:]:
 
@@ -122,79 +122,63 @@ class NucleiTemplateParser:
             [],
         ):
 
-            matcher_type = matcher.get(
-                "type"
+            if matcher.get("type") != "dsl":
+                continue
+
+            dsl_values = matcher.get(
+                "dsl",
+                [],
             )
 
-            # ----------------------------------------------
-            # DSL matcher
-            # ----------------------------------------------
+            if isinstance(
+                dsl_values,
+                str,
+            ):
+                dsl_values = [
+                    dsl_values
+                ]
 
-            if matcher_type == "dsl":
+            for expression in dsl_values:
 
-                dsl_values = matcher.get(
-                    "dsl",
-                    [],
-                )
-
-                if isinstance(
-                    dsl_values,
+                if not isinstance(
+                    expression,
                     str,
                 ):
-                    dsl_values = [
-                        dsl_values
-                    ]
+                    continue
 
-                for expression in dsl_values:
+                expression = expression.strip()
 
-                    if not isinstance(
-                        expression,
-                        str,
+                if not expression:
+                    continue
+
+                response_matchers.append(
+                    expression
+                )
+
+                for code in (
+                    200,
+                    201,
+                    204,
+                    301,
+                    302,
+                    400,
+                    401,
+                    403,
+                    404,
+                    500,
+                ):
+                    if (
+                        f"status_code=={code}"
+                        in expression
                     ):
-                        continue
-
-                    expression = expression.strip()
-
-                    if not expression:
-                        continue
-
-                    response_matchers.append(
-                        expression
-                    )
-
-                    # Extract status codes only from
-                    # explicit status_code expressions.
-                    for code in (
-                        200,
-                        201,
-                        204,
-                        301,
-                        302,
-                        400,
-                        401,
-                        403,
-                        404,
-                        500,
-                    ):
-
-                        if (
-                            f"status_code=={code}"
-                            in expression
-                        ):
-                            response_status.append(
-                                code
-                            )
+                        response_status.append(
+                            code
+                        )
 
         # ==================================================
         # SAFETY
         # ==================================================
 
-        # A GET request that only reads a response is
-        # considered non-destructive.
-        #
-        # Do not infer destructiveness merely from words
-        # such as "exploit", "RCE", "arbitrary file",
-        # or "path traversal" in metadata.
         destructive = False
 
         if (
@@ -254,6 +238,9 @@ class NucleiTemplateParser:
             http_method=method,
             path=path,
             query_parameters=query_parameters,
+            query_parameter_values=(
+                query_parameter_values
+            ),
             headers=headers,
             body_pattern=None,
             response_status=sorted(
@@ -267,10 +254,8 @@ class NucleiTemplateParser:
             reliable_signature=reliable,
             confidence=confidence,
             evidence=[
-                (
-                    "Detection specification extracted "
-                    "from an existing Nuclei template."
-                )
+                "Detection specification extracted "
+                "from an existing Nuclei template."
             ],
             missing_requirements=missing,
         )

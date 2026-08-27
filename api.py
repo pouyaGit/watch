@@ -21,7 +21,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse, HTMLResponse,
 from starlette.middleware.base import BaseHTTPMiddleware
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'database')))
-from db import Programs, Subdomains, LiveSubdomains, Http, Urls, Endpoints
+from db import Programs, Subdomains, LiveSubdomains, Http, Urls, Endpoints, DnsBruteStatus
 from config import config
 
 API_KEY = config().get("API_KEY", "")
@@ -244,11 +244,13 @@ def dashboard():
 
     docs_link = build_url("/docs")
     stats_link = build_url("/api/stats/by-program")
+    dnsbf_link = build_url("/ui/dns-bruteforce/status")
     body = (
         f"<h1>🔍 Watch Dashboard</h1>"
         f"{fresh_banner}"
         f"<p class='note'>Full API docs: <a href='{docs_link}'>/docs</a> | "
-        f"Raw stats JSON: <a href='{stats_link}'>/api/stats/by-program</a></p>"
+        f"Raw stats JSON: <a href='{stats_link}'>/api/stats/by-program</a> | "
+        f"<a href='{dnsbf_link}'>DNS Bruteforce Status</a></p>"
         f"{rows}"
     )
     return HTMLResponse(render_page("Watch Dashboard", body))
@@ -480,6 +482,64 @@ def ui_endpoints(p_name: str, page: int = 1, limit: int = 100):
     home = build_url("/")
     body = f"<h2>Endpoints — {p_name}</h2>{nav}<ul>{lis}</ul>{nav}<br><a href='{home}'>← Back to Dashboard</a>"
     return HTMLResponse(render_page(f"Endpoints — {p_name}", body))
+
+
+@app.get("/ui/dns-bruteforce/status", response_class=HTMLResponse)
+def ui_dns_bruteforce_status():
+    """Health-check page for the weekly DNS bruteforce jobs -- shows, per
+    domain, whether it's feasible and when static/dynamic last actually ran.
+    This is the quickest way to confirm the jobs are alive and progressing
+    without digging through Telegram history or journalctl."""
+    statuses = list(DnsBruteStatus.objects().order_by("program_name", "domain"))
+
+    def fmt(dt):
+        if not dt:
+            return '<span class="note">never</span>'
+        days_ago = (datetime.now() - dt).days
+        stale = ' style="color:#f85149;"' if days_ago > 8 else ""
+        return f'<span{stale}>{dt.strftime("%Y-%m-%d %H:%M")} ({days_ago}d ago)</span>'
+
+    rows = ""
+    for s in statuses:
+        feasible_badge = (
+            '<span class="badge" style="border-color:#3fb950;color:#3fb950;">yes</span>'
+            if s.feasible else
+            '<span class="badge" style="border-color:#f85149;color:#f85149;">no (wildcard)</span>'
+        )
+        rows += (
+            f"<tr><td>{s.program_name}</td><td>{s.domain}</td><td>{feasible_badge}</td>"
+            f"<td>{fmt(s.last_static_run)}</td><td>{fmt(s.last_dynamic_run)}</td></tr>"
+        )
+
+    home = build_url("/")
+    body = f"""
+    <a href="{home}">← Back to Dashboard</a>
+    <h2>DNS Bruteforce Status</h2>
+    <p class="note">Red timestamp = more than 8 days since last run (something's probably stuck --
+    check <code>systemctl status watch-dns-static</code> / <code>watch-dns-dynamic</code>).</p>
+    <table style="width:100%; border-collapse:collapse;">
+      <tr style="text-align:left; border-bottom:1px solid #30363d;">
+        <th style="padding:6px;">Program</th><th>Domain</th><th>Feasible</th>
+        <th>Last static run</th><th>Last dynamic run</th>
+      </tr>
+      {rows}
+    </table>
+    """
+    return HTMLResponse(render_page("DNS Bruteforce Status", body))
+
+
+@app.get("/api/dns-bruteforce/status")
+def api_dns_bruteforce_status():
+    return [
+        {
+            "program_name": s.program_name,
+            "domain": s.domain,
+            "feasible": s.feasible,
+            "last_static_run": s.last_static_run.isoformat() if s.last_static_run else None,
+            "last_dynamic_run": s.last_dynamic_run.isoformat() if s.last_dynamic_run else None,
+        }
+        for s in DnsBruteStatus.objects().order_by("program_name", "domain")
+    ]
 
 
 # ====================== JSON API (بدون تغییر نسبت به قبل) ======================
