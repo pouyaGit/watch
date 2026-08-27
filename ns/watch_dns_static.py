@@ -10,7 +10,7 @@ Resumable: --max-minutes stops cleanly, next run picks up the
 least-recently-run domain first (DnsBruteStatus.last_static_run).
 
 Usage:
-  python3 ns/watch_dns_static.py --max-minutes 300
+  python3 watch_dns_static.py --max-minutes 180
   python3 watch_dns_static.py --filter dell.com --max-minutes 20
 """
 
@@ -40,10 +40,16 @@ def elapsed_minutes():
 
 
 def ensure_static_wordlist():
-    """Download + merge once, cache like dynamic.sh already does."""
-    if MERGED_WORDLIST.exists():
-        log(f"Using cached static wordlist: {MERGED_WORDLIST}")
+    """Download + merge once, cache like dynamic.sh already does.
+    Checks size, not just existence -- a 0-byte cached file (e.g. from a
+    disk-full download failure) used to be treated as valid forever."""
+    if MERGED_WORDLIST.exists() and MERGED_WORDLIST.stat().st_size > 0:
+        log(f"Using cached static wordlist: {MERGED_WORDLIST} "
+            f"({MERGED_WORDLIST.stat().st_size / 1024 / 1024:.1f} MB)")
         return
+
+    if MERGED_WORDLIST.exists():
+        log(f"WARNING: {MERGED_WORDLIST} exists but is empty -- rebuilding")
 
     log("Downloading assetnote wordlists...")
     best = WORKDIR / "best-dns-wordlist.txt"
@@ -52,14 +58,24 @@ def ensure_static_wordlist():
     subprocess.run(["curl", "-fsSL", "https://wordlists-cdn.assetnote.io/data/manual/2m-subdomains.txt", "-o", str(two_m)])
 
     crunch_out = WORKDIR / "4-lower.txt"
-    if not crunch_out.exists():
+    if not crunch_out.exists() or crunch_out.stat().st_size == 0:
         subprocess.run(f'crunch 1 4 abcdefghijklmnopqrstuvwxyz1234567890 > "{crunch_out}"', shell=True)
 
     subprocess.run(
         f'cat "{best}" "{two_m}" "{crunch_out}" | sort -u > "{MERGED_WORDLIST}"',
         shell=True
     )
-    log(f"Static wordlist ready: {MERGED_WORDLIST}")
+
+    if not MERGED_WORDLIST.exists() or MERGED_WORDLIST.stat().st_size == 0:
+        log(f"ERROR: static wordlist build failed, {MERGED_WORDLIST} is still empty. "
+            f"Check disk space (df -h) and network access.")
+        send_telegram(
+            "staticBF: wordlist build FAILED (file empty after download+merge). "
+            "Check disk space on the server."
+        )
+    else:
+        log(f"Static wordlist ready: {MERGED_WORDLIST} "
+            f"({MERGED_WORDLIST.stat().st_size / 1024 / 1024:.1f} MB)")
 
 
 def resolve_ip_and_store(program_name, domain, new_names):
@@ -124,6 +140,15 @@ def process_domain(program_name, domain):
     resolved_file = WORKDIR / f"{domain}.static.resolved.txt"
     resolved_names = run_puredns(candidates_file, resolved_file)
     log(f"{domain}: puredns resolved {len(resolved_names)} names")
+
+    # These are huge (hundreds of MB for an 11M-line wordlist) and only needed
+    # transiently -- delete right after reading, or they silently fill the disk
+    # over repeated runs (this is what caused the wordlist cache to end up empty).
+    for f in (candidates_file, resolved_file):
+        try:
+            f.unlink(missing_ok=True)
+        except Exception as e:
+            log(f"Could not remove {f}: {e}")
 
     from database.db import Subdomains
     existing = {s.subdomain for s in Subdomains.objects(scope=domain).only("subdomain")}
