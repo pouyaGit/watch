@@ -216,21 +216,22 @@ RETURN JSON MATCHING THIS SCHEMA
 """
 
 
-def _available_pattern_set(
+def _available_payload_patterns(
     context: XSSResearchContext,
 ) -> set[str]:
-    patterns: set[str] = set()
-    for item in context.payload_patterns:
-        patterns.add(item.value)
-    for item in context.verification_patterns:
-        patterns.add(item.value)
-    for item in context.contexts:
-        patterns.add(item.value)
-    for item in context.technologies:
-        patterns.add(item.value)
-    for item in context.waf_observations:
-        patterns.add(item.value)
-    return patterns
+    return {
+        item.value
+        for item in context.payload_patterns
+    }
+
+
+def _available_verification_patterns(
+    context: XSSResearchContext,
+) -> set[str]:
+    return {
+        item.value
+        for item in context.verification_patterns
+    }
 
 
 def _source_ids_by_knowledge_id(
@@ -268,7 +269,7 @@ def _validate_payload_suggestion(
     item: XSSSuggestedPayload,
     *,
     context: XSSResearchContext,
-    available_patterns: set[str],
+    allowed_patterns: set[str],
     sources_by_kid: dict[str, set[str]],
     retrieved_ids: set[str],
 ) -> None:
@@ -291,11 +292,12 @@ def _validate_payload_suggestion(
         if (
             item.based_on_pattern is not None
             and item.based_on_pattern
-            not in available_patterns
+            not in allowed_patterns
         ):
             raise XSSLLMAttributionError(
                 "knowledge payload based_on_pattern is not "
-                f"in context: {item.based_on_pattern!r}"
+                f"a payload pattern in context: "
+                f"{item.based_on_pattern!r}"
             )
         return
 
@@ -308,11 +310,12 @@ def _validate_payload_suggestion(
     if (
         item.based_on_pattern is not None
         and item.based_on_pattern
-        not in available_patterns
+        not in allowed_patterns
     ):
         raise XSSLLMAttributionError(
             "model_generated payload based_on_pattern is "
-            f"not in context: {item.based_on_pattern!r}"
+            "not a payload pattern in context: "
+            f"{item.based_on_pattern!r}"
         )
 
 
@@ -320,7 +323,7 @@ def _validate_verification_idea(
     item: XSSVerificationIdea,
     *,
     context: XSSResearchContext,
-    available_patterns: set[str],
+    allowed_patterns: set[str],
     sources_by_kid: dict[str, set[str]],
     retrieved_ids: set[str],
 ) -> None:
@@ -343,11 +346,12 @@ def _validate_verification_idea(
         if (
             item.based_on_pattern is not None
             and item.based_on_pattern
-            not in available_patterns
+            not in allowed_patterns
         ):
             raise XSSLLMAttributionError(
                 "knowledge verification based_on_pattern is "
-                f"not in context: {item.based_on_pattern!r}"
+                "not a verification pattern in context: "
+                f"{item.based_on_pattern!r}"
             )
         return
 
@@ -360,11 +364,12 @@ def _validate_verification_idea(
     if (
         item.based_on_pattern is not None
         and item.based_on_pattern
-        not in available_patterns
+        not in allowed_patterns
     ):
         raise XSSLLMAttributionError(
             "model_generated verification based_on_pattern "
-            f"is not in context: {item.based_on_pattern!r}"
+            "is not a verification pattern in context: "
+            f"{item.based_on_pattern!r}"
         )
 
 
@@ -372,7 +377,6 @@ def _validate_context_observation(
     item: XSSContextObservation,
     *,
     context: XSSResearchContext,
-    available_patterns: set[str],
     sources_by_kid: dict[str, set[str]],
     retrieved_ids: set[str],
 ) -> None:
@@ -392,15 +396,6 @@ def _validate_context_observation(
             retrieved_ids=retrieved_ids,
             sources_by_kid=sources_by_kid,
         )
-        if (
-            item.based_on_pattern is not None
-            and item.based_on_pattern
-            not in available_patterns
-        ):
-            raise XSSLLMAttributionError(
-                "knowledge observation based_on_pattern is "
-                f"not in context: {item.based_on_pattern!r}"
-            )
         return
 
     if item.knowledge_ids or item.source_ids:
@@ -408,15 +403,6 @@ def _validate_context_observation(
             "model_generated observation must not carry "
             "knowledge_ids or source_ids: "
             f"{item.observation!r}"
-        )
-    if (
-        item.based_on_pattern is not None
-        and item.based_on_pattern
-        not in available_patterns
-    ):
-        raise XSSLLMAttributionError(
-            "model_generated observation based_on_pattern "
-            f"is not in context: {item.based_on_pattern!r}"
         )
 
 
@@ -504,15 +490,18 @@ class XSSLLMResearcher:
         sources_by_kid = _source_ids_by_knowledge_id(
             context
         )
-        available_patterns = _available_pattern_set(
+        available_payload_patterns = _available_payload_patterns(
             context
+        )
+        available_verification_patterns = (
+            _available_verification_patterns(context)
         )
 
         for item in result.suggested_payloads:
             _validate_payload_suggestion(
                 item,
                 context=context,
-                available_patterns=available_patterns,
+                allowed_patterns=available_payload_patterns,
                 sources_by_kid=sources_by_kid,
                 retrieved_ids=retrieved_ids,
             )
@@ -521,7 +510,7 @@ class XSSLLMResearcher:
             _validate_verification_idea(
                 item,
                 context=context,
-                available_patterns=available_patterns,
+                allowed_patterns=available_verification_patterns,
                 sources_by_kid=sources_by_kid,
                 retrieved_ids=retrieved_ids,
             )
@@ -530,7 +519,6 @@ class XSSLLMResearcher:
             _validate_context_observation(
                 item,
                 context=context,
-                available_patterns=available_patterns,
                 sources_by_kid=sources_by_kid,
                 retrieved_ids=retrieved_ids,
             )

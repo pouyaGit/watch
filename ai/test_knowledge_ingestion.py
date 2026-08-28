@@ -24,9 +24,10 @@ from ai.schemas.ingestion import (
 SOURCE_TEXT = (
     "We observed a reflected XSS in the q parameter of "
     "the search endpoint. The reflection lands inside a "
-    "quoted class attribute. The application runs behind "
-    "Strict WAF. We labelled the technique 'attribute "
-    "breakout marker' for sink execution."
+    "quoted html_attribute on the Example Framework. The "
+    "application runs behind Strict WAF. We labelled the "
+    "technique 'attribute breakout marker' for sink "
+    "execution."
 )
 
 
@@ -75,6 +76,14 @@ def _exclaim(
         if verification_patterns is not None
         else ["attribute sink execution"]
     )
+
+    def _with_default(
+        value: list[str] | None, default: list[str]
+    ) -> list[str]:
+        if value is None:
+            return list(default)
+        return list(value)
+
     return {
         "evidence_class": evidence_class,
         "rationale": rationale,
@@ -86,16 +95,16 @@ def _exclaim(
         ],
         "title": title,
         "summary": summary,
-        "technologies": list(
-            technologies or ["Example Framework"]
+        "technologies": _with_default(
+            technologies, ["Example Framework"]
         ),
-        "xss_types": list(xss_types or ["reflected"]),
-        "contexts": list(contexts or ["html_attribute"]),
-        "wafs": list(wafs or ["Strict WAF"]),
-        "techniques": list(techniques or []),
+        "xss_types": _with_default(xss_types, ["reflected"]),
+        "contexts": _with_default(contexts, ["html_attribute"]),
+        "wafs": _with_default(wafs, ["Strict WAF"]),
+        "techniques": _with_default(techniques, []),
         "payload_patterns": payload_patterns,
         "verification_patterns": verification_patterns,
-        "tags": list(tags or []),
+        "tags": _with_default(tags, []),
         "evidence_quality": evidence_quality,
         "confidence": confidence,
         "forbidden_values": [],
@@ -774,6 +783,258 @@ class KnowledgeIngestionAgentHelperTests(unittest.TestCase):
             contains_forbidden("onerror bypass technique")
         )
         self.assertTrue(contains_forbidden("<script>x</script>"))
+
+
+class KnowledgeIngestionAgentPerValueGroundingTests(unittest.TestCase):
+    """
+    Regression tests for audit finding C1: every populated
+    security-metadata value must be grounded either in the
+    source content or directly in an evidence snippet. A
+    single generic snippet must NOT authorize arbitrary
+    unrelated values, and the LLM must not be able to opt
+    out of strict grounding.
+    """
+
+    def test_unrelated_technology_list_rejected(self):
+        # The default _exclaim uses a source that contains
+        # "Example Framework". Use a source that does NOT,
+        # so the technology list is ungrounded and must be
+        # rejected even though the snippet is grounded.
+        source = _source(
+            content=(
+                "We observed a reflected XSS in the q "
+                "parameter inside a quoted html_attribute. "
+                "The application runs behind Strict WAF."
+            )
+        )
+        body = _extraction_payload(
+            source,
+            [
+                _exclaim(
+                    snippet_text="reflected XSS in the q parameter",
+                    technologies=[
+                        "Zero Trust",
+                        "OAuth2",
+                        "JWT",
+                        "JWE",
+                    ],
+                    source=source,
+                )
+            ],
+        )
+        with _Store() as store:
+            report = KnowledgeIngestionAgent(
+                StubProvider(body), store
+            ).ingest(source)
+
+        self.assertEqual(report.accepted_claim_count, 0)
+        self.assertEqual(report.rejected_claim_count, 1)
+        self.assertIsNone(report.persisted_knowledge_id)
+        self.assertTrue(
+            any(
+                "ungrounded" in note for note in report.notes
+            )
+        )
+
+    def test_unrelated_waf_rejected(self):
+        # Snippet is grounded in source; the WAF "Imperva"
+        # is not present anywhere in the source and not
+        # named in the snippet.
+        source = _source(
+            content=(
+                "We observed a reflected XSS in the q "
+                "parameter inside a quoted html_attribute. "
+                "The application runs behind Strict WAF."
+            )
+        )
+        body = _extraction_payload(
+            source,
+            [
+                _exclaim(
+                    snippet_text="reflected XSS in the q parameter",
+                    wafs=["Imperva"],
+                    source=source,
+                )
+            ],
+        )
+        with _Store() as store:
+            report = KnowledgeIngestionAgent(
+                StubProvider(body), store
+            ).ingest(source)
+
+        self.assertEqual(report.accepted_claim_count, 0)
+        self.assertEqual(report.rejected_claim_count, 1)
+        self.assertIsNone(report.persisted_knowledge_id)
+
+    def test_grounded_value_with_matching_snippet_accepted(self):
+        # The WAF value is literally in the source AND the
+        # snippet names it. Strict grounding passes.
+        source = _source(
+            content=(
+                "We observed a reflected XSS in the q "
+                "parameter. Strict WAF is in front of the "
+                "endpoint. The WAF is Strict WAF."
+            )
+        )
+        body = _extraction_payload(
+            source,
+            [
+                _exclaim(
+                    snippet_text=(
+                        "The WAF is Strict WAF"
+                    ),
+                    wafs=["Strict WAF"],
+                    technologies=[],
+                    xss_types=["reflected"],
+                    contexts=[],
+                    payload_patterns=[],
+                    verification_patterns=[],
+                    source=source,
+                )
+            ],
+        )
+        with _Store() as store:
+            report = KnowledgeIngestionAgent(
+                StubProvider(body), store
+            ).ingest(source)
+
+        self.assertEqual(report.accepted_claim_count, 1)
+        self.assertEqual(report.rejected_claim_count, 0)
+        self.assertTrue(report.persisted_knowledge_id)
+
+    def test_multiple_values_each_supported_by_evidence_accepted(
+        self,
+    ):
+        # Snippet names each value, so all are
+        # snippet-supported. All persisted together.
+        source = _source(
+            content=(
+                "We observed a reflected XSS in the q "
+                "parameter landing in a html_attribute on "
+                "the Example Framework. The endpoint is "
+                "behind Strict WAF. The technique is "
+                "attribute breakout marker."
+            )
+        )
+        body = _extraction_payload(
+            source,
+            [
+                _exclaim(
+                    snippet_text=(
+                        "The endpoint is behind Strict WAF"
+                    ),
+                    technologies=["Example Framework"],
+                    wafs=["Strict WAF"],
+                    contexts=["html_attribute"],
+                    xss_types=["reflected"],
+                    payload_patterns=[
+                        "attribute breakout marker"
+                    ],
+                    verification_patterns=[],
+                    source=source,
+                )
+            ],
+        )
+        with _Store() as store:
+            report = KnowledgeIngestionAgent(
+                StubProvider(body), store
+            ).ingest(source)
+            document = store.get_by_id(
+                report.persisted_knowledge_id
+            )
+
+        self.assertEqual(report.accepted_claim_count, 1)
+        self.assertIsNotNone(document)
+        self.assertEqual(
+            sorted(
+                item.value
+                for item in document.aggregate.technologies
+            ),
+            ["Example Framework"],
+        )
+        self.assertEqual(
+            sorted(
+                item.value for item in document.aggregate.wafs
+            ),
+            ["Strict WAF"],
+        )
+        self.assertEqual(
+            sorted(
+                item.value
+                for item in document.aggregate.contexts
+            ),
+            ["html_attribute"],
+        )
+
+    def test_model_cannot_disable_strict_grounding(self):
+        # The strict per-value grounding must not be a
+        # per-claim switch the LLM can toggle. Confirm
+        # there is no such field on ExtractedClaim.
+        from ai.schemas.ingestion import ExtractedClaim
+
+        forbidden_field_names = {
+            "strict_grounding",
+            "skip_grounding",
+            "permissive_grounding",
+            "loose_grounding",
+            "disable_per_value_grounding",
+        }
+        declared = set(ExtractedClaim.model_fields.keys())
+        leak = forbidden_field_names & declared
+        self.assertEqual(
+            leak,
+            set(),
+            f"ExtractedClaim must not expose {leak}; "
+            "per-value grounding must be unconditional.",
+        )
+
+        # Even with strict_payloads=False (which only
+        # controls the *executable payload* check, not
+        # grounding), an ungrounded value is still
+        # rejected by the agent.
+        source = _source(
+            content=(
+                "We observed a reflected XSS in the q "
+                "parameter. Strict WAF is in front of the "
+                "endpoint."
+            )
+        )
+        body = _extraction_payload(
+            source,
+            [
+                _exclaim(
+                    snippet_text="Strict WAF is in front of the endpoint",
+                    wafs=["Imperva"],
+                    strict_payloads=False,
+                    source=source,
+                )
+            ],
+        )
+        with _Store() as store:
+            report = KnowledgeIngestionAgent(
+                StubProvider(body), store
+            ).ingest(source)
+
+        self.assertEqual(report.accepted_claim_count, 0)
+        self.assertEqual(report.rejected_claim_count, 1)
+        self.assertIsNone(report.persisted_knowledge_id)
+
+    def test_existing_valid_ingestion_fixtures_still_pass(self):
+        # The default _exclaim() yields values that are
+        # literally present in the updated SOURCE_TEXT
+        # ("html_attribute", "Example Framework",
+        # "Strict WAF", "attribute breakout marker",
+        # "attribute sink execution", "reflected").
+        source = _source()
+        body = _extraction_payload(source, [_exclaim()])
+        with _Store() as store:
+            report = KnowledgeIngestionAgent(
+                StubProvider(body), store
+            ).ingest(source)
+
+        self.assertEqual(report.accepted_claim_count, 1)
+        self.assertEqual(report.rejected_claim_count, 0)
+        self.assertTrue(report.persisted_knowledge_id)
 
 
 if __name__ == "__main__":

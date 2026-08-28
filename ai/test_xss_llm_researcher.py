@@ -883,5 +883,233 @@ class XSSLLMResearcherMetadataPropagationTests(unittest.TestCase):
         )
 
 
+class XSSLLMResearcherBasedOnPatternTests(unittest.TestCase):
+    """
+    Regression tests for audit finding C2: the
+    ``based_on_pattern`` field on a model_generated or
+    knowledge suggestion must anchor to the *corresponding*
+    list only.
+
+    For ``suggested_payloads`` the anchor must be a payload
+    pattern. For ``verification_ideas`` it must be a
+    verification pattern. A context, technology, or WAF
+    observation must NOT satisfy ``based_on_pattern``.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._ctx_resources = _build_context()
+        cls._temp_dir, cls.case, cls.context = (
+            cls._ctx_resources
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._ctx_resources[0].cleanup()
+
+    def _base_response(self) -> dict:
+        return {
+            "case_id": self.case.case_id,
+            "case_status_suggestion": "ANALYZED",
+            "suggested_payloads": [],
+            "verification_ideas": [],
+            "context_observations": [],
+            "next_research_questions": [],
+            "evidence": ["UNKNOWN: based_on_pattern test"],
+            "model": None,
+            "raw_response_id": None,
+        }
+
+    def test_model_generated_payload_anchored_to_payload_pattern(
+        self,
+    ):
+        payload_value = self.context.payload_patterns[0].value
+        response = self._base_response()
+        response["suggested_payloads"] = [
+            {
+                "pattern": "novel payload",
+                "origin": "model_generated",
+                "knowledge_ids": [],
+                "source_ids": [],
+                "based_on_pattern": payload_value,
+                "rationale": "anchored to a real payload pattern",
+            }
+        ]
+
+        result = XSSLLMResearcher(StubLLM(json.dumps(response))).analyze(
+            self.case, self.context
+        )
+
+        self.assertEqual(
+            result.suggested_payloads[0].based_on_pattern,
+            payload_value,
+        )
+
+    def test_model_generated_payload_anchored_to_context_rejected(
+        self,
+    ):
+        response = self._base_response()
+        response["suggested_payloads"] = [
+            {
+                "pattern": "novel payload",
+                "origin": "model_generated",
+                "knowledge_ids": [],
+                "source_ids": [],
+                "based_on_pattern": "html_attribute",
+                "rationale": (
+                    "anchored to a context label, not a payload"
+                ),
+            }
+        ]
+
+        with self.assertRaises(XSSLLMAttributionError):
+            XSSLLMResearcher(StubLLM(json.dumps(response))).analyze(
+                self.case, self.context
+            )
+
+    def test_model_generated_payload_anchored_to_technology_rejected(
+        self,
+    ):
+        response = self._base_response()
+        response["suggested_payloads"] = [
+            {
+                "pattern": "novel payload",
+                "origin": "model_generated",
+                "knowledge_ids": [],
+                "source_ids": [],
+                "based_on_pattern": "Example Framework",
+                "rationale": "anchored to a technology label",
+            }
+        ]
+
+        with self.assertRaises(XSSLLMAttributionError):
+            XSSLLMResearcher(StubLLM(json.dumps(response))).analyze(
+                self.case, self.context
+            )
+
+    def test_model_generated_payload_anchored_to_waf_rejected(
+        self,
+    ):
+        response = self._base_response()
+        response["suggested_payloads"] = [
+            {
+                "pattern": "novel payload",
+                "origin": "model_generated",
+                "knowledge_ids": [],
+                "source_ids": [],
+                "based_on_pattern": "Strict WAF",
+                "rationale": "anchored to a WAF label",
+            }
+        ]
+
+        with self.assertRaises(XSSLLMAttributionError):
+            XSSLLMResearcher(StubLLM(json.dumps(response))).analyze(
+                self.case, self.context
+            )
+
+    def test_model_generated_verification_anchored_to_verification_pattern(
+        self,
+    ):
+        verify_value = self.context.verification_patterns[0].value
+        response = self._base_response()
+        response["verification_ideas"] = [
+            {
+                "pattern": "novel verification",
+                "origin": "model_generated",
+                "knowledge_ids": [],
+                "source_ids": [],
+                "based_on_pattern": verify_value,
+                "rationale": "anchored to a real verification pattern",
+            }
+        ]
+
+        result = XSSLLMResearcher(StubLLM(json.dumps(response))).analyze(
+            self.case, self.context
+        )
+
+        self.assertEqual(
+            result.verification_ideas[0].based_on_pattern,
+            verify_value,
+        )
+
+    def test_model_generated_verification_anchored_to_payload_pattern_rejected(
+        self,
+    ):
+        # A verification idea anchored to a *payload* pattern
+        # (the wrong list) must be rejected.
+        payload_value = self.context.payload_patterns[0].value
+        response = self._base_response()
+        response["verification_ideas"] = [
+            {
+                "pattern": "novel verification",
+                "origin": "model_generated",
+                "knowledge_ids": [],
+                "source_ids": [],
+                "based_on_pattern": payload_value,
+                "rationale": "wrong list anchor",
+            }
+        ]
+
+        with self.assertRaises(XSSLLMAttributionError):
+            XSSLLMResearcher(StubLLM(json.dumps(response))).analyze(
+                self.case, self.context
+            )
+
+    def test_knowledge_attribution_rules_remain_intact(self):
+        # A knowledge-derived payload still requires
+        # knowledge_ids and source_ids, and a based_on_pattern
+        # that anchors to a payload pattern.
+        kid = self.context.retrieved_knowledge_ids[0]
+        sid = self.context.payload_patterns[0].source_ids[0]
+        payload_value = self.context.payload_patterns[0].value
+        response = self._base_response()
+        response["suggested_payloads"] = [
+            {
+                "pattern": "kb payload",
+                "origin": "knowledge",
+                "knowledge_ids": [kid],
+                "source_ids": [sid],
+                "based_on_pattern": payload_value,
+                "rationale": "directly anchored",
+            }
+        ]
+
+        result = XSSLLMResearcher(StubLLM(json.dumps(response))).analyze(
+            self.case, self.context
+        )
+
+        self.assertEqual(
+            result.suggested_payloads[0].origin, "knowledge"
+        )
+        self.assertEqual(
+            result.suggested_payloads[0].knowledge_ids, [kid]
+        )
+        self.assertEqual(
+            result.suggested_payloads[0].source_ids, [sid]
+        )
+        self.assertEqual(
+            result.suggested_payloads[0].based_on_pattern,
+            payload_value,
+        )
+
+        # A knowledge-derived payload with no source_ids
+        # must still be rejected (no semantic relaxation).
+        response2 = self._base_response()
+        response2["suggested_payloads"] = [
+            {
+                "pattern": "kb payload",
+                "origin": "knowledge",
+                "knowledge_ids": [kid],
+                "source_ids": [],
+                "based_on_pattern": payload_value,
+                "rationale": "missing source_ids",
+            }
+        ]
+        with self.assertRaises(XSSLLMAttributionError):
+            XSSLLMResearcher(StubLLM(json.dumps(response2))).analyze(
+                self.case, self.context
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

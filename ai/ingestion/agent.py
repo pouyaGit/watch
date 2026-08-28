@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pydantic import ValidationError
 
 from ai.ingestion.grounding import (
+    claim_values_grounded,
     contains_forbidden,
     value_grounded,
 )
@@ -237,22 +238,35 @@ def _claim_value_grounded(
     Return ``(supported, reason)`` for a single claim.
 
     A claim is "supported" if at least one of its
-    ``evidence_snippets`` is grounded in the source content.
-    The list-valued fields themselves are not required to
-    appear verbatim; the spec permits permissive support
-    "when the source clearly supports it through an evidence
-    snippet". The list values are not promoted to
-    trusted knowledge on their own; they ride on the
-    snippet grounding.
+    ``evidence_snippets`` is grounded in the source content
+    AND every populated security-metadata value is grounded
+    either in the source content or directly inside a snippet.
+
+    A single generic snippet does NOT authorize arbitrary
+    unrelated values: each value must satisfy the strict
+    per-value rule. There is no opt-out for this check.
     """
 
     if not claim.evidence_snippets:
         return False, "no evidence snippets"
 
+    snippet_supported = False
     for snippet in claim.evidence_snippets:
         if _snippet_grounded(snippet.text, content):
-            return True, None
-    return False, "no grounded evidence snippet"
+            snippet_supported = True
+            break
+
+    if not snippet_supported:
+        return False, "no grounded evidence snippet"
+
+    claim_dict = claim.model_dump(mode="json")
+    ok, unsupported = claim_values_grounded(claim_dict, content)
+    if not ok:
+        return False, (
+            f"ungrounded values: {', '.join(unsupported)}"
+        )
+
+    return True, None
 
 
 def _claim_passes_payload_safety(

@@ -186,3 +186,112 @@ def claim_fingerprint(claim: Mapping[str, Any]) -> str:
         canonical.encode("utf-8")
     ).hexdigest()
     return digest
+
+
+_VALUE_LIST_FIELDS: tuple[str, ...] = (
+    "technologies",
+    "xss_types",
+    "contexts",
+    "wafs",
+    "techniques",
+    "tags",
+)
+
+
+def _is_snippet_supported(
+    value: str,
+    snippets_text: list[str],
+) -> bool:
+    """
+    Return True iff at least one snippet text contains/supports
+    the given value (case- and whitespace-insensitive substring
+    match).
+    """
+
+    needle = normalize_for_grounding(value)
+    if not needle:
+        return False
+    for text in snippets_text:
+        if needle in normalize_for_grounding(text):
+            return True
+    return False
+
+
+def is_value_grounded(
+    value: str,
+    *,
+    content: str,
+    snippets_text: list[str],
+) -> bool:
+    """
+    Return True iff a single security-metadata value is
+    supported by either the source ``content`` or one of the
+    provided evidence ``snippets_text``.
+
+    This is the per-value check the ingestion agent runs for
+    every populated item in
+    ``technologies / xss_types / contexts / wafs / techniques /
+    tags`` and for any non-empty ``title`` / ``summary``.
+
+    The rule is strict by design: a single generic snippet that
+    happens to appear in the source must NOT authorize an
+    arbitrary list of unrelated values. Each value must be
+    either literally grounded in the source content, or
+    directly named inside an evidence snippet.
+    """
+
+    if not value:
+        return False
+
+    if value_grounded(value, content):
+        return True
+
+    return _is_snippet_supported(value, snippets_text)
+
+
+def claim_values_grounded(
+    claim: Mapping[str, Any],
+    content: str,
+) -> tuple[bool, list[str]]:
+    """
+    Strict per-value grounding for an extracted claim.
+
+    Returns ``(ok, unsupported_values)``. ``ok`` is True iff
+    every populated value in the security-metadata list
+    fields is supported by either the source content or one of
+    the claim's evidence snippets; if any value is
+    unsupported, ``ok`` is False and ``unsupported_values``
+    lists the offenders in stable order.
+
+    ``title`` and ``summary`` are also checked: if populated,
+    they must be grounded in the content (they describe the
+    source itself, so snippet-support is not appropriate).
+    """
+
+    snippets_text = [
+        snippet["text"]
+        for snippet in claim.get("evidence_snippets", [])
+        if isinstance(snippet, Mapping)
+        and isinstance(snippet.get("text"), str)
+    ]
+
+    unsupported: list[str] = []
+
+    for field in _VALUE_LIST_FIELDS:
+        for value in claim.get(field, []) or []:
+            if not isinstance(value, str):
+                continue
+            if value and not is_value_grounded(
+                value,
+                content=content,
+                snippets_text=snippets_text,
+            ):
+                unsupported.append(f"{field}={value!r}")
+
+    for field in ("title", "summary"):
+        value = claim.get(field)
+        if isinstance(value, str) and value.strip():
+            if not value_grounded(value, content):
+                unsupported.append(f"{field}={value!r}")
+
+    return (not unsupported), sorted(unsupported)
