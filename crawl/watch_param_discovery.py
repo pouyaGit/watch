@@ -98,8 +98,10 @@ def run_x8(url, wordlist_path):
         "-w", wordlist_path,
         "-O", "json",
         "-o", out_path,
-        "-c", "5",           # concurrency per url (default 1 was too slow for 82k endpoints)
-        "-W", "1",            # concurrent urls -- keep at 1, server is resource-limited
+        "-c", "8",           # concurrency per url (bumped from 5 -- most of the slowdown was
+                             # wasted time on low-value duplicate endpoints, not raw x8 speed)
+        "-W", "2",            # concurrent urls -- bumped from 1; watch memory (free -h) on the
+                             # next scheduled run and drop back to 1 if the 4GB box struggles
         "--timeout", "10",
         "--verify",           # re-verifies found params, fewer false positives
     ]

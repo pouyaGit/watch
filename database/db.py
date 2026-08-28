@@ -363,12 +363,13 @@ def upsert_url(program_name, subdomain, url, source):
 _UUID_RE = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
 _NUM_RE  = re.compile(r'^\d+$')
 _HEX_RE  = re.compile(r'^[0-9a-fA-F]{16,}$')   # هش‌های طولانی (session id, hash, ...)
-
-
+_ID_SLUG_RE = re.compile(r'^\d{4,}-.+$')
+ 
 def normalize_path(path):
     """
-    segmentهای متغیر (ID عددی، UUID، هش) رو با placeholder جایگزین می‌کنه
-    تا /user/12345/profile و /user/67890/profile یه اندپوینت حساب بشن.
+    Replaces variable segments (numeric ID, UUID, hash, ID+slug) with a
+    placeholder so /user/12345/profile and /user/67890/profile collapse into
+    one endpoint, and so does /help/articles/123-title-en vs /help/articles/123-title-fr.
     """
     if not path:
         return "/"
@@ -379,6 +380,8 @@ def normalize_path(path):
             normalized.append(seg)
         elif _UUID_RE.match(seg):
             normalized.append("{uuid}")
+        elif _ID_SLUG_RE.match(seg):
+            normalized.append("{id}-slug")
         elif _NUM_RE.match(seg):
             normalized.append("{id}")
         elif _HEX_RE.match(seg):
@@ -386,6 +389,7 @@ def normalize_path(path):
         else:
             normalized.append(seg)
     return "/".join(normalized)
+
 
 
 # --- تغییر داخل upsert_endpoint: خط اول تابع رو اضافه کن ---

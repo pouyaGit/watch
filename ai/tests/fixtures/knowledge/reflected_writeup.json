@@ -1,0 +1,19 @@
+{
+  "knowledge_id": "incoming-placeholder",
+  "title": "Reflected XSS in a search parameter",
+  "source_url": "https://research.example.test/reflected-xss",
+  "source_type": "writeup",
+  "published_at": "2026-08-01",
+  "technologies": ["Example Framework"],
+  "xss_types": ["reflected"],
+  "contexts": ["html attribute"],
+  "wafs": ["Example WAF"],
+  "techniques": ["context analysis"],
+  "payload_patterns": ["marker-only"],
+  "verification_patterns": ["browser execution"],
+  "content": "A local fixture describing reflected XSS context analysis.",
+  "summary": "Fixture only.",
+  "evidence_quality": "HIGH_CONFIDENCE",
+  "confidence": 0.9,
+  "tags": ["reflected-xss", "fixture"]
+}

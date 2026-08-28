@@ -1,0 +1,19 @@
+{
+  "knowledge_id": "incoming-placeholder",
+  "title": "DOM XSS via location.hash",
+  "source_url": "https://research.example.test/dom-xss-hash",
+  "source_type": "writeup",
+  "published_at": "2026-08-03",
+  "technologies": ["Vanilla JS"],
+  "xss_types": ["dom"],
+  "contexts": ["javascript"],
+  "wafs": [],
+  "techniques": ["sink analysis"],
+  "payload_patterns": ["hash-based marker"],
+  "verification_patterns": ["dom-sink execution"],
+  "content": "Local fixture describing DOM XSS via location.hash.",
+  "summary": "Fixture only.",
+  "evidence_quality": "HIGH_CONFIDENCE",
+  "confidence": 0.8,
+  "tags": ["dom-xss", "fixture"]
+}

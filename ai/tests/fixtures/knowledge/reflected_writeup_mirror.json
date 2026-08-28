@@ -1,0 +1,19 @@
+{
+  "knowledge_id": "different-placeholder",
+  "title": "Mirror of reflected XSS research",
+  "source_url": "https://mirror.example.test/reflected-xss",
+  "source_type": "research",
+  "published_at": "2026-08-02",
+  "technologies": ["Different Metadata"],
+  "xss_types": ["dom"],
+  "contexts": ["script"],
+  "wafs": [],
+  "techniques": [],
+  "payload_patterns": [],
+  "verification_patterns": [],
+  "content": "A local fixture describing reflected XSS context analysis.",
+  "summary": "Mirrored fixture only.",
+  "evidence_quality": "SECONDARY",
+  "confidence": 0.5,
+  "tags": ["mirror"]
+}

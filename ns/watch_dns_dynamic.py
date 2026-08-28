@@ -4,9 +4,15 @@ watch_dns_dynamic.py -- dynamic (pattern-based) DNS bruteforce
 
 Uses AlterX (ProjectDiscovery -- faster than dnsgen/altdns, same tool
 family as dnsx/httpx already in use) to generate permutations from
-already-known subdomains, resolves with puredns, then applies an extra
-TTL + HTTP-body-hash wildcard check (ported from dynamic_dns_bruteforce.sh)
-on top of puredns' own filtering, per the chosen approach.
+already-known subdomains, resolves with puredns, then filters wildcards
+with the same multi-level WildcardDetector used by watch_ns.py and
+watch_dns_static.py (cascading per-level checks: *.sub.domain, *.domain,
+etc.) -- NOT the single-level TTL+HTTP-hash check this used to have.
+
+That single-level check was swapped out after it produced confirmed false
+positives: a nested wildcard on *.ext-apply.qa.indeed.net (a level below
+the domain root) wasn't caught by a root-only test, so a completely fake
+subdomain resolved and returned the same 403 as the "discovered" ones.
 
 NOTE: verify AlterX's exact flags with `alterx -h` on your server before
 trusting this blindly -- CLI flags can differ between versions, same as we
@@ -16,7 +22,7 @@ Resumable: --max-minutes stops cleanly, next run picks up the
 least-recently-run domain first (DnsBruteStatus.last_dynamic_run).
 
 Usage:
-  python3 ns/watch_dns_dynamic.py --max-minutes 300
+  python3 watch_dns_dynamic.py --max-minutes 180
   python3 watch_dns_dynamic.py --filter dell.com --max-minutes 20
 """
 
@@ -31,9 +37,10 @@ from pathlib import Path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from database.db import Subdomains, upsert_subdomain, upsert_lives, upsert_http, mark_dynamic_run, get_feasible_domains_ordered
 from utils.common import detect_cdn, normalize_ips
+from wildcard_detector import WildcardDetector
 from dns_brute_common import (
     log, send_telegram, run_puredns, run_httpx_quick, WORKDIR,
-    collect_wildcard_signature, is_wildcard_match, estimate_minutes, count_lines
+    estimate_minutes, count_lines
 )
 
 START_TIME = time.time()
@@ -58,13 +65,15 @@ def run_alterx(known_subs_file, out_file):
     return [l.strip() for l in out_file.read_text(errors="ignore").splitlines() if l.strip()]
 
 
-def resolve_ip_with_ttl_hash_check(program_name, domain, new_names, signature):
-    """dnsx for IP, then TTL+HTTP-hash wildcard cascade, then store."""
+def resolve_ip_and_store(program_name, domain, new_names):
+    """dnsx for IP, then multi-level WildcardDetector (same one watch_ns.py
+    and watch_dns_static.py use), then store."""
     import json
 
     if not new_names:
         return []
 
+    detector = WildcardDetector(domain)
     tmp = WORKDIR / f"dyn_resolve_{domain}_{int(time.time())}.txt"
     tmp.write_text("\n".join(new_names))
 
@@ -87,10 +96,11 @@ def resolve_ip_with_ttl_hash_check(program_name, domain, new_names, signature):
 
         host = obj.get("host") or obj.get("hostname")
         ips = normalize_ips(obj.get("a"))
+        ips_set = set(ips)
         if not host or not ips:
             continue
 
-        if signature["ips"] and is_wildcard_match(host, ips[0], signature):
+        if detector.is_wildcard(host, ips_set, preserve_private=True):
             log(f"  filtered as wildcard: {host}")
             continue
 
@@ -151,13 +161,10 @@ def process_domain(program_name, domain):
         )
         return 0
 
-    log(f"{domain}: collecting wildcard signature for extra TTL+HTTP-hash check...")
-    signature = collect_wildcard_signature(domain)
-
     for name in new_names:
         upsert_subdomain(program_name, name, "dynamicBF")
 
-    confirmed_live = resolve_ip_with_ttl_hash_check(program_name, domain, new_names, signature)
+    confirmed_live = resolve_ip_and_store(program_name, domain, new_names)
     mark_dynamic_run(domain)
 
     result_lines = [

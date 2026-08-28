@@ -27,6 +27,7 @@ import subprocess
 import requests
 import gzip
 import shutil
+import html
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
@@ -231,11 +232,12 @@ def crawl_domain(domain, urls):
         else:
             source = "http-seed"
 
-        parsed = urlparse(u)
+        clean_url = html.unescape(u)
+        parsed = urlparse(clean_url)
         entries.append({
             "program_name": program_name,
             "subdomain": host,
-            "url": u,
+            "url": clean_url,
             "path": parsed.path or "/",
             "params": sorted(set(parse_qs(parsed.query).keys())),
             "source": source,

@@ -1,0 +1,19 @@
+{
+  "knowledge_id": "incoming-placeholder",
+  "title": "Reflected XSS in an unquoted attribute",
+  "source_url": "https://research.example.test/attribute-quoted",
+  "source_type": "writeup",
+  "published_at": "2026-08-04",
+  "technologies": ["Example Framework"],
+  "xss_types": ["reflected"],
+  "contexts": ["html_attribute"],
+  "wafs": ["Strict WAF"],
+  "techniques": ["attribute breakout"],
+  "payload_patterns": ["attribute breakout marker"],
+  "verification_patterns": ["attribute sink execution"],
+  "content": "Local fixture describing reflected XSS in an unquoted attribute.",
+  "summary": "Fixture only.",
+  "evidence_quality": "PRIMARY",
+  "confidence": 0.7,
+  "tags": ["reflected-xss", "fixture", "strict-waf"]
+}
