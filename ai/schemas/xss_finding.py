@@ -43,6 +43,16 @@ class XSSFinding(BaseModel):
 
     payload_reference: str | None = None
 
+    verification_mode: str | None = None
+    # http_reflection / browser_execution / None
+
+    attempt_id: str | None = None
+    # Deterministic SHA-256-based identifier of the
+    # VerificationAttempt that produced this finding.
+    # Traces the finding back to the exact attempt that
+    # ran. None when the finding is constructed without a
+    # verifier attempt (e.g. legacy fixtures).
+
     reflection_evidence: list[str] = Field(
         default_factory=list
     )

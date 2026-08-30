@@ -1,7 +1,8 @@
-from mongoengine import Document, StringField, BooleanField, DateTimeField, ListField, DictField, IntField, connect
+from mongoengine import Document, StringField, BooleanField, DateTimeField, FloatField, ListField, DictField, IntField, connect
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 from pymongo import UpdateOne
+from pymongo.errors import BulkWriteError
 import tldextract
 import config
 import re
@@ -125,7 +126,14 @@ class Endpoints(Document):
     hit_count          = IntField(default=1)       # چندبار این path تو کرال دیده شده
     created_date       = DateTimeField(default=datetime.now())
     last_update        = DateTimeField(default=datetime.now())
- 
+
+    # Method/location provenance for every discovered parameter.
+    # Each record: {"name": str, "method": str, "location": str,
+    #               "source": "crawl" | "x8"}
+    # location vocabulary: "query" | "body". Unsupported X8
+    # injection points (path/headers/...) are never stored here.
+    param_records      = ListField(DictField(), default=[])
+
     meta = {
         'indexes': [
             {'fields': ['program_name', 'subdomain', 'path'], 'unique': True},
@@ -133,7 +141,39 @@ class Endpoints(Document):
             {'fields': ['-hit_count']},
         ]
     }
- 
+
+# --- XSS verification findings (production persistence) ---
+# One document per processed XSS case, keyed by the deterministic
+# case_id produced by XSSCaseBuilder. Presence of a row means the
+# case was already verified: duplicate prevention is "skip when the
+# case_id already exists" (idempotent re-runs).
+class XssFindings(Document):
+    case_id            = StringField(required=True, unique=True)
+    finding_id         = StringField()      # primary (first) finding; None when no finding was produced
+    finding_ids        = ListField(StringField(), default=[])
+    program_name       = StringField(required=True)
+    subdomain          = StringField(required=True)
+    path               = StringField()
+    endpoint           = StringField()      # example_url the case executed against
+    method             = StringField(required=True)
+    parameter          = StringField()
+    parameter_location = StringField(required=True)
+    status             = StringField(required=True)   # CONFIRMED / POTENTIAL / INCONCLUSIVE
+    confidence         = FloatField(default=0.0)
+    finding_count      = IntField(default=0)
+    findings           = ListField(DictField(), default=[])   # serialized XSSFinding payloads (evidence for reporting)
+    verification_audit = DictField()        # bounded attempt/evidence counts from XSSVerificationAudit
+    discovery_evidence = ListField(StringField(), default=[])
+    runner             = StringField()      # producing job identity, e.g. "watch_xss_verify"
+    created_at         = DateTimeField(default=datetime.now)
+    updated_at         = DateTimeField(default=datetime.now)
+
+    meta = {
+        'indexes': [
+            {'fields': ['program_name', 'status']},
+            {'fields': ['-updated_at']},
+        ]
+    }
 
 
 # Upsert Programs
@@ -250,7 +290,6 @@ def upsert_lives(obj):
         print(f"[{current_time()}] Inserted new live subdomain: {obj.get('subdomain')}")
 
     return True
-
 
 def upsert_http(obj):
     program = Programs.objects(scopes=obj.get('scope')).first()
@@ -405,6 +444,7 @@ def upsert_endpoint(program_name, subdomain, path, url, params):
         if new_params:
             existing.params_from_crawl = sorted(set((existing.params_from_crawl or []) + params))
             existing.params = sorted(set((existing.params or []) + params))
+            _append_param_records(existing, new_params, method="GET", location="query", source="crawl")
             changed = True
         existing.hit_count = (existing.hit_count or 0) + 1
         if changed:
@@ -419,9 +459,53 @@ def upsert_endpoint(program_name, subdomain, path, url, params):
         example_url=url,
         params=params,
         params_from_crawl=params,
+        param_records=[
+            {
+                "name": p,
+                "method": "GET",
+                "location": "query",
+                "source": "crawl",
+            }
+            for p in params
+        ],
         hit_count=1,
     ).save()
     return True
+
+
+def _append_param_records(endpoint, param_names, *, method, location, source):
+    """
+    Append provenance records to an Endpoints row, deduplicated by
+    the exact (name, method, location, source) tuple. Records use
+    only the bounded deterministic schema:
+        {"name": str, "method": str, "location": str, "source": str}
+    """
+    seen = set()
+    for rec in (endpoint.param_records or []):
+        if isinstance(rec, dict):
+            seen.add(
+                (
+                    rec.get("name"),
+                    rec.get("method"),
+                    rec.get("location"),
+                    rec.get("source"),
+                )
+            )
+    records = list(endpoint.param_records or [])
+    for name in sorted(param_names):
+        key = (name, method, location, source)
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append(
+            {
+                "name": name,
+                "method": method,
+                "location": location,
+                "source": source,
+            }
+        )
+    endpoint.param_records = records
 
 
 
@@ -490,8 +574,6 @@ def get_feasible_domains_ordered(run_field):
 # "MongoDB hangs on 2M URLs" problem -- one query+save per document does
 # not scale, bulk_write with server-side $addToSet/$inc does.
 # ============================================================
-from pymongo import UpdateOne
-
 
 def bulk_store_crawl_results(entries):
     """
@@ -545,12 +627,25 @@ def bulk_store_crawl_results(entries):
     ep_ops = []
     for (program, subdomain, path), data in ep_agg.items():
         params = sorted(data["params"])
+        # Crawler-observed query parameters carry GET/query
+        # provenance. $addToSet dedupes by the exact record
+        # (name, method, location, source).
+        param_records = [
+            {
+                "name": p,
+                "method": "GET",
+                "location": "query",
+                "source": "crawl",
+            }
+            for p in params
+        ]
         ep_ops.append(UpdateOne(
             {"program_name": program, "subdomain": subdomain, "path": path},
             {
                 "$addToSet": {
                     "params": {"$each": params},
                     "params_from_crawl": {"$each": params},
+                    "param_records": {"$each": param_records},
                 },
                 "$set": {"example_url": data["example_url"], "last_update": now},
                 "$inc": {"hit_count": data["count"]},
@@ -563,10 +658,26 @@ def bulk_store_crawl_results(entries):
     new_urls = 0
 
     for i in range(0, len(url_ops), BATCH):
-        result = urls_coll.bulk_write(url_ops[i:i + BATCH], ordered=False)
-        new_urls += result.upserted_count
+        try:
+            result = urls_coll.bulk_write(url_ops[i:i + BATCH], ordered=False)
+            new_urls += result.upserted_count
+        except BulkWriteError as bwe:
+            # ordered=False means Mongo still applied every valid op in the
+            # batch -- only the bad ones failed. Log and keep going instead
+            # of crashing the whole crawl run over a handful of bad documents.
+            write_errors = bwe.details.get("writeErrors", [])
+            print(f"[bulk_store_crawl_results] {len(write_errors)} Urls write errors "
+                  f"in batch {i}-{i+BATCH} (continuing): "
+                  f"{[we.get('errmsg', '')[:150] for we in write_errors[:3]]}")
+            new_urls += bwe.details.get("nUpserted", 0)
 
     for i in range(0, len(ep_ops), BATCH):
-        ep_coll.bulk_write(ep_ops[i:i + BATCH], ordered=False)
+        try:
+            ep_coll.bulk_write(ep_ops[i:i + BATCH], ordered=False)
+        except BulkWriteError as bwe:
+            write_errors = bwe.details.get("writeErrors", [])
+            print(f"[bulk_store_crawl_results] {len(write_errors)} Endpoints write errors "
+                  f"in batch {i}-{i+BATCH} (continuing): "
+                  f"{[we.get('errmsg', '')[:150] for we in write_errors[:3]]}")
 
     return new_urls
