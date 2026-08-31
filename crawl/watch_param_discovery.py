@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -47,6 +48,30 @@ CHECKPOINT_EVERY = 200     # send one Telegram progress ping every N endpoints,
 
 START_TIME = time.time()
 
+def build_x8_target_url(url):
+    """
+    Build a stable x8 target from an endpoint example URL.
+
+    Discovery should run against the endpoint path itself, not against
+    previously observed query values. Query parameters are discovered
+    separately by x8.
+    """
+    try:
+        parsed = urlsplit(url)
+        if not parsed.scheme or not parsed.netloc:
+            return url
+
+        return urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path or "/",
+                "",
+                "",
+            )
+        )
+    except Exception:
+        return url
 
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
@@ -115,7 +140,7 @@ def run_x8(url, wordlist_path):
         # Discover hidden parameters across GET, POST and PUT.
         # x8 sends parameters in the body only for POST/PUT and in
         # the query for GET (verified against x8 4.3.1-main's CLI).
-        "-X", "GET", "POST", "PUT",
+        "-X", "GET", "POST", "PUT", "PATCH",
     ]
     try:
         subprocess.run(cmd, capture_output=True, text=True, timeout=X8_TIMEOUT)
@@ -139,8 +164,14 @@ def run_x8(url, wordlist_path):
         for item in items:
             if not isinstance(item, dict):
                 continue
-            method = (item.get("method") or "GET").upper()
-            place = item.get("injection_place") or ""
+            # Never invent a default HTTP method: a missing method or
+            # a missing injection_place means we cannot attribute the
+            # finding, so the whole item is discarded rather than
+            # silently downgraded to GET/query.
+            method = (item.get("method") or "").strip().upper()
+            place = (item.get("injection_place") or "").strip()
+            if not method or not place:
+                continue
             for p in item.get("found_params", []):
                 name = p.get("name") if isinstance(p, dict) else p
                 if not name:
@@ -257,7 +288,17 @@ def main():
         if not ep.example_url:
             continue
 
-        raw_records = run_x8(ep.example_url, get_wordlist_for_program(ep.program_name))
+        x8_target = build_x8_target_url(ep.example_url)
+        log(
+            f"[x8] program={ep.program_name} "
+            f"endpoint={ep.example_url} "
+            f"target={x8_target}"
+        )
+        raw_records = run_x8(
+            x8_target,
+            get_wordlist_for_program(ep.program_name)
+        )
+
         if raw_records:
             # Map x8 injection places to our internal vocabulary.
             # Unsupported places (Headers/HeaderValue/non-GET Path/...)
@@ -298,13 +339,26 @@ def main():
 
             if new_records:
                 ep.param_records = list((ep.param_records or [])) + new_records
-                new_x8_names = sorted(
-                    set((ep.params_from_x8 or []) + [r["name"] for r in new_records])
+                new_x8_names = sorted({
+                    r["name"]
+                    for r in new_records
+                })
+
+                ep.params_from_x8 = sorted(
+                    set(ep.params_from_x8 or []) | set(new_x8_names)
                 )
-                ep.params_from_x8 = new_x8_names
-                ep.params = sorted(set((ep.params or []) + [r["name"] for r in new_records]))
+
+                ep.params = sorted(
+                    set(ep.params or []) | set(new_x8_names)
+                )
+
                 found_total += len(new_x8_names)
-                log(f"[+] {ep.example_url} -> {new_x8_names}")
+
+                log(
+                    f"[+] {ep.example_url} -> "
+                    f"new={new_x8_names} "
+                    f"total_x8={len(ep.params_from_x8)}"
+                )
 
         ep.x8_checked = True
         ep.x8_last_checked = datetime.now()
