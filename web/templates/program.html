@@ -1,0 +1,47 @@
+{# program.html — single program detail page. #}
+{% extends "base.html" %}
+{% block title %}Watch — {{ program_name }}{% endblock %}
+
+{% block content %}
+<a href="{{ home_url }}" class="text-accent text-sm">← Back to Dashboard</a>
+<h2 class="text-accent2 text-2xl mt-3 mb-4">{{ program_name }}</h2>
+
+<div class="flex flex-wrap gap-2 mb-4">
+  <a class="badge-link" href="{{ sub_link }}">Subdomains ({{ counts.sub }})</a>
+  <a class="badge-link" href="{{ live_link }}">Live ({{ counts.live }})</a>
+  <a class="badge-link" href="{{ http_link }}">HTTP ({{ counts.http }})</a>
+  <a class="badge-link" href="{{ urls_link }}">URLs ({{ counts.urls }})</a>
+  <a class="badge-link" href="{{ eps_link }}">Endpoints ({{ counts.eps }})</a>
+  <a class="badge-link" href="{{ wl_link }}">Wordlist (txt)</a>
+</div>
+
+<div class="text-muted text-sm mt-3 mb-1">Technologies:</div>
+<div class="flex flex-wrap gap-2 mb-4">
+  {% if techs %}
+    {% for t in techs %}<a class="badge-link" href="{{ t.url }}">{{ t.name }}</a>{% endfor %}
+  {% else %}<span class="text-muted text-sm">none</span>{% endif %}
+</div>
+
+<div class="text-muted text-sm mt-3 mb-1">Providers (found → live-http):</div>
+<div class="flex flex-wrap gap-2 mb-4">
+  {% if providers %}
+    {% for p in providers %}
+      <a class="{{ 'badge-link badge-bf' if p.bf else 'badge-link' }}" href="{{ p.url }}">
+        {{ '🔥 ' if p.bf else '' }}{{ p.name }} ({{ p.count }})
+      </a>
+    {% endfor %}
+  {% else %}<span class="text-muted text-sm">none</span>{% endif %}
+</div>
+
+<div class="text-muted text-sm mt-3 mb-1">Exclusive finds (this provider only, no overlap):</div>
+<div class="flex flex-wrap gap-2 mb-4">
+  {% if uniques %}
+    {% for u in uniques %}
+      <a class="{{ 'badge-link badge-bf' if u.bf else 'badge-link' }}" href="{{ u.url }}">
+        {{ u.name }} only ({{ u.count }})
+      </a>
+    {% endfor %}
+  {% else %}<span class="text-muted text-sm">none</span>{% endif %}
+</div>
+
+{% endblock %}

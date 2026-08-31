@@ -1,0 +1,43 @@
+{# dns_status.html — /ui/dns-bruteforce/status #}
+{% extends "base.html" %}
+{% block title %}DNS Bruteforce Status{% endblock %}
+{% block content %}
+<a href="{{ home_url }}" class="text-accent text-sm">← Back to Dashboard</a>
+<h2 class="text-accent2 text-2xl mt-3 mb-4">DNS Bruteforce Status</h2>
+
+<p class="text-muted text-sm mb-3">
+  Red timestamp = more than 8 days since last run (something's probably stuck —
+  check <code>systemctl status watch-dns-static</code> / <code>watch-dns-dynamic</code>).
+</p>
+
+<table class="w-full border-collapse text-sm">
+  <thead>
+    <tr class="text-left border-b border-border">
+      <th class="py-1 pr-3">Program</th>
+      <th class="py-1 pr-3">Domain</th>
+      <th class="py-1 pr-3">Feasible</th>
+      <th class="py-1 pr-3">Last static run</th>
+      <th class="py-1 pr-3">Last dynamic run</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for s in statuses %}
+    <tr class="border-b border-border/50">
+      <td class="py-1 pr-3">{{ s.program_name }}</td>
+      <td class="py-1 pr-3 font-mono text-xs">{{ s.domain }}</td>
+      <td class="py-1 pr-3">
+        {% if s.feasible %}
+          <span class="text-ok border border-ok rounded px-2 py-0.5 text-xs">yes</span>
+        {% else %}
+          <span class="text-err border border-err rounded px-2 py-0.5 text-xs">no (wildcard)</span>
+        {% endif %}
+      </td>
+      <td class="py-1 pr-3 {{ 'text-err' if s.last_static_stale else '' }}">{{ s.last_static }}</td>
+      <td class="py-1 pr-3 {{ 'text-err' if s.last_dynamic_stale else '' }}">{{ s.last_dynamic }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="py-2 text-muted">No DNS brute statuses yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

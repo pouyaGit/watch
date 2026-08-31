@@ -1,0 +1,115 @@
+/* custom.css — anything Tailwind utility classes can't express.
+
+Colors mirror the original api.py PAGE_CSS palette: dark bg #0d1117,
+accent #58a6ff, secondary #f0883e, success #3fb950, error #f85149.
+*/
+
+/* generic shell bits */
+a { text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* card used for both program list entries and task rows */
+.program-card {
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin: 12px 0;
+  background: #161b22;
+}
+
+/* inline pill-style link ("Open program page", provider badge, etc.) */
+.badge-link {
+  display: inline-block;
+  padding: 4px 10px;
+  margin: 3px 4px 3px 0;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #58a6ff;
+}
+.badge-link:hover {
+  background: #1f6feb;
+  color: white;
+  text-decoration: none;
+}
+.badge-link.badge-bf {
+  background: #3d1a00;
+  border-color: #ff8c00;
+  color: #ffb84d;
+  font-weight: 600;
+}
+.badge-link.badge-bf:hover {
+  background: #ff8c00;
+  color: #0d1117;
+}
+
+/* very small inline provider label that floats next to a subdomain/url */
+.badge-sm {
+  display: inline-block;
+  padding: 1px 7px;
+  margin-left: 6px;
+  font-size: 11px;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  color: #8b949e;
+}
+.badge-sm.bf {
+  background: #3d1a00;
+  border-color: #ff8c00;
+  color: #ffb84d;
+  font-weight: 600;
+}
+
+/* status pills used by the Tasks page */
+.badge-idle, .badge-running, .badge-ok, .badge-err {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #30363d;
+}
+.badge-idle    { background: #21262d; color: #8b949e; }
+.badge-running { background: #1f6feb; color: white; border-color: #1f6feb; }
+.badge-ok      { background: rgba(63,185,80,0.15); color: #3fb950; border-color: #3fb950; }
+.badge-err     { background: rgba(248,81,73,0.15); color: #f85149; border-color: #f85149; }
+
+/* primary button (Run now) */
+.btn-primary {
+  background: #238636;
+  color: white;
+  border: 1px solid #2ea043;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-primary:hover { background: #2ea043; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* top nav link */
+.nav-link {
+  color: #c9d1d9;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.nav-link:hover {
+  background: #21262d;
+  text-decoration: none;
+}
+
+/* system stat cards on the dashboard */
+.stat-card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.stat-label { color: #8b949e; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-value { color: #58a6ff; font-size: 20px; font-weight: 600; margin-top: 4px; font-family: ui-monospace, monospace; }
+.stat-sub   { color: #8b949e; font-size: 11px; margin-top: 2px; }
+
+/* pagination nav */
+.pagenav a { color: #58a6ff; }

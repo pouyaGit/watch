@@ -4,3 +4,10 @@ python-telegram-bot
 tldextract
 psycopg2-binary
 python-dotenv
+
+# Watch Dashboard v2 (Phase 1) -- backend + frontend tooling
+fastapi
+uvicorn[standard]
+starlette
+psutil
+jinja2

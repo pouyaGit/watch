@@ -15,6 +15,11 @@ from ai.llm.base import LLMProvider, LLMResult
 DEFAULT_MODEL = "minimax/minimax-m3:free"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_TIMEOUT_SECONDS = 60.0
+# Completion/output token budget sent with every request.
+# Without an explicit budget, some OpenRouter models (e.g.
+# MiniMax) apply a small provider-side default and truncate
+# structured JSON responses mid-field.
+DEFAULT_MAX_TOKENS = 4096
 
 
 class OpenRouterProviderError(RuntimeError):
@@ -28,6 +33,55 @@ def _resolve_default_model(env_value: str) -> str:
     if env_value:
         return env_value
     return DEFAULT_MODEL
+
+
+def _resolve_max_tokens(
+    explicit: int | None,
+    env_name: str,
+    env_value: str | None,
+) -> int:
+    """
+    Resolve the completion/output token budget.
+
+    Precedence: explicit constructor argument, then the env
+    variable (``OPENROUTER_MAX_TOKENS`` by default), then
+    ``DEFAULT_MAX_TOKENS``. An empty or whitespace-only env
+    value counts as unset. Any other value that is not a
+    positive integer raises ``OpenRouterProviderError``:
+    invalid configuration fails loudly instead of being
+    silently clamped or dropped, because a missing or
+    too-small budget is exactly what produces truncated
+    JSON responses.
+    """
+
+    if explicit is not None:
+        if (
+            isinstance(explicit, bool)
+            or not isinstance(explicit, int)
+            or explicit <= 0
+        ):
+            raise OpenRouterProviderError(
+                "max_tokens must be a positive integer, "
+                f"got {explicit!r}"
+            )
+        return explicit
+
+    text = (env_value or "").strip()
+    if not text:
+        return DEFAULT_MAX_TOKENS
+    try:
+        value = int(text)
+    except ValueError:
+        raise OpenRouterProviderError(
+            f"{env_name} must be a positive integer, "
+            f"got {env_value!r}"
+        ) from None
+    if value <= 0:
+        raise OpenRouterProviderError(
+            f"{env_name} must be a positive integer, "
+            f"got {env_value!r}"
+        )
+    return value
 
 
 class OpenRouterProvider(LLMProvider):
@@ -45,6 +99,11 @@ class OpenRouterProvider(LLMProvider):
     - ``OPENROUTER_API_KEY`` (required at construction time)
     - ``OPENROUTER_MODEL``   (optional; falls back to
       ``minimax/minimax-m3:free``)
+    - ``OPENROUTER_MAX_TOKENS`` (optional completion/output
+      token budget, passed to the API as ``max_tokens``;
+      falls back to ``DEFAULT_MAX_TOKENS``). An explicit
+      budget keeps structured JSON responses from being
+      truncated mid-field by a small provider-side default.
 
     The HTTP transport is injectable via ``http_client`` so tests
     can drive a fake without making a real network call.
@@ -60,6 +119,8 @@ class OpenRouterProvider(LLMProvider):
         http_client: Any = None,
         api_key_env: str = "OPENROUTER_API_KEY",
         model_env: str = "OPENROUTER_MODEL",
+        max_tokens: int | None = None,
+        max_tokens_env: str = "OPENROUTER_MAX_TOKENS",
     ) -> None:
         resolved_api_key = (
             api_key
@@ -87,6 +148,11 @@ class OpenRouterProvider(LLMProvider):
         self.model = resolved_model
         self.base_url = base_url
         self.timeout = timeout
+        self.max_tokens = _resolve_max_tokens(
+            max_tokens,
+            max_tokens_env,
+            os.getenv(max_tokens_env, ""),
+        )
 
         client_kwargs: dict[str, Any] = {
             "api_key": resolved_api_key,
@@ -139,6 +205,7 @@ class OpenRouterProvider(LLMProvider):
                     }
                 ],
                 response_format={"type": "json_object"},
+                max_tokens=self.max_tokens,
             )
         except APIStatusError as exc:
             raise OpenRouterProviderError(

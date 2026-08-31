@@ -1,0 +1,11 @@
+{# _status_badge.html — small fragment used by htmx polling on /api/tasks/{id}/status.
+   Returns just the badge HTML so the swap is cheap. #}
+{% if status == 'running' %}
+<span class="badge-running">● running</span>
+{% elif status == 'success' %}
+<span class="badge-ok">✓ success</span>
+{% elif status == 'failed' %}
+<span class="badge-err">✗ failed</span>
+{% else %}
+<span class="badge-idle">idle</span>
+{% endif %}

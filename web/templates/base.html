@@ -1,0 +1,62 @@
+{# base.html — site-wide shell. Tailwind via CDN, htmx + Alpine via CDN, dark
+   theme matching the original #0d1117 / #58a6ff palette. #}
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Watch Dashboard{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bg:       '#0d1117',
+            panel:    '#161b22',
+            border:   '#30363d',
+            accent:   '#58a6ff',
+            accent2:  '#f0883e',
+            ok:       '#3fb950',
+            warn:     '#d29922',
+            err:      '#f85149',
+            muted:    '#8b949e',
+          },
+          fontFamily: {
+            sans: ['"Segoe UI"', 'system-ui', '-apple-system', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+        },
+      },
+    }
+  </script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="/static/css/custom.css">
+</head>
+<body class="bg-bg text-gray-200 font-sans min-h-screen">
+  <header class="border-b border-border bg-panel/60">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-6">
+      <a href="{{ root_url }}" class="text-accent font-semibold text-lg">🔍 Watch</a>
+      <nav class="flex gap-4 text-sm">
+        <a href="{{ root_url }}"       class="nav-link">Dashboard</a>
+        <a href="{{ tasks_url }}"     class="nav-link">Tasks</a>
+        <a href="{{ dns_url }}"        class="nav-link">DNS Bruteforce</a>
+        <a href="{{ docs_url }}"       class="nav-link">API docs</a>
+      </nav>
+      <div class="ml-auto text-xs text-muted hidden md:block">v2</div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="max-w-6xl mx-auto px-4 py-6 text-xs text-muted border-t border-border mt-12">
+    Watch recon dashboard · backend/ + web/ · api key is propagated via <code>?api_key=</code>
+  </footer>
+
+  <script src="/static/js/app.js" defer></script>
+</body>
+</html>

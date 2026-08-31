@@ -81,9 +81,17 @@ def get_wordlist_for_program(program_name):
 
 def run_x8(url, wordlist_path):
     """
-    Run x8 on a URL, return the list of discovered params.
-    Parses x8's JSON output; verify exact flags with `x8 --help` since they
-    can differ across versions.
+    Run x8 on a URL, return raw discovery records.
+
+    Returns a list of dicts preserving the per-discovery
+    provenance emitted by x8:
+        {"name": str, "method": str, "injection_place": str}
+
+    Injection-place → internal location mapping happens in
+    :func:`map_x8_location`, NOT here, so the raw values stay
+    inspectable. Parses x8's JSON output; verify exact flags
+    with `x8 --help` since they can differ across versions.
+    Compatible with x8 4.3.1-main (the installed version).
     """
     if subprocess.call(["which", "x8"], stdout=subprocess.DEVNULL) != 0:
         log("x8 not found in PATH")
@@ -104,6 +112,10 @@ def run_x8(url, wordlist_path):
                              # next scheduled run and drop back to 1 if the 4GB box struggles
         "--timeout", "10",
         "--verify",           # re-verifies found params, fewer false positives
+        # Discover hidden parameters across GET, POST and PUT.
+        # x8 sends parameters in the body only for POST/PUT and in
+        # the query for GET (verified against x8 4.3.1-main's CLI).
+        "-X", "GET", "POST", "PUT",
     ]
     try:
         subprocess.run(cmd, capture_output=True, text=True, timeout=X8_TIMEOUT)
@@ -114,18 +126,32 @@ def run_x8(url, wordlist_path):
         log(f"x8 error on {url}: {e}")
         return []
 
-    params = set()
+    records = []
     try:
         with open(out_path, "r", errors="ignore") as f:
             data = json.load(f)
-        # x8's actual format: [{"method":..,"url":..,"status":..,"found_params":[...],"injection_place":..}]
-        if isinstance(data, list):
-            for item in data:
-                for p in item.get("found_params", []):
-                    params.add(p)
-        elif isinstance(data, dict):
-            for p in data.get("found_params", []):
-                params.add(p)
+        # x8 JSON format: [{"method":..,"url":..,"status":..,
+        #   "found_params":[{"name":..,..}],"injection_place":
+        #   "Query|Body|Path|Headers|HeaderValue"}]
+        # found_params items are dicts with a "name" key in x8
+        # 4.3.1; older formats may emit bare name strings.
+        items = data if isinstance(data, list) else [data]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            method = (item.get("method") or "GET").upper()
+            place = item.get("injection_place") or ""
+            for p in item.get("found_params", []):
+                name = p.get("name") if isinstance(p, dict) else p
+                if not name:
+                    continue
+                records.append(
+                    {
+                        "name": str(name),
+                        "method": method,
+                        "injection_place": place,
+                    }
+                )
     except Exception:
         log(f"Could not parse x8 JSON output for {url} -- check manually: {out_path}")
         return []
@@ -135,7 +161,38 @@ def run_x8(url, wordlist_path):
         except Exception:
             pass
 
-    return sorted(params)
+    return records
+
+
+def map_x8_location(injection_place, method):
+    """
+    Map x8's injection_place label to the internal location
+    vocabulary ("query" | "body"); return None for anything
+    unsupported so it never becomes an XSS case.
+
+    Compatible mapping for the installed x8 4.3.1-main:
+
+    - ``Query`` -> query
+    - ``Body`` -> body
+    - ``Path`` with method GET -> query
+      In x8 4.3.1 the default ``-u <url>`` template injects
+      GET parameters into the URL query string but LABELS the
+      injection point "Path" (empirically verified against the
+      installed binary). With our invocation the GET injection
+      point is always the query string, so GET/"Path" means
+      query. Non-GET "Path", "Headers", "HeaderValue" and any
+      unknown value are deliberately NOT converted.
+    """
+    place = (injection_place or "").strip().lower()
+    method = (method or "").strip().upper()
+
+    if place == "query":
+        return "query"
+    if place == "body":
+        return "body"
+    if place == "path" and method == "GET":
+        return "query"
+    return None
 
 
 def get_pending_endpoints(filter_arg=None, limit=None):
@@ -200,13 +257,54 @@ def main():
         if not ep.example_url:
             continue
 
-        new_params = run_x8(ep.example_url, get_wordlist_for_program(ep.program_name))
-        if new_params:
-            merged = sorted(set((ep.params_from_x8 or []) + new_params))
-            ep.params_from_x8 = merged
-            ep.params = sorted(set((ep.params or []) + merged))
-            found_total += len(new_params)
-            log(f"[+] {ep.example_url} -> {new_params}")
+        raw_records = run_x8(ep.example_url, get_wordlist_for_program(ep.program_name))
+        if raw_records:
+            # Map x8 injection places to our internal vocabulary.
+            # Unsupported places (Headers/HeaderValue/non-GET Path/...)
+            # are dropped here and never become cases.
+            new_records = []
+            seen = {
+                (
+                    rec.get("name"),
+                    rec.get("method"),
+                    rec.get("location"),
+                    rec.get("source"),
+                )
+                for rec in (ep.param_records or [])
+                if isinstance(rec, dict)
+            }
+            for rec in raw_records:
+                location = map_x8_location(
+                    rec.get("injection_place"), rec.get("method")
+                )
+                if location is None:
+                    continue
+                name = (rec.get("name") or "").strip()
+                method = (rec.get("method") or "").strip().upper()
+                if not name or not method:
+                    continue
+                key = (name, method, location, "x8")
+                if key in seen:
+                    continue
+                seen.add(key)
+                new_records.append(
+                    {
+                        "name": name,
+                        "method": method,
+                        "location": location,
+                        "source": "x8",
+                    }
+                )
+
+            if new_records:
+                ep.param_records = list((ep.param_records or [])) + new_records
+                new_x8_names = sorted(
+                    set((ep.params_from_x8 or []) + [r["name"] for r in new_records])
+                )
+                ep.params_from_x8 = new_x8_names
+                ep.params = sorted(set((ep.params or []) + [r["name"] for r in new_records]))
+                found_total += len(new_x8_names)
+                log(f"[+] {ep.example_url} -> {new_x8_names}")
 
         ep.x8_checked = True
         ep.x8_last_checked = datetime.now()
@@ -242,4 +340,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from backend.task_report import mark_finished
+    try:
+        main()
+        mark_finished("success", 0)
+    except Exception:
+        mark_finished("failed", 1)
+        raise

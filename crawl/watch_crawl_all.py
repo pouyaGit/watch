@@ -292,7 +292,12 @@ def main():
             skipped_domains.append(domain)
             continue
 
-        u_count, n_count = crawl_domain(domain, urls)
+        try:
+            u_count, n_count = crawl_domain(domain, urls)
+        except Exception as e:
+            log(f"ERROR crawling {domain}, skipping to next domain: {e}")
+            send_telegram_message(f"crawlAll: {domain} FAILED ({e}) -- continuing with next domain")
+            continue
         total_urls += u_count
         total_new += n_count
         done_domains += 1
@@ -312,4 +317,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from backend.task_report import mark_finished
+    try:
+        main()
+        mark_finished("success", 0)
+    except Exception as e:
+        mark_finished("failed", 1)
+        log(f"FATAL: crawlAll crashed before/outside the per-domain loop: {e}")
+        send_telegram_message(f"crawlAll CRASHED: {e}\nCheck server logs.")
+        raise

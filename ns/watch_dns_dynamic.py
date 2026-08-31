@@ -245,4 +245,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from backend.task_report import mark_finished
+    try:
+        main()
+        mark_finished("success", 0)
+    except Exception:
+        mark_finished("failed", 1)
+        raise

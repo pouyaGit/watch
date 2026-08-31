@@ -12,6 +12,8 @@ from urllib.parse import (
     urlunsplit,
 )
 
+import tldextract
+
 from ai.schemas.xss_verification import (
     AttemptStatus,
     ReflectionLocation,
@@ -82,6 +84,13 @@ _TAG_OPEN_RE = re.compile(r"<")
 _ATTR_NAME_BEFORE_EQ_RE = re.compile(
     r"([a-zA-Z_][a-zA-Z0-9_.:-]*)\s*$"
 )
+
+
+# Offline public-suffix extraction for the redirect policy:
+# pinned to the bundled suffix snapshot via suffix_list_urls=()
+# so the executor NEVER touches the network to resolve suffix
+# data. Same semantics as database.db.get_domain_name.
+_OFFLINE_TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
 
 
 class _UnsupportedRequest(Exception):
@@ -383,17 +392,40 @@ class HTTPEvidenceExecutor:
             return "GET", None
         return method, data
 
-    @staticmethod
-    def _check_redirect_safety(current_url: str, next_url: str) -> None:
+    @classmethod
+    def _registrable_domain(cls, hostname: str) -> str | None:
+        """
+        Registrable domain (eTLD+1) of a hostname, or None
+        when no registrable domain can be determined (IP
+        literals, dotless names, ...). None always fails
+        closed: a redirect whose registrable domains cannot
+        be proven equal is rejected.
+        """
+
+        ext = _OFFLINE_TLD_EXTRACT(hostname or "")
+        if not ext.domain or not ext.suffix:
+            return None
+        return f"{ext.domain}.{ext.suffix}"
+
+    @classmethod
+    def _check_redirect_safety(
+        cls, current_url: str, next_url: str
+    ) -> None:
         current = urlsplit(current_url)
         target = urlsplit(next_url)
-        if (current.hostname or "").lower() != (
-            target.hostname or ""
-        ).lower():
-            raise _VerificationError(
-                "cross_host_redirect_rejected:"
-                f"{(target.hostname or '').lower()}"
-            )
+        current_host = (current.hostname or "").lower()
+        target_host = (target.hostname or "").lower()
+        if current_host != target_host:
+            # Cross-host is safe only within the same
+            # registrable domain (eTLD+1): e.g.
+            # accessories.la.dell.com -> www.dell.com.
+            # Unresolvable registrable domains fail closed.
+            if cls._registrable_domain(
+                current_host
+            ) != cls._registrable_domain(target_host):
+                raise _VerificationError(
+                    f"cross_host_redirect_rejected:{target_host}"
+                )
         if (current.port or "") != (target.port or ""):
             raise _VerificationError("cross_port_redirect_rejected")
         if current.scheme == "https" and target.scheme != "https":

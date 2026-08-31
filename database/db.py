@@ -24,9 +24,13 @@ def get_domain_name(url):
 
 # Connect to MongoDB
 # connect(db='watch', host='mongodb://127.0.0.1:27017/watch')
+# connect(
+#     db='watch',
+#     host='mongodb://pouya:YourStrongPassword123@127.0.0.1:27017/watch?authSource=admin'
+# )
 connect(
     db='watch',
-    host='mongodb://pouya:YourStrongPassword123@127.0.0.1:27017/watch?authSource=admin'
+    host='mongodb://pouya:YourStrongPassword123@178.83.45.76:27017/?authSource=admin'
 )
 
 # Define the Programs model

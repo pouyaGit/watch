@@ -1,0 +1,31 @@
+{# endpoints_list.html — /ui/endpoints/.../... — hit_count + params per row #}
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<a href="{{ home_url }}" class="text-accent text-sm">← Back to Dashboard</a>
+<h2 class="text-accent2 text-2xl mt-3 mb-3">Endpoints — {{ program_name }}</h2>
+
+<div class="pagenav text-muted text-sm mb-2">
+  Page {{ page }}/{{ total_pages }} — total {{ total }}
+  {% if page > 1 %}<a class="text-accent" href="{{ prev_url }}">« Prev</a>{% endif %}
+  {% if page < total_pages %}<a class="text-accent ml-2" href="{{ next_url }}">Next »</a>{% endif %}
+</div>
+
+<ul class="space-y-1">
+  {% for it in items %}
+  <li class="break-all">
+    <a class="text-accent" href="{{ it.url }}" target="_blank" rel="noopener">{{ it.path }}</a>
+    <span class="text-muted text-xs"> (hits: {{ it.hit_count }})</span>
+    {% if it.params_str %}<span class="text-muted text-xs"> — params: {{ it.params_str }}</span>{% endif %}
+  </li>
+  {% else %}
+  <li class="text-muted">No items.</li>
+  {% endfor %}
+</ul>
+
+<div class="pagenav text-muted text-sm mt-3 mb-6">
+  {% if page > 1 %}<a class="text-accent" href="{{ prev_url }}">« Prev</a>{% endif %}
+  {% if page < total_pages %}<a class="text-accent ml-2" href="{{ next_url }}">Next »</a>{% endif %}
+</div>
+
+{% endblock %}

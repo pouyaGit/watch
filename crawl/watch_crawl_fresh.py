@@ -243,84 +243,91 @@ def main():
     for domain, urls in by_domain.items():
         log(f"\n--- Crawling {domain} ({len(urls)} seeds) ---")
         send_telegram_message(f"Now crawling {domain} [crawlFresh]\nSeeds: {len(urls)}")
-        domain_dir = OUT_DIR / f"{domain}_{DATE}"
-        domain_dir.mkdir(parents=True, exist_ok=True)
 
-        seeds_file = domain_dir / "seeds.txt"
-        seeds_file.write_text("\n".join(urls) + "\n")
+        try:
+            domain_dir = OUT_DIR / f"{domain}_{DATE}"
+            domain_dir.mkdir(parents=True, exist_ok=True)
 
-        # ---------- Katana ----------
-        katana_out = domain_dir / "katana.txt"
-        crawled = set(run_katana(seeds_file, katana_out))
+            seeds_file = domain_dir / "seeds.txt"
+            seeds_file.write_text("\n".join(urls) + "\n")
 
-        if len(crawled) > MAX_URLS_PER_DOMAIN:
-            log(f"{domain}: WARNING -- katana returned {len(crawled)} URLs, "
-                f"likely a crawler trap or huge sitemap. Capping to {MAX_URLS_PER_DOMAIN}.")
-            crawled = set(sorted(crawled)[:MAX_URLS_PER_DOMAIN])
+            # ---------- Katana ----------
+            katana_out = domain_dir / "katana.txt"
+            crawled = set(run_katana(seeds_file, katana_out))
 
-        all_urls = sorted(set(urls) | crawled)
-        log(f"{domain}: katana added {len(all_urls) - len(urls)} new URLs")
+            if len(crawled) > MAX_URLS_PER_DOMAIN:
+                log(f"{domain}: WARNING -- katana returned {len(crawled)} URLs, "
+                    f"likely a crawler trap or huge sitemap. Capping to {MAX_URLS_PER_DOMAIN}.")
+                crawled = set(sorted(crawled)[:MAX_URLS_PER_DOMAIN])
 
-        # ---------- Historical robots (فقط هاست‌های همین گروه، موازی) ----------
-        hosts = sorted({get_host(u) for u in urls if get_host(u)})
-        robots_urls = set()
-        with ThreadPoolExecutor(max_workers=ROBOTS_WORKERS) as ex:
-            futures = {ex.submit(fetch_robots_history, h): h for h in hosts}
-            for fut in as_completed(futures):
-                robots_urls.update(fut.result())
-        if robots_urls:
-            log(f"{domain}: historical robots added {len(robots_urls)} URLs")
-            all_urls = sorted(set(all_urls) | robots_urls)
+            all_urls = sorted(set(urls) | crawled)
+            log(f"{domain}: katana added {len(all_urls) - len(urls)} new URLs")
 
-        # ---------- Build entries and store in one bulk_write (not per-URL) ----------
-        entries = []
-        skipped_out_of_scope = 0
-        for u in all_urls:
-            host = get_host(u)
-            if not host:
-                continue
-            program_name = resolve_program(host)
-            if program_name == "Unknown":
-                # host not in Http -- out of scope (e.g. third-party link katana
-                # pulled from JS). Skip, don't store.
-                skipped_out_of_scope += 1
-                continue
-            if u in crawled:
-                source = "katana"
-            elif u in robots_urls:
-                source = "wayback-robots"
-            else:
-                source = "http-seed"
+            # ---------- Historical robots (فقط هاست‌های همین گروه، موازی) ----------
+            hosts = sorted({get_host(u) for u in urls if get_host(u)})
+            robots_urls = set()
+            with ThreadPoolExecutor(max_workers=ROBOTS_WORKERS) as ex:
+                futures = {ex.submit(fetch_robots_history, h): h for h in hosts}
+                for fut in as_completed(futures):
+                    robots_urls.update(fut.result())
+            if robots_urls:
+                log(f"{domain}: historical robots added {len(robots_urls)} URLs")
+                all_urls = sorted(set(all_urls) | robots_urls)
 
-            clean_url = html.unescape(u)  # fixes "&amp" -> "&" before parsing, else params after it get missed
-            parsed = urlparse(clean_url)
-            entries.append({
-                "program_name": program_name,
-                "subdomain": host,
-                "url": clean_url,
-                "path": parsed.path or "/",
-                "params": sorted(set(parse_qs(parsed.query).keys())),
-                "source": source,
-            })
+            # ---------- Build entries and store in one bulk_write (not per-URL) ----------
+            entries = []
+            skipped_out_of_scope = 0
+            for u in all_urls:
+                host = get_host(u)
+                if not host:
+                    continue
+                program_name = resolve_program(host)
+                if program_name == "Unknown":
+                    # host not in Http -- out of scope (e.g. third-party link katana
+                    # pulled from JS). Skip, don't store.
+                    skipped_out_of_scope += 1
+                    continue
+                if u in crawled:
+                    source = "katana"
+                elif u in robots_urls:
+                    source = "wayback-robots"
+                else:
+                    source = "http-seed"
 
-        if skipped_out_of_scope:
-            log(f"{domain}: skipped {skipped_out_of_scope} out-of-scope/third-party URLs")
+                clean_url = html.unescape(u)  # fixes "&amp" -> "&" before parsing, else params after it get missed
+                parsed = urlparse(clean_url)
+                entries.append({
+                    "program_name": program_name,
+                    "subdomain": host,
+                    "url": clean_url,
+                    "path": parsed.path or "/",
+                    "params": sorted(set(parse_qs(parsed.query).keys())),
+                    "source": source,
+                })
 
-        saved_new = bulk_store_crawl_results(entries)
-        log(f"{domain}: bulk-stored {len(entries)} entries, {saved_new} new")
+            if skipped_out_of_scope:
+                log(f"{domain}: skipped {skipped_out_of_scope} out-of-scope/third-party URLs")
 
-        total_new += saved_new
-        total_urls += len(all_urls)
+            saved_new = bulk_store_crawl_results(entries)
+            log(f"{domain}: bulk-stored {len(entries)} entries, {saved_new} new")
 
-        # ---------- output file + telegram (best-effort, for quick review) ----------
-        final_file = domain_dir / f"{domain}_final.txt"
-        final_file.write_text("\n".join(all_urls) + "\n")
+            total_new += saved_new
+            total_urls += len(all_urls)
 
-        caption = (
-            f"Result -- {domain} [crawlFresh]\n"
-            f"Seeds: {len(urls)} | Final: {len(all_urls)} | New in DB: {saved_new}"
-        )
-        send_telegram_file(str(final_file), caption)
+            # ---------- output file + telegram (best-effort, for quick review) ----------
+            final_file = domain_dir / f"{domain}_final.txt"
+            final_file.write_text("\n".join(all_urls) + "\n")
+
+            caption = (
+                f"Result -- {domain} [crawlFresh]\n"
+                f"Seeds: {len(urls)} | Final: {len(all_urls)} | New in DB: {saved_new}"
+            )
+            send_telegram_file(str(final_file), caption)
+
+        except Exception as e:
+            log(f"ERROR crawling {domain}, skipping to next domain: {e}")
+            send_telegram_message(f"crawlFresh: {domain} FAILED ({e}) -- continuing with next domain")
+            continue
 
     summary = (
         f"crawlFresh run finished\n"
@@ -332,4 +339,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from backend.task_report import mark_finished
+    try:
+        main()
+        mark_finished("success", 0)
+    except Exception as e:
+        mark_finished("failed", 1)
+        log(f"FATAL: crawlFresh crashed before/outside the per-domain loop: {e}")
+        send_telegram_message(f"crawlFresh CRASHED: {e}\nCheck server logs.")
+        raise

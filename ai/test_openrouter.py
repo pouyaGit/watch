@@ -14,6 +14,7 @@ from openai import (
 from ai.knowledge.store import KnowledgeStore
 from ai.llm.openrouter import (
     DEFAULT_BASE_URL,
+    DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
     DEFAULT_TIMEOUT_SECONDS,
     OpenRouterProvider,
@@ -148,6 +149,144 @@ class OpenRouterProviderConfigTests(unittest.TestCase):
         self.assertEqual(
             provider.timeout, DEFAULT_TIMEOUT_SECONDS
         )
+
+
+class OpenRouterProviderMaxTokensTests(unittest.TestCase):
+    """
+    The provider must send an explicit completion/output token
+    budget (``max_tokens``) with every request so structured
+    JSON responses from models such as MiniMax are not
+    truncated mid-field by a small provider-side default.
+    """
+
+    def setUp(self):
+        self._saved_env: dict[str, str | None] = {}
+        for key in (
+            "OPENROUTER_API_KEY",
+            "OPENROUTER_MODEL",
+            "OPENROUTER_MAX_TOKENS",
+        ):
+            self._saved_env[key] = os.environ.get(key)
+
+    def tearDown(self):
+        for key, value in self._saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    @staticmethod
+    def _capturing_handler(captured: dict):
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(
+                request.content.decode("utf-8")
+            )
+            return httpx.Response(
+                200, json=_make_chat_payload()
+            )
+
+        return handler
+
+    def _provider(self, handler, **kwargs) -> OpenRouterProvider:
+        client = _build_capturing_client(handler)
+        return OpenRouterProvider(
+            api_key="sk-or-v1-secret-key",
+            model="minimax/minimax-m3:free",
+            http_client=client,
+            **kwargs,
+        )
+
+    def test_default_max_tokens_sent_when_env_absent(self):
+        os.environ.pop("OPENROUTER_MAX_TOKENS", None)
+        captured: dict = {}
+        provider = self._provider(
+            self._capturing_handler(captured)
+        )
+
+        provider.generate("p")
+
+        self.assertEqual(
+            provider.max_tokens, DEFAULT_MAX_TOKENS
+        )
+        self.assertEqual(
+            captured["body"]["max_tokens"],
+            DEFAULT_MAX_TOKENS,
+        )
+
+    def test_env_max_tokens_is_passed_to_create(self):
+        os.environ["OPENROUTER_MAX_TOKENS"] = "8192"
+        captured: dict = {}
+        provider = self._provider(
+            self._capturing_handler(captured)
+        )
+
+        provider.generate("p")
+
+        self.assertEqual(provider.max_tokens, 8192)
+        self.assertEqual(
+            captured["body"]["max_tokens"], 8192
+        )
+
+    def test_explicit_max_tokens_overrides_env(self):
+        os.environ["OPENROUTER_MAX_TOKENS"] = "8192"
+        captured: dict = {}
+        provider = self._provider(
+            self._capturing_handler(captured),
+            max_tokens=1234,
+        )
+
+        provider.generate("p")
+
+        self.assertEqual(provider.max_tokens, 1234)
+        self.assertEqual(
+            captured["body"]["max_tokens"], 1234
+        )
+
+    def test_blank_env_value_falls_back_to_default(self):
+        os.environ["OPENROUTER_MAX_TOKENS"] = "   "
+        captured: dict = {}
+        provider = self._provider(
+            self._capturing_handler(captured)
+        )
+
+        provider.generate("p")
+
+        self.assertEqual(
+            captured["body"]["max_tokens"],
+            DEFAULT_MAX_TOKENS,
+        )
+
+    def test_invalid_env_value_raises_at_construction(self):
+        for bad in ("abc", "12.5", "4096 tokens"):
+            os.environ["OPENROUTER_MAX_TOKENS"] = bad
+            with self.assertRaises(
+                OpenRouterProviderError
+            ):
+                self._provider(
+                    lambda _request: httpx.Response(200)
+                )
+
+    def test_non_positive_env_value_raises_at_construction(self):
+        for bad in ("0", "-5"):
+            os.environ["OPENROUTER_MAX_TOKENS"] = bad
+            with self.assertRaises(
+                OpenRouterProviderError
+            ):
+                self._provider(
+                    lambda _request: httpx.Response(200)
+                )
+
+    def test_invalid_explicit_max_tokens_raises_at_construction(
+        self,
+    ):
+        for bad in (0, -1, True):
+            with self.assertRaises(
+                OpenRouterProviderError
+            ):
+                self._provider(
+                    lambda _request: httpx.Response(200),
+                    max_tokens=bad,
+                )
 
 
 class OpenRouterProviderRequestTests(unittest.TestCase):

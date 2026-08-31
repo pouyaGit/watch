@@ -1,0 +1,51 @@
+{# dashboard.html — top-level program list + fresh banner + system stats cards.
+   System stats are htmx-polled every 5s from /api/system/stats. #}
+{% extends "base.html" %}
+{% block title %}Watch Dashboard{% endblock %}
+
+{% block content %}
+
+{# ----- live system stats ----- #}
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6"
+     hx-get="/api/system/stats?api_key={{ api_key_qs }}"
+     hx-trigger="load, every 5s"
+     hx-swap="innerHTML">
+  <div class="stat-card"><div class="stat-label">CPU</div><div class="stat-value">…</div></div>
+  <div class="stat-card"><div class="stat-label">RAM</div><div class="stat-value">…</div></div>
+  <div class="stat-card"><div class="stat-label">Disk</div><div class="stat-value">…</div></div>
+  <div class="stat-card"><div class="stat-label">Load</div><div class="stat-value">…</div></div>
+</div>
+
+{# ----- fresh banner ----- #}
+{% if fresh_count %}
+<a class="block bg-emerald-900/30 border border-emerald-700 rounded-lg px-4 py-2 mb-4 text-emerald-300 font-semibold hover:bg-emerald-700 hover:text-bg"
+   href="{{ fresh_link }}">🆕 Fresh HTTP results (last 24h): {{ fresh_count }}</a>
+{% endif %}
+
+<h1 class="text-accent text-2xl mb-4">🔍 Watch Dashboard</h1>
+
+<div class="flex gap-3 text-sm mb-4">
+  <a href="{{ docs_url }}" class="badge-link">API docs</a>
+  <a href="{{ stats_link }}" class="badge-link">Stats JSON</a>
+  <a href="{{ dns_link }}" class="badge-link">DNS Bruteforce Status</a>
+</div>
+
+{% if programs %}
+  {% for p in programs %}
+  <div class="program-card">
+    <h3 class="text-accent text-lg">
+      <a href="{{ p.detail_url }}">{{ p.program_name }}</a>
+    </h3>
+    <div class="links mt-1">
+      <a href="{{ p.detail_url }}" class="badge-link">Open program page</a>
+      <span class="text-muted text-sm">
+        Subdomains: {{ p.subdomains }} · Live: {{ p.live }} · HTTP: {{ p.http }}
+      </span>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="text-muted">No programs yet.</div>
+{% endif %}
+
+{% endblock %}
