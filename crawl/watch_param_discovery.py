@@ -46,6 +46,14 @@ CHECKPOINT_EVERY = 200     # send one Telegram progress ping every N endpoints,
                            # not per-endpoint -- avoids the notification spam
                            # you already ran into with upsert_lives
 
+# Canonical param_records vocabulary:
+#   method   -> {"GET", "POST", "PUT", "PATCH"}
+#   location -> {"query", "body"}
+#   source   -> {"crawl", "x8"}
+SUPPORTED_METHODS = {"GET", "POST", "PUT", "PATCH"}
+SUPPORTED_LOCATIONS = {"query", "body"}
+SUPPORTED_SOURCES = {"crawl", "x8"}
+
 START_TIME = time.time()
 
 def build_x8_target_url(url):
@@ -112,6 +120,12 @@ def run_x8(url, wordlist_path):
     provenance emitted by x8:
         {"name": str, "method": str, "injection_place": str}
 
+    Returns ``None`` when x8 could NOT run to completion (binary not
+    found, timeout, execution error, or unparseable output) so the
+    caller can distinguish "ran and found nothing" (``[]``) from "did
+    not actually complete" (``None``) -- the latter must never mark an
+    endpoint x8_checked.
+
     Injection-place → internal location mapping happens in
     :func:`map_x8_location`, NOT here, so the raw values stay
     inspectable. Parses x8's JSON output; verify exact flags
@@ -120,7 +134,7 @@ def run_x8(url, wordlist_path):
     """
     if subprocess.call(["which", "x8"], stdout=subprocess.DEVNULL) != 0:
         log("x8 not found in PATH")
-        return []
+        return None
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
         out_path = tmp.name
@@ -146,10 +160,10 @@ def run_x8(url, wordlist_path):
         subprocess.run(cmd, capture_output=True, text=True, timeout=X8_TIMEOUT)
     except subprocess.TimeoutExpired:
         log(f"x8 timeout: {url}")
-        return []
+        return None
     except Exception as e:
         log(f"x8 error on {url}: {e}")
-        return []
+        return None
 
     records = []
     try:
@@ -185,7 +199,7 @@ def run_x8(url, wordlist_path):
                 )
     except Exception:
         log(f"Could not parse x8 JSON output for {url} -- check manually: {out_path}")
-        return []
+        return None
     finally:
         try:
             os.remove(out_path)
@@ -224,6 +238,49 @@ def map_x8_location(injection_place, method):
     if place == "path" and method == "GET":
         return "query"
     return None
+
+
+def normalize_param_record(name, method, location, source):
+    """
+    Normalize one parameter-discovery record into the canonical
+    ``Endpoints.param_records`` schema:
+
+        {"name": str, "method": str, "location": str, "source": str}
+
+    with the bounded vocabulary:
+
+        method   -> GET | POST | PUT | PATCH
+        location -> query | body
+        source   -> crawl | x8
+
+    Returns the normalized dict, or ``None`` when the record must be
+    discarded. The helper is deliberately strict: it strips the name,
+    upper-cases the method and lower-cases the location, and rejects
+    empty names, missing/unsupported methods, and missing/unsupported
+    locations. It NEVER invents a method and NEVER silently converts an
+    unsupported location into query/body -- both crawl and x8 records
+    flow through here so the persisted provenance is always uniform.
+    """
+    name = (name or "").strip()
+    method = (method or "").strip().upper()
+    location = (location or "").strip().lower()
+    source = (source or "").strip().lower()
+
+    if not name or not method or not location or not source:
+        return None
+    if method not in SUPPORTED_METHODS:
+        return None
+    if location not in SUPPORTED_LOCATIONS:
+        return None
+    if source not in SUPPORTED_SOURCES:
+        return None
+
+    return {
+        "name": name,
+        "method": method,
+        "location": location,
+        "source": source,
+    }
 
 
 def get_pending_endpoints(filter_arg=None, limit=None):
@@ -299,6 +356,15 @@ def main():
             get_wordlist_for_program(ep.program_name)
         )
 
+        if raw_records is None:
+            # x8 did NOT complete (not found/timeout/error/parse):
+            # do not mark this endpoint checked -- it stays pending
+            # and will be retried on the next run.
+            log(f"x8 did not complete for {ep.example_url} -- leaving unchecked")
+            time.sleep(X8_RATE_LIMIT_DELAY)
+            continue
+
+        # From here on x8 executed successfully (possibly [] findings).
         if raw_records:
             # Map x8 injection places to our internal vocabulary.
             # Unsupported places (Headers/HeaderValue/non-GET Path/...)
@@ -320,22 +386,21 @@ def main():
                 )
                 if location is None:
                     continue
-                name = (rec.get("name") or "").strip()
-                method = (rec.get("method") or "").strip().upper()
-                if not name or not method:
+                normalized = normalize_param_record(
+                    rec.get("name"), rec.get("method"), location, "x8"
+                )
+                if normalized is None:
                     continue
-                key = (name, method, location, "x8")
+                key = (
+                    normalized["name"],
+                    normalized["method"],
+                    normalized["location"],
+                    normalized["source"],
+                )
                 if key in seen:
                     continue
                 seen.add(key)
-                new_records.append(
-                    {
-                        "name": name,
-                        "method": method,
-                        "location": location,
-                        "source": "x8",
-                    }
-                )
+                new_records.append(normalized)
 
             if new_records:
                 ep.param_records = list((ep.param_records or [])) + new_records

@@ -21,6 +21,7 @@ from crawl.watch_param_discovery import (
     build_x8_target_url,
     main,
     map_x8_location,
+    normalize_param_record,
     run_x8,
 )
 
@@ -198,6 +199,14 @@ class X8RunParserTests(unittest.TestCase):
             [{"name": "keep", "method": "POST", "injection_place": "Body"}],
         )
 
+    @mock.patch("crawl.watch_param_discovery.subprocess")
+    def test_success_with_zero_findings_returns_empty_list(self, mock_subprocess):
+        # A clean, successful x8 run that found nothing must return []
+        # (NOT None) so the caller can still mark the endpoint checked.
+        records = self._run_payload(mock_subprocess, [])
+        self.assertEqual(records, [])
+        self.assertIsNotNone(records)
+
 
 class X8TargetConstructionTests(unittest.TestCase):
     """build_x8_target_url() normalizes the endpoint URL used for x8
@@ -247,6 +256,230 @@ class X8TargetConstructionTests(unittest.TestCase):
         called_url = run_x8_mock.call_args[0][0]
         self.assertEqual(called_url, "https://shop.example.test/path")
         self.assertEqual(called_url, build_x8_target_url(ep.example_url))
+
+
+class NormalizeParamRecordTests(unittest.TestCase):
+    """normalize_param_record() must produce the canonical
+    param_records schema and reject anything it cannot attribute."""
+
+    def test_crawl_get_query(self):
+        self.assertEqual(
+            normalize_param_record("q", "GET", "query", "crawl"),
+            {"name": "q", "method": "GET", "location": "query", "source": "crawl"},
+        )
+
+    def test_crawl_post_body(self):
+        self.assertEqual(
+            normalize_param_record("foo", "post", "body", "crawl"),
+            {"name": "foo", "method": "POST", "location": "body", "source": "crawl"},
+        )
+
+    def test_crawl_put_body(self):
+        self.assertEqual(
+            normalize_param_record("bar", "PUT", "Body", "crawl"),
+            {"name": "bar", "method": "PUT", "location": "body", "source": "crawl"},
+        )
+
+    def test_crawl_patch_body(self):
+        self.assertEqual(
+            normalize_param_record("baz", "patch", "BODY", "crawl"),
+            {"name": "baz", "method": "PATCH", "location": "body", "source": "crawl"},
+        )
+
+    def test_name_and_vocabulary_are_normalized(self):
+        rec = normalize_param_record("  spaced  ", " get ", " QUERY ", " x8 ")
+        self.assertEqual(
+            rec,
+            {"name": "spaced", "method": "GET", "location": "query", "source": "x8"},
+        )
+
+    def test_empty_name_rejected(self):
+        self.assertIsNone(normalize_param_record("", "GET", "query", "crawl"))
+        self.assertIsNone(normalize_param_record("   ", "GET", "query", "crawl"))
+        self.assertIsNone(normalize_param_record(None, "GET", "query", "crawl"))
+
+    def test_missing_method_rejected_never_invented(self):
+        self.assertIsNone(normalize_param_record("q", "", "query", "crawl"))
+        self.assertIsNone(normalize_param_record("q", None, "query", "crawl"))
+        self.assertIsNone(normalize_param_record("q", "   ", "query", "crawl"))
+
+    def test_unsupported_method_rejected(self):
+        self.assertIsNone(normalize_param_record("q", "OPTIONS", "query", "x8"))
+        self.assertIsNone(normalize_param_record("q", "DELETE", "body", "x8"))
+        self.assertIsNone(normalize_param_record("q", "HEAD", "query", "x8"))
+
+    def test_unsupported_location_rejected(self):
+        # The raw x8 "Path" label is NOT a valid location here; only
+        # mapped query/body values may pass through.
+        self.assertIsNone(normalize_param_record("q", "GET", "Path", "x8"))
+        self.assertIsNone(normalize_param_record("q", "GET", "headers", "x8"))
+        self.assertIsNone(normalize_param_record("q", "GET", "HeaderValue", "x8"))
+        self.assertIsNone(normalize_param_record("q", "GET", "cookie", "x8"))
+        self.assertIsNone(normalize_param_record("q", "GET", "totally-unknown", "x8"))
+
+    def test_missing_location_rejected(self):
+        self.assertIsNone(normalize_param_record("q", "GET", "", "x8"))
+        self.assertIsNone(normalize_param_record("q", "GET", None, "x8"))
+
+    def test_unsupported_source_rejected(self):
+        self.assertIsNone(normalize_param_record("q", "GET", "query", "manual"))
+
+    def test_x8_path_get_maps_to_query_then_normalizes(self):
+        # Full x8 pipeline: Path+GET maps to query, then normalizes.
+        location = map_x8_location("Path", "GET")
+        self.assertEqual(location, "query")
+        self.assertEqual(
+            normalize_param_record("q", "GET", location, "x8"),
+            {"name": "q", "method": "GET", "location": "query", "source": "x8"},
+        )
+
+    def test_x8_path_non_get_rejected_end_to_end(self):
+        # Path + POST/PUT/PATCH: map_x8_location rejects, so no
+        # normalized record can ever be produced.
+        for method in ("POST", "PUT", "PATCH"):
+            self.assertIsNone(map_x8_location("Path", method))
+
+
+class X8MainPersistenceTests(unittest.TestCase):
+    """main() must persist x8 records through the normalized schema,
+    deduplicate by full provenance, keep the union fields consistent,
+    and only mark x8_checked when x8 actually completed."""
+
+    class _FakeEndpoint:
+        def __init__(self, **kw):
+            self.program_name = kw.get("program_name", "dell")
+            self.example_url = kw.get(
+                "example_url", "https://shop.example.test/path?token=abc"
+            )
+            self.params = list(kw.get("params", []))
+            self.params_from_crawl = list(kw.get("params_from_crawl", []))
+            self.params_from_x8 = list(kw.get("params_from_x8", []))
+            self.param_records = list(kw.get("param_records", []))
+            self.x8_checked = kw.get("x8_checked", False)
+            self.x8_last_checked = None
+            self.last_update = None
+            self.saved = 0
+
+        def save(self):
+            self.saved += 1
+
+    def _run_main(self, ep, run_x8_result):
+        with mock.patch(
+            "crawl.watch_param_discovery.get_pending_endpoints",
+            return_value=[ep],
+        ), mock.patch(
+            "crawl.watch_param_discovery.run_x8", return_value=run_x8_result
+        ), mock.patch(
+            "crawl.watch_param_discovery.send_telegram"
+        ), mock.patch(
+            "crawl.watch_param_discovery.export_wordlists", return_value=[]
+        ), mock.patch(
+            "crawl.watch_param_discovery.time.sleep"
+        ), mock.patch(
+            "crawl.watch_param_discovery.os.path.exists", return_value=True
+        ), mock.patch.object(
+            sys, "argv", ["watch_param_discovery.py"]
+        ):
+            main()
+        return ep
+
+    def test_successful_x8_with_no_findings_marks_checked(self):
+        ep = self._FakeEndpoint()
+        self._run_main(ep, [])
+        self.assertTrue(ep.x8_checked)
+        self.assertGreaterEqual(ep.saved, 1)
+
+    def test_x8_failure_does_not_mark_checked(self):
+        # None means x8 did not complete (timeout/error/parse fail):
+        # the endpoint must stay unchecked and not be saved.
+        ep = self._FakeEndpoint(x8_checked=False)
+        self._run_main(ep, None)
+        self.assertFalse(ep.x8_checked)
+        self.assertEqual(ep.saved, 0)
+
+    def test_x8_records_persisted_normalized_and_deduped(self):
+        ep = self._FakeEndpoint(
+            params=["c"],
+            params_from_crawl=["c"],
+            param_records=[
+                {"name": "c", "method": "GET", "location": "query", "source": "crawl"},
+            ],
+        )
+        raw = [
+            {"name": "foo", "method": "POST", "injection_place": "Body"},
+            {"name": " foo ", "method": "POST", "injection_place": "Body"},  # dup
+            {"name": "hdr", "method": "GET", "injection_place": "Headers"},  # dropped
+            {"name": "q", "method": "GET", "injection_place": "Query"},
+        ]
+        self._run_main(ep, raw)
+
+        self.assertEqual(
+            sorted(
+                (r["name"], r["method"], r["location"], r["source"])
+                for r in ep.param_records
+            ),
+            [
+                ("c", "GET", "query", "crawl"),
+                ("foo", "POST", "body", "x8"),
+                ("q", "GET", "query", "x8"),
+            ],
+        )
+        # Union fields derived from the records:
+        self.assertEqual(ep.params_from_x8, ["foo", "q"])
+        self.assertEqual(ep.params_from_crawl, ["c"])
+        self.assertEqual(ep.params, ["c", "foo", "q"])
+        self.assertTrue(ep.x8_checked)
+
+    def test_x8_duplicate_against_existing_records_not_readded(self):
+        ep = self._FakeEndpoint(
+            param_records=[
+                {"name": "q", "method": "GET", "location": "query", "source": "x8"},
+            ],
+            params_from_x8=["q"],
+            params=["q"],
+        )
+        self._run_main(
+            ep,
+            [{"name": "q", "method": "GET", "injection_place": "Query"}],
+        )
+        x8_records = [
+            r for r in ep.param_records
+            if r.get("source") == "x8" and r.get("name") == "q"
+        ]
+        self.assertEqual(len(x8_records), 1)
+
+    def test_run_x8_returns_none_when_binary_missing(self):
+        with mock.patch("crawl.watch_param_discovery.subprocess") as ms:
+            ms.call.return_value = 1  # which x8 -> not found
+            self.assertIsNone(run_x8("https://example.test/api", "/tmp/wl.txt"))
+
+    def test_run_x8_returns_none_on_timeout(self):
+        with mock.patch("crawl.watch_param_discovery.subprocess") as ms:
+            ms.call.return_value = 0
+            ms.TimeoutExpired = subprocess.TimeoutExpired
+            ms.run.side_effect = subprocess.TimeoutExpired(cmd="x8", timeout=1)
+            self.assertIsNone(run_x8("https://example.test/api", "/tmp/wl.txt"))
+
+    def test_run_x8_returns_none_on_execution_error(self):
+        with mock.patch("crawl.watch_param_discovery.subprocess") as ms:
+            ms.call.return_value = 0
+            ms.TimeoutExpired = subprocess.TimeoutExpired
+            ms.run.side_effect = OSError("spawn failed")
+            self.assertIsNone(run_x8("https://example.test/api", "/tmp/wl.txt"))
+
+    def test_run_x8_returns_none_on_unparseable_output(self):
+        with mock.patch("crawl.watch_param_discovery.subprocess") as ms:
+            ms.call.return_value = 0
+            ms.TimeoutExpired = subprocess.TimeoutExpired
+
+            def _garbage(cmd, *args, **kwargs):
+                out_path = cmd[cmd.index("-o") + 1]
+                with open(out_path, "w") as f:
+                    f.write("{not json")
+                return subprocess.CompletedProcess(cmd, 0)
+
+            ms.run.side_effect = _garbage
+            self.assertIsNone(run_x8("https://example.test/api", "/tmp/wl.txt"))
 
 
 if __name__ == "__main__":  # pragma: no cover
