@@ -1,0 +1,108 @@
+{# runs.html — Recon Operations page: aggregated task runs with Tehran
+   timestamps. Each task row gets an anchor (#task-{task_id}) for sidebar
+   deep linking. Running tasks show elapsed duration. #}
+{% extends "base.html" %}
+{% block title %}Recon Runs — WATCH{% endblock %}
+{% block page %}Recon Runs{% endblock %}
+
+{% from "macros.html" import status_badge, pager, empty_state with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Recon Runs</h1>
+  <p class="page-sub">Recent execution state across all operations</p>
+</div>
+
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Task Runs</h2></div>
+  <div class="table-wrap">
+    <table class="tbl tbl-compact">
+      <thead>
+        <tr>
+          <th>Operation</th>
+          <th>Status</th>
+          <th>Last Run</th>
+          <th class="num">Duration</th>
+          <th>Runs</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in tasks %}
+        <tr id="task-{{ t.task_id }}">
+          <td class="run-name" title="{{ t.task_id }}">{{ t.name }}</td>
+          <td>{{ status_badge(t.status) }}</td>
+          {% if t.last_run %}
+          <td class="text-xs" title="Started: {{ t.last_run.started_tehran }}{% if t.last_run.finished_tehran and t.last_run.finished_tehran != '—' %} · Finished: {{ t.last_run.finished_tehran }}{% endif %}">
+            {% if t.status == 'running' %}
+              <span class="text-accent">{{ t.last_run.started_tehran }}</span>
+            {% else %}
+              {{ t.last_run.started_tehran }}
+            {% endif %}
+          </td>
+          <td class="num text-xs">
+            {% if t.status == 'running' %}
+              <span class="text-accent">{{ t.last_run.duration }}</span>
+            {% else %}
+              {{ t.last_run.duration }}
+            {% endif %}
+          </td>
+          {% else %}
+          <td class="text-muted">—</td>
+          <td class="text-muted num">—</td>
+          {% endif %}
+          <td class="num text-xs">{{ t.total_runs | fmtnum }}</td>
+          <td class="text-xs">
+            {% if t.last_run and t.last_run.log_name %}
+              <a class="text-accent" href="{{ '/logs/tasks/' ~ t.last_run.log_name ~ ('?api_key=' ~ api_key_qs if api_key_qs else '') }}">log</a>
+            {% elif t.status == 'running' %}—{% else %}—{% endif %}
+            <a class="badge-link ml-1" href="{{ tasks_url }}">manage</a>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty">No tasks registered.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>DNS Bruteforce</h2>
+    <a class="badge-link" href="{{ dns_url }}">Full status →</a></div>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>Program</th>
+          <th>Domain</th>
+          <th>Feasible</th>
+          <th>Last static BF</th>
+          <th>Last dynamic BF</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in dns_runs %}
+        <tr>
+          <td class="text-accent text-xs">{{ d.program_name }}</td>
+          <td class="font-mono text-xs">{{ d.domain }}</td>
+          <td>
+            {% if d.feasible %}
+              <span class="badge badge-ok">YES</span>
+            {% elif d.feasible is none %}
+              <span class="badge badge-idle">unknown</span>
+            {% else %}
+              <span class="badge badge-err">no (wildcard)</span>
+            {% endif %}
+          </td>
+          <td class="text-xs" title="{{ d.last_static }}">{{ d.last_static_ago }}</td>
+          <td class="text-xs" title="{{ d.last_dynamic }}">{{ d.last_dynamic_ago }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="empty">No DNS brute statuses yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

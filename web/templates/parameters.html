@@ -1,0 +1,59 @@
+{# parameters.html — global parameter inventory (/ui/parameters): distinct
+   parameter names across all endpoints, with endpoint + program coverage.
+   One server-side aggregation; search / sort / pagination preserved. #}
+{% extends "base.html" %}
+{% block title %}Parameters — WATCH{% endblock %}
+{% block page %}Parameters{% endblock %}
+
+{% from "macros.html" import sort_link, pager, empty_state with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Parameters</h1>
+  <p class="page-sub">{{ total | fmtnum }} distinct parameter names across all endpoints</p>
+</div>
+
+<form method="get" action="/ui/parameters" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Search parameter name…"
+         class="search-input" autocomplete="off">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="direction" value="{{ direction }}">
+  <button type="submit" class="btn-primary">Search</button>
+  {% if q %}<a class="badge-link" href="{{ parameters_url }}">Clear</a>{% endif %}
+</form>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'parameters') }}
+
+{% set fparams = {'q': q} %}
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>{{ sort_link(parameters_url, 'name', 'Parameter', sort, direction, fparams) }}</th>
+        <th class="num">{{ sort_link(parameters_url, 'count', 'Endpoints', sort, direction, fparams) }}</th>
+        <th class="num">{{ sort_link(parameters_url, 'programs', 'Programs', sort, direction, fparams) }}</th>
+        <th>Programs</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in items %}
+      <tr>
+        <td><span class="prog-name mono text-xs">{{ p.name }}</span></td>
+        <td class="num text-xs">{{ p.count | fmtnum }}</td>
+        <td class="num text-xs">{{ p.program_count | fmtnum }}</td>
+        <td class="text-xs text-muted td-title" title="{{ p.programs | join(', ') }}">
+          {{ p.programs | join(', ') }}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="empty">
+        {% if q %}No parameters match “{{ q }}”.{% else %}No parameters discovered yet.{% endif %}
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'parameters') }}
+{% endblock %}

@@ -1,0 +1,89 @@
+{# domains.html — live domains asset table: server-side search / program +
+   CDN + HTTP-status filters / sorting / pagination. All filter params are
+   preserved in sort + pagination links. #}
+{% extends "base.html" %}
+{% block title %}Live Domains — WATCH{% endblock %}
+{% block page %}Live Domains{% endblock %}
+
+{% from "macros.html" import http_status, cdn_badge, sort_link, pager, empty_state with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Live Domains</h1>
+  <p class="page-sub">{{ total | fmtnum }} live hosts — search, filter and sort server-side</p>
+</div>
+
+{# search + filter bar #}
+<form method="get" action="/ui/domains" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Search subdomain…"
+         class="search-input" autocomplete="off">
+  <select name="program" class="filter-select">
+    <option value="">All programs</option>
+    {% for pr in program_options %}
+      <option value="{{ pr }}"{{ ' selected' if program == pr }}>{{ pr }}</option>
+    {% endfor %}
+  </select>
+  <select name="cdn" class="filter-select">
+    <option value="">All CDN</option>
+    {% for c in cdn_options %}
+      <option value="{{ c }}"{{ ' selected' if cdn == c }}>{{ c }}</option>
+    {% endfor %}
+  </select>
+  <select name="status" class="filter-select">
+    <option value="">All HTTP</option>
+    {% for key, label in [('2xx','2xx'),('3xx','3xx'),('4xx','4xx'),('5xx','5xx'),('nohttp','No HTTP')] %}
+      <option value="{{ key }}"{{ ' selected' if status == key }}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="direction" value="{{ direction }}">
+  <button type="submit" class="btn-primary">Apply</button>
+  {% if q or cdn or status or program %}<a class="badge-link" href="{{ domains_url }}">Clear</a>{% endif %}
+</form>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'live domains') }}
+
+{% set fparams = {'q': q, 'cdn': cdn, 'status': status, 'program': program, 'limit': limit} %}
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>{{ sort_link(domains_url, 'domain', 'Domain', sort, direction, fparams) }}</th>
+        {% if program %}{% else %}<th>Program</th>{% endif %}
+        <th class="num">{{ sort_link(domains_url, 'status', 'Status', sort, direction, fparams) }}</th>
+        <th>Title</th>
+        <th>Technologies</th>
+        <th>{{ sort_link(domains_url, 'cdn', 'CDN', sort, direction, fparams) }}</th>
+        <th>IP</th>
+        <th>{{ sort_link(domains_url, 'updated', 'Last Update', sort, direction, fparams) }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in items %}
+      <tr>
+        <td class="td-domain">
+          <a class="text-accent" href="{{ d.url }}" target="_blank" rel="noopener" title="{{ d.subdomain }}">{{ d.subdomain }}</a>
+        </td>
+        {% if program %}{% else %}<td class="text-xs text-muted">{{ d.program_name }}</td>{% endif %}
+        <td class="num">{{ http_status(d.status_code) }}</td>
+        <td class="td-title" title="{{ d.title }}">{{ d.title or '—' }}</td>
+        <td class="text-xs text-muted td-title" title="{{ d.tech }}">{{ d.tech or '—' }}</td>
+        <td>{{ cdn_badge(d.cdn) }}</td>
+        <td class="mono text-xs text-muted" title="{{ d.ips }}">{{ d.ips or '—' }}</td>
+        <td class="text-xs" title="{{ d.last_update | tehran }}">
+          {{ d.ago }}
+          {% if d.stale %}<span class="pill pill-stale" title="No recon data in the last 7 days">stale</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="empty">
+        {% if q or cdn or status or program %}No live domains match this filter.{% else %}No live domains recorded yet.{% endif %}
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'live domains') }}
+{% endblock %}

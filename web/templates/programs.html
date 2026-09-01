@@ -1,0 +1,92 @@
+{# programs.html — primary programs view: server-side search / filter tabs /
+   sorting / pagination. Sort via ?sort=&direction=, filter via ?mode=,
+   search via ?q=. All params are preserved across sort + pagination links. #}
+{% extends "base.html" %}
+{% block title %}Programs — WATCH{% endblock %}
+{% block page %}Programs{% endblock %}
+
+{% from "macros.html" import sort_link, pager, empty_state with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Programs</h1>
+  <p class="page-sub">{{ total | fmtnum }} program{{ 's' if total != 1 }} — click a column header to sort</p>
+</div>
+
+{# search #}
+<form method="get" action="/ui/programs" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Search program name…"
+         class="search-input" autocomplete="off">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="direction" value="{{ direction }}">
+  <input type="hidden" name="mode" value="{{ mode }}">
+  <button type="submit" class="btn-primary">Search</button>
+  {% if q %}<a class="badge-link" href="{{ programs_url }}?mode={{ mode }}&sort={{ sort }}&direction={{ direction }}">Clear</a>{% endif %}
+</form>
+
+{# filter tabs #}
+<div class="filter-bar">
+  {% set modes = [('all','All'), ('active','Active'), ('stale','Stale'), ('changes','Changed 24h')] %}
+  {% for key, label in modes %}
+    <a class="filter-tab{{ ' active' if mode == key }}"
+       href="{{ programs_url }}?mode={{ key }}&sort={{ sort }}&direction={{ direction }}{% if q %}&q={{ q | urlencode }}{% endif %}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'programs') }}
+
+{% set fparams = {'mode': mode, 'q': q} %}
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>{{ sort_link(programs_url, 'name', 'Program', sort, direction, fparams) }}</th>
+        <th class="num">{{ sort_link(programs_url, 'subdomains', 'Subdomains', sort, direction, fparams) }}</th>
+        <th class="num">{{ sort_link(programs_url, 'live', 'Live', sort, direction, fparams) }}</th>
+        <th class="num">{{ sort_link(programs_url, 'http', 'HTTP', sort, direction, fparams) }}</th>
+        <th class="num">{{ sort_link(programs_url, 'urls', 'URLs', sort, direction, fparams) }}</th>
+        <th class="num">{{ sort_link(programs_url, 'endpoints', 'Endpoints', sort, direction, fparams) }}</th>
+        <th class="num">{{ sort_link(programs_url, 'params', 'Params', sort, direction, fparams) }}</th>
+        <th class="num">{{ sort_link(programs_url, 'updated', 'Changes 24h', sort, direction, fparams) }}</th>
+        <th>{{ sort_link(programs_url, 'crawl', 'Last crawl', sort, direction, fparams) }}</th>
+        <th>{{ sort_link(programs_url, 'dns', 'Last DNS BF', sort, direction, fparams) }}</th>
+        <th>{{ sort_link(programs_url, 'updated', 'Last activity', sort, direction, fparams) }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in programs %}
+      <tr>
+        <td>
+          <a class="prog-name" href="{{ p.detail_url }}">{{ p.program_name }}</a>
+          <div class="prog-pills">
+            {% if p.changes_24h %}<span class="pill pill-changes" title="{{ p.changes_24h }} changes in last 24h">{{ p.changes_24h }} new</span>{% endif %}
+            {% if p.stale %}<span class="pill pill-stale" title="No recon activity in the last 7 days">stale</span>{% endif %}
+          </div>
+        </td>
+        <td class="num">{{ p.subdomains | fmtnum }}</td>
+        <td class="num ok">{{ p.live | fmtnum }}</td>
+        <td class="num">{{ p.http | fmtnum }}</td>
+        <td class="num">{{ p.urls | fmtnum }}</td>
+        <td class="num">{{ p.endpoints | fmtnum }}</td>
+        <td class="num accent2">{{ p.params | fmtnum }}</td>
+        <td class="num">
+          {% if p.changes_24h %}<span class="changes-count">{{ p.changes_24h | fmtnum }}</span>
+          {% elif p.stale %}<span class="text-muted" title="No recon activity in the last 7 days">stale</span>
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td class="text-xs">{% if p.last_crawl %}<span title="{{ p.last_crawl | tehran }}">{{ p.last_crawl | ago }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+        <td class="text-xs">{% if p.last_dns %}<span title="{{ p.last_dns | tehran }}">{{ p.last_dns | ago }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+        <td class="text-xs">{% if p.last_activity %}<span title="{{ p.last_activity | tehran }}">{{ p.last_activity | ago }}</span>{% else %}<span class="text-muted">never</span>{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="11" class="empty">
+        {% if q %}No programs match “{{ q }}”.{% else %}No programs match this filter.{% endif %}
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'programs') }}
+{% endblock %}

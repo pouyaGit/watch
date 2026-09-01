@@ -33,7 +33,7 @@ from starlette.staticfiles import StaticFiles
 # ...) needs the connection to be open before the first query.
 import database.db  # noqa: F401  (side-effect import)
 
-from backend.routers import pages, programs, system, tasks
+from backend.routers import pages, programs, runs, system, tasks
 from config import config
 
 API_KEY = config().get("API_KEY", "")
@@ -96,6 +96,7 @@ app.include_router(pages.router)
 app.include_router(programs.router)
 app.include_router(system.router)
 app.include_router(tasks.router)
+app.include_router(runs.router)
 
 
 if __name__ == "__main__":

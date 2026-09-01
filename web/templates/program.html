@@ -1,47 +1,145 @@
-{# program.html — single program detail page. #}
+{# program.html — per-program recon overview (main recon view for a program).
+   KPI cards + Recon Activity + Recent Changes + Live Assets + discovery sources.
+   All timestamps are Tehran. #}
 {% extends "base.html" %}
-{% block title %}Watch — {{ program_name }}{% endblock %}
+{% block title %}{{ program_name }} — WATCH{% endblock %}
+{% block page %}{{ program_name }}{% endblock %}
+
+{% from "macros.html" import status_badge, http_status, cdn_badge, change_row, empty_state with context %}
 
 {% block content %}
-<a href="{{ home_url }}" class="text-accent text-sm">← Back to Dashboard</a>
-<h2 class="text-accent2 text-2xl mt-3 mb-4">{{ program_name }}</h2>
-
-<div class="flex flex-wrap gap-2 mb-4">
-  <a class="badge-link" href="{{ sub_link }}">Subdomains ({{ counts.sub }})</a>
-  <a class="badge-link" href="{{ live_link }}">Live ({{ counts.live }})</a>
-  <a class="badge-link" href="{{ http_link }}">HTTP ({{ counts.http }})</a>
-  <a class="badge-link" href="{{ urls_link }}">URLs ({{ counts.urls }})</a>
-  <a class="badge-link" href="{{ eps_link }}">Endpoints ({{ counts.eps }})</a>
-  <a class="badge-link" href="{{ wl_link }}">Wordlist (txt)</a>
+<a href="{{ programs_url }}" class="back-link">← Programs</a>
+<div class="program-head">
+  <h1 class="page-title">{{ program_name }}</h1>
+  <span class="program-scope">{{ summary.program_name }}</span>
+  {% if summary.stale %}<span class="pill pill-stale">stale</span>{% endif %}
 </div>
 
-<div class="text-muted text-sm mt-3 mb-1">Technologies:</div>
-<div class="flex flex-wrap gap-2 mb-4">
-  {% if techs %}
-    {% for t in techs %}<a class="badge-link" href="{{ t.url }}">{{ t.name }}</a>{% endfor %}
-  {% else %}<span class="text-muted text-sm">none</span>{% endif %}
+{# KPI cards #}
+<div class="kpi-grid kpi-8">
+  <a href="{{ sub_link }}" class="stat-card stat-link">
+    <div class="stat-label">Subdomains</div><div class="stat-value">{{ summary.subdomains | fmtnum }}</div></a>
+  <a href="{{ live_link }}" class="stat-card stat-link">
+    <div class="stat-label">Live</div><div class="stat-value ok">{{ summary.live | fmtnum }}</div></a>
+  <a href="{{ http_link }}" class="stat-card stat-link">
+    <div class="stat-label">HTTP</div><div class="stat-value">{{ summary.http | fmtnum }}</div></a>
+  <a href="{{ urls_link }}" class="stat-card stat-link">
+    <div class="stat-label">URLs</div><div class="stat-value">{{ summary.urls | fmtnum }}</div></a>
+  <a href="{{ eps_link }}" class="stat-card stat-link">
+    <div class="stat-label">Endpoints</div><div class="stat-value">{{ summary.endpoints | fmtnum }}</div></a>
+  <a href="{{ eps_link }}" class="stat-card stat-link">
+    <div class="stat-label">Params</div><div class="stat-value accent2">{{ summary.params | fmtnum }}</div></a>
+  <a href="{{ wl_link }}" class="stat-card stat-link">
+    <div class="stat-label">Wordlist</div><div class="stat-value" style="font-size:14px">download</div></a>
+  <a href="{{ all_live_link }}" class="stat-card stat-link">
+    <div class="stat-label">Live table</div><div class="stat-value" style="font-size:14px">filtered →</div></a>
 </div>
 
-<div class="text-muted text-sm mt-3 mb-1">Providers (found → live-http):</div>
-<div class="flex flex-wrap gap-2 mb-4">
-  {% if providers %}
-    {% for p in providers %}
-      <a class="{{ 'badge-link badge-bf' if p.bf else 'badge-link' }}" href="{{ p.url }}">
-        {{ '🔥 ' if p.bf else '' }}{{ p.name }} ({{ p.count }})
-      </a>
+{# RECON ACTIVITY #}
+<section class="panel mb-5">
+  <div class="panel-head"><h2>Recon Activity</h2></div>
+  <div class="panel-body act-grid act-3">
+    <div class="act-item">
+      <span class="act-label">Last HTTP</span>
+      <span class="act-value neutral">{% if summary.last_http %}<span title="{{ summary.last_http | tehran }}">{{ summary.last_http | ago }}</span>{% else %}never{% endif %}</span>
+    </div>
+    <div class="act-item">
+      <span class="act-label">Last Crawl</span>
+      <span class="act-value neutral">{% if summary.last_crawl %}<span title="{{ summary.last_crawl | tehran }}">{{ summary.last_crawl | ago }}</span>{% else %}never{% endif %}</span>
+    </div>
+    <div class="act-item">
+      <span class="act-label">Last Static DNS BF</span>
+      <span class="act-value neutral">{% if summary.last_dns_static %}<span title="{{ summary.last_dns_static | tehran }}">{{ summary.last_dns_static | ago }}</span>{% else %}never{% endif %}</span>
+    </div>
+    <div class="act-item">
+      <span class="act-label">Last Dynamic DNS BF</span>
+      <span class="act-value neutral">{% if summary.last_dns_dynamic %}<span title="{{ summary.last_dns_dynamic | tehran }}">{{ summary.last_dns_dynamic | ago }}</span>{% else %}never{% endif %}</span>
+    </div>
+    <div class="act-item">
+      <span class="act-label">Last Param Discovery</span>
+      <span class="act-value neutral">{% if summary.last_param %}<span title="{{ summary.last_param | tehran }}">{{ summary.last_param | ago }}</span>{% else %}never{% endif %}</span>
+    </div>
+    <div class="act-item">
+      <span class="act-label">Last Activity</span>
+      <span class="act-value{% if summary.last_activity %} ok{% endif %}">{% if summary.last_activity %}<span title="{{ summary.last_activity | tehran }}">{{ summary.last_activity | ago }}</span>{% else %}never{% endif %}</span>
+    </div>
+  </div>
+</section>
+
+{# RECENT CHANGES #}
+<section class="panel mb-5">
+  <div class="panel-head">
+    <h2>Recent Changes</h2>
+    <a class="badge-link" href="{{ changes_url }}">All changes →</a>
+  </div>
+  <div class="panel-body{% if not changes %} panel-body-compact{% endif %}">
+    {% if changes %}
+    {% for c in changes %}
+      {{ change_row(c, show_program=False) }}
     {% endfor %}
-  {% else %}<span class="text-muted text-sm">none</span>{% endif %}
-</div>
+    {% else %}
+    {{ empty_state("No recent activity", "Change events will appear here when recon detects new assets or changes.", compact=True) }}
+    {% endif %}
+  </div>
+</section>
 
-<div class="text-muted text-sm mt-3 mb-1">Exclusive finds (this provider only, no overlap):</div>
-<div class="flex flex-wrap gap-2 mb-4">
-  {% if uniques %}
-    {% for u in uniques %}
-      <a class="{{ 'badge-link badge-bf' if u.bf else 'badge-link' }}" href="{{ u.url }}">
-        {{ u.name }} only ({{ u.count }})
-      </a>
-    {% endfor %}
-  {% else %}<span class="text-muted text-sm">none</span>{% endif %}
-</div>
+{# LIVE ASSETS #}
+<section class="panel mb-5">
+  <div class="panel-head">
+    <h2>Live Assets</h2>
+    <a class="badge-link" href="{{ all_live_link }}">All →</a>
+  </div>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr>
+        <th>Domain</th>
+        <th class="num">Status</th>
+        <th>Title</th>
+        <th>Technology</th>
+        <th>CDN</th>
+        <th>IP</th>
+        <th>Last Update</th>
+      </tr></thead>
+      <tbody>
+        {% for d in domains %}
+        <tr>
+          <td class="td-domain"><a class="text-accent" href="{{ d.url }}{{ '?api_key=' ~ api_key_qs if api_key_qs else '' }}" target="_blank" rel="noopener" title="{{ d.subdomain }}">{{ d.subdomain }}</a></td>
+          <td class="num">{{ http_status(d.status_code) }}</td>
+          <td class="td-title" title="{{ d.title }}">{{ d.title or '—' }}</td>
+          <td class="text-xs text-muted td-title" title="{{ d.tech }}">{{ d.tech or '—' }}</td>
+          <td>{{ cdn_badge(d.cdn) }}</td>
+          <td class="mono text-xs text-muted" title="{{ d.ips }}">{{ d.ips or '—' }}</td>
+          <td class="text-xs" title="{{ d.last_update | tehran }}">{{ d.ago }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="empty">No live domains yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{# providers & techs #}
+<section class="panel mb-5">
+  <div class="panel-head"><h2>Discovery Sources</h2></div>
+  <div class="panel-body">
+    <div class="text-muted text-xs mb-1">Providers (found subs):</div>
+    <div class="flex flex-wrap gap-2 mb-3">
+      {% if providers %}
+        {% for p in providers %}
+          <a class="badge-link{{ ' badge-bf' if p.bf else '' }}" href="{{ p.url }}">
+            {{ '🔥 ' if p.bf else '' }}{{ p.name }} ({{ p.count }})
+          </a>
+        {% endfor %}
+      {% else %}<span class="text-muted text-xs">none</span>{% endif %}
+    </div>
+    <div class="text-muted text-xs mb-1">Technologies detected:</div>
+    <div class="flex flex-wrap gap-2">
+      {% if techs %}
+        {% for t in techs %}<a class="badge-link" href="{{ t.url }}">{{ t.name }}</a>{% endfor %}
+      {% else %}<span class="text-muted text-xs">none</span>{% endif %}
+    </div>
+  </div>
+</section>
 
 {% endblock %}

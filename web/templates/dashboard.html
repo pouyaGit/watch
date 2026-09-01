@@ -1,12 +1,62 @@
-{# dashboard.html — top-level program list + fresh banner + system stats cards.
-   System stats are htmx-polled every 5s from /api/system/stats. #}
+{# dashboard.html — top-level recon overview (command-center landing page).
+    Header + quick actions, recon KPIs, system health (htmx), Recent
+    Operations, Recent Activity (ChangeEvent feed), activity summary and a
+    top-programs strip. #}
 {% extends "base.html" %}
-{% block title %}Watch Dashboard{% endblock %}
+{% block title %}WATCH &middot; Dashboard{% endblock %}
+{% block page %}Dashboard{% endblock %}
+
+{% from "macros.html" import status_badge, http_status, cdn_badge, change_row, pager, empty_state with context %}
 
 {% block content %}
+<div class="page-head">
+  <h1 class="page-title">Recon Overview</h1>
+  <p class="page-sub">Monitor your attack surface and discovery activity</p>
+</div>
 
-{# ----- live system stats ----- #}
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6"
+{# ----- quick actions (no duplicate search: global search lives in the topbar) ----- #}
+<div class="quick-actions">
+  <a class="quick-action" href="{{ domains_url }}">
+    <span class="qa-icon">⬡</span> Browse Live Domains
+  </a>
+  <a class="quick-action" href="{{ changes_url }}">
+    <span class="qa-icon">±</span> Recent Changes
+  </a>
+  <a class="quick-action" href="{{ programs_url }}">
+    <span class="qa-icon">◎</span> Programs
+  </a>
+</div>
+
+{# ----- RECON OVERVIEW KPIs (primary) ----- #}
+<div class="section-label">Recon Overview</div>
+<div class="kpi-grid kpi-8">
+  <a href="{{ programs_url }}" class="stat-card stat-link">
+    <div class="stat-label">Programs</div><div class="stat-value">{{ stats.programs | fmtnum }}</div></a>
+  <a href="{{ domains_url }}" class="stat-card stat-link">
+    <div class="stat-label">Subdomains</div><div class="stat-value">{{ stats.subdomains | fmtnum }}</div></a>
+  <a href="{{ domains_url }}" class="stat-card stat-link">
+    <div class="stat-label">Live</div><div class="stat-value ok">{{ stats.live | fmtnum }}</div></a>
+  <a href="{{ http_url }}" class="stat-card stat-link">
+    <div class="stat-label">HTTP</div><div class="stat-value">{{ stats.http | fmtnum }}</div></a>
+  <a href="{{ urls_url }}" class="stat-card stat-link">
+    <div class="stat-label">URLs</div><div class="stat-value">{{ stats.urls | fmtnum }}</div></a>
+  <a href="{{ endpoints_url }}" class="stat-card stat-link">
+    <div class="stat-label">Endpoints</div><div class="stat-value">{{ stats.endpoints | fmtnum }}</div></a>
+  <a href="{{ parameters_url }}" class="stat-card stat-link">
+    <div class="stat-label">Parameters</div><div class="stat-value accent2">{{ stats.params | fmtnum }}</div></a>
+  <a href="{{ fresh_link }}" class="stat-card stat-link">
+    <div class="stat-label">Fresh HTTP</div><div class="stat-value ok">{{ stats.fresh_http_24h | fmtnum }}</div></a>
+</div>
+
+{% if fresh_count %}
+<a class="fresh-banner" href="{{ fresh_link }}">
+  <strong>Fresh HTTP results</strong> (last 24h): {{ fresh_count | fmtnum }} — review newly discovered live hosts
+</a>
+{% endif %}
+
+{# ----- SYSTEM HEALTH (secondary, htmx live) ----- #}
+<div class="section-label">System Health</div>
+<div class="kpi-grid kpi-4 kpi-secondary mb-6"
      hx-get="/api/system/stats?api_key={{ api_key_qs }}"
      hx-trigger="load, every 5s"
      hx-swap="innerHTML">
@@ -16,36 +66,137 @@
   <div class="stat-card"><div class="stat-label">Load</div><div class="stat-value">…</div></div>
 </div>
 
-{# ----- fresh banner ----- #}
-{% if fresh_count %}
-<a class="block bg-emerald-900/30 border border-emerald-700 rounded-lg px-4 py-2 mb-4 text-emerald-300 font-semibold hover:bg-emerald-700 hover:text-bg"
-   href="{{ fresh_link }}">🆕 Fresh HTTP results (last 24h): {{ fresh_count }}</a>
-{% endif %}
+<div class="grid lg:grid-cols-5 gap-5 mb-6">
 
-<h1 class="text-accent text-2xl mb-4">🔍 Watch Dashboard</h1>
+  {# ----- recent operations (compact) ----- #}
+  <section class="panel lg:col-span-2">
+    <div class="panel-head">
+      <h2>Recent Operations</h2>
+      <a class="badge-link" href="{{ runs_url }}">All runs →</a>
+    </div>
+    <div class="table-wrap">
+      <table class="tbl tbl-compact">
+        <thead>
+          <tr>
+            <th>Operation</th>
+            <th>Status</th>
+            <th>Last Run</th>
+            <th class="num">Duration</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in latest_runs %}
+          <tr>
+            <td class="run-name">{{ r.name }}</td>
+            <td>{{ status_badge(r.status) }}</td>
+            {% if r.last_run %}
+            <td class="text-xs" title="Started: {{ r.last_run.started_tehran }}{% if r.last_run.finished_tehran and r.last_run.finished_tehran != '—' %} · Finished: {{ r.last_run.finished_tehran }}{% endif %}">
+              {% if r.status == 'running' %}
+                <span class="text-accent">{{ r.last_run.started_tehran }}</span>
+              {% else %}
+                {{ r.last_run.started_tehran }}
+              {% endif %}
+            </td>
+            <td class="num text-xs">
+              {% if r.status == 'running' %}
+                <span class="text-accent">{{ r.last_run.duration }}</span>
+              {% else %}
+                {{ r.last_run.duration }}
+              {% endif %}
+            </td>
+            {% else %}
+            <td class="text-muted">—</td>
+            <td class="text-muted num">—</td>
+            {% endif %}
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="empty">No tasks registered.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
 
-<div class="flex gap-3 text-sm mb-4">
-  <a href="{{ docs_url }}" class="badge-link">API docs</a>
-  <a href="{{ stats_link }}" class="badge-link">Stats JSON</a>
-  <a href="{{ dns_link }}" class="badge-link">DNS Bruteforce Status</a>
+  {# ----- recent activity (ChangeEvent feed) ----- #}
+  <section class="panel lg:col-span-3">
+    <div class="panel-head">
+      <h2>Recent Activity</h2>
+      <a class="badge-link" href="{{ changes_url }}">All changes →</a>
+    </div>
+    <div class="panel-body{% if not changes %} panel-body-compact{% endif %}">
+      {% if activity_summary and activity_summary.total %}
+      <div class="activity-summary">
+        <span class="as-title">Last 24h</span>
+        <span class="as-item">{{ activity_summary.total | fmtnum }} changes</span>
+        {% if activity_summary.new_hosts %}<span class="as-item ok">{{ activity_summary.new_hosts | fmtnum }} new hosts</span>{% endif %}
+        {% if activity_summary.new_endpoints %}<span class="as-item ok">{{ activity_summary.new_endpoints | fmtnum }} new endpoints</span>{% endif %}
+        {% if activity_summary.new_parameters %}<span class="as-item accent2">{{ activity_summary.new_parameters | fmtnum }} new parameters</span>{% endif %}
+        {% if activity_summary.cdn_changes %}<span class="as-item warn">{{ activity_summary.cdn_changes | fmtnum }} CDN changes</span>{% endif %}
+      </div>
+      {% endif %}
+      {% if changes %}
+      {% for c in changes %}
+        {{ change_row(c, show_program=True, program_url=programs_url) }}
+      {% endfor %}
+      {% else %}
+      {{ empty_state("No recent activity", "Change events will appear here when recon detects new assets or changes.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
 </div>
 
-{% if programs %}
-  {% for p in programs %}
-  <div class="program-card">
-    <h3 class="text-accent text-lg">
-      <a href="{{ p.detail_url }}">{{ p.program_name }}</a>
-    </h3>
-    <div class="links mt-1">
-      <a href="{{ p.detail_url }}" class="badge-link">Open program page</a>
-      <span class="text-muted text-sm">
-        Subdomains: {{ p.subdomains }} · Live: {{ p.live }} · HTTP: {{ p.http }}
-      </span>
-    </div>
+{# ----- program summary ----- #}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Programs</h2>
+    <a class="badge-link" href="{{ programs_url }}">Full table →</a>
   </div>
-  {% endfor %}
-{% else %}
-  <div class="text-muted">No programs yet.</div>
-{% endif %}
-
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>Program</th>
+          <th class="num">Subdomains</th>
+          <th class="num">Live</th>
+          <th class="num">HTTP</th>
+          <th class="num">URLs</th>
+          <th class="num">Endpoints</th>
+          <th class="num">Params</th>
+          <th class="num">Changes 24h</th>
+          <th>Last Activity</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in programs %}
+        <tr>
+          <td>
+            <a class="prog-name" href="{{ p.detail_url }}">{{ p.program_name }}</a>
+            <div class="prog-pills">
+              {% if p.stale %}<span class="pill pill-stale" title="No recon activity in the last 7 days">stale</span>{% endif %}
+            </div>
+          </td>
+          <td class="num">{{ p.subdomains | fmtnum }}</td>
+          <td class="num ok">{{ p.live | fmtnum }}</td>
+          <td class="num">{{ p.http | fmtnum }}</td>
+          <td class="num">{{ p.urls | fmtnum }}</td>
+          <td class="num">{{ p.endpoints | fmtnum }}</td>
+          <td class="num accent2">{{ p.params | fmtnum }}</td>
+          <td class="num">
+            {% if p.changes_24h %}<span class="changes-count">{{ p.changes_24h | fmtnum }}</span>
+            {% elif p.stale %}<span class="text-muted" title="No recon activity in the last 7 days">stale</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td class="text-xs">
+            {% if p.last_activity %}
+              <span title="{{ p.last_activity | tehran }}">{{ p.last_activity | ago }}</span>
+            {% else %}<span class="text-muted">never</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="empty">No programs yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 {% endblock %}

@@ -1,0 +1,99 @@
+{# macros.html — shared UI primitives (badges, sorting, pagination).
+   Imported by the page templates with `with context` so request/globals are
+   available. All values rendered here pass through Jinja autoescaping; only
+   whitelisted tokens ever reach class="" attributes. #}
+
+{# ---------- status badges (RUNNING / SUCCESS / FAILED / IDLE / NEVER) ---------- #}
+{% macro status_badge(status, never_label='NEVER') -%}
+  {%- if status == 'running' -%}
+    <span class="badge badge-running"><span class="dot"></span>RUNNING</span>
+  {%- elif status == 'success' -%}
+    <span class="badge badge-ok">✓ SUCCESS</span>
+  {%- elif status == 'failed' -%}
+    <span class="badge badge-err">✗ FAILED</span>
+  {%- elif status and status not in ('idle', 'none') -%}
+    <span class="badge badge-neutral">{{ status | upper }}</span>
+  {%- else -%}
+    <span class="badge badge-idle">{{ never_label }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{# ---------- HTTP status badge (numeric + semantic class) ---------- #}
+{% macro http_status(code) -%}
+  {%- if code and code >= 100 and code < 600 -%}
+    <span class="status-badge status-{{ code // 100 }}xx" title="HTTP {{ code }}">{{ code }}</span>
+  {%- else -%}
+    <span class="status-badge status-none" title="No HTTP data">—</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{# ---------- CDN badge (untrusted strings never reach class= raw) ---------- #}
+{% macro cdn_badge(cdn) -%}
+  {%- set display = cdn or 'Normal' -%}
+  <span class="cdn-badge cdn-{{ display | cdn_slug }}">{{ display }}</span>
+{%- endmacro %}
+
+{# ---------- sortable table header link (preserves current filters) ---------- #}
+{% macro sort_link(base, col, label, sort, direction, params=None) -%}
+  {%- set new_dir = 'desc' if (sort == col and direction == 'asc') else 'asc' -%}
+  {%- set qs = {'sort': col, 'direction': new_dir} -%}
+  {%- if params %}{% for k, v in params.items() if v not in (None, '') %}{% set _ = qs.update({k: v}) %}{% endfor %}{% endif -%}
+  {%- set sep = '&' if '?' in base else '?' -%}
+  <a class="sortable{{ ' sorted' if sort == col }}"
+     href="{{ base }}{{ sep }}{% for k, v in qs.items() %}{{ k }}={{ v | string | urlencode }}{% if not loop.last %}&{% endif %}{% endfor %}">
+    {{ label }}{% if sort == col %} <span class="arrow-ind">{{ '▲' if direction == 'asc' else '▼' }}</span>{% endif %}
+  </a>
+{%- endmacro %}
+
+{# ---------- pagination bar (server-rendered, filter-preserving) ---------- #}
+{% macro pager(prev_url, next_url, page, total_pages, total, label='items') -%}
+  <div class="pagenav text-muted text-sm">
+    <span>Page {{ page }}/{{ total_pages }} · {{ total | fmtnum }} {{ label }}</span>
+    <span class="pager-links">
+      {% if prev_url %}<a class="pager-btn" href="{{ prev_url }}">« Prev</a>{% else %}<span class="pager-btn pager-disabled">« Prev</span>{% endif %}
+      {% if next_url %}<a class="pager-btn" href="{{ next_url }}">Next »</a>{% else %}<span class="pager-btn pager-disabled">Next »</span>{% endif %}
+    </span>
+  </div>
+{%- endmacro %}
+
+{# ---------- change-event row (dashboard + program + changes page) ----------
+   Don't render the "old → new" arrow pair when either value is empty:
+   "new live host" events only have new_value, so the old-side em-dash
+   would be visual noise. #}
+{% macro change_row(c, show_program=True, program_url=None) -%}
+  <div class="change-row">
+    <span class="change-type change-{{ c.event_class }}">{{ c.label }}</span>
+    <div class="change-body">
+      <div class="change-target">
+        {% if show_program and program_url %}
+          <a class="text-accent text-sm" href="{{ program_url }}">{{ c.program_name }}</a>
+        {% endif %}
+        {% if c.subdomain %}<span class="font-mono text-xs text-muted">{{ c.subdomain }}</span>{% endif %}
+      </div>
+      {% if c.old_value and c.new_value %}
+      <div class="change-diff" title="{{ c.old_value }} → {{ c.new_value }}">
+        <span class="old">{{ c.old_value }}</span>
+        <span class="arrow">→</span>
+        <span class="new">{{ c.new_value }}</span>
+      </div>
+      {% elif c.new_value %}
+      <div class="change-diff change-diff-single" title="{{ c.new_value }}">
+        <span class="new">{{ c.new_value }}</span>
+      </div>
+      {% elif c.old_value %}
+      <div class="change-diff change-diff-single" title="{{ c.old_value }}">
+        <span class="old">{{ c.old_value }}</span>
+      </div>
+      {% endif %}
+    </div>
+    <div class="change-time" title="{{ c.created_date | tehran }}">{{ c.created_date | ago }}</div>
+  </div>
+{%- endmacro %}
+
+{# ---------- empty state ---------- #}
+{% macro empty_state(message, hint='', compact=False) -%}
+  <div class="empty-state{% if compact %} empty-state-compact{% endif %}">
+    <div class="empty-title">{{ message }}</div>
+    {% if hint %}<div class="empty-hint">{{ hint }}</div>{% endif %}
+  </div>
+{%- endmacro %}

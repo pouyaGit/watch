@@ -1,0 +1,34 @@
+{# changes.html — change-event timeline (title/cdn/status/ip/tech/new_*).
+   Event classes come from a server-side whitelist (event_class()), never raw
+   event_type strings. #}
+{% extends "base.html" %}
+{% block title %}Changes — WATCH{% endblock %}
+{% block page %}Recent Changes{% endblock %}
+
+{% from "macros.html" import change_row, pager, empty_state with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Recent Changes</h1>
+  <p class="page-sub">{{ total | fmtnum }} events — what changed across every program</p>
+</div>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'events') }}
+
+<section class="panel">
+  <div class="panel-body">
+    {% if changes %}
+    {% for c in changes %}
+      {{ change_row(c, show_program=True, program_url=c.program_url) }}
+    {% endfor %}
+    {% else %}
+    {{ empty_state(
+        "No change events recorded yet.",
+        "Events appear when the HTTP discovery / DNS brute / crawl pipelines detect title, status, CDN, IP or technology changes, or new endpoints and parameters."
+    ) }}
+    {% endif %}
+  </div>
+</section>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'events') }}
+{% endblock %}

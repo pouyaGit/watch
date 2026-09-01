@@ -1,35 +1,55 @@
 {# list_with_badges.html — generic list page used by /ui/subdomains/.../...
-   /ui/lives/.../... /ui/http/.../...  that show provider badges next to each entry.
-   `items` is a list of { url, badges: [{label, bf}] }.
-#}
+   /ui/lives/.../... /ui/http/.../...  that show provider badges next to each
+   entry. `items` is a list of { url, label, badges: [{label, bf}] }.
+   Optional server-side search box (q) when the route supports it. #}
 {% extends "base.html" %}
-{% block title %}{{ title }}{% endblock %}
+{% block title %}{{ title }} — WATCH{% endblock %}
+{% block page %}{{ page_title or title }}{% endblock %}
+
+{% from "macros.html" import pager, empty_state with context %}
+
 {% block content %}
-<a href="{{ home_url }}" class="text-accent text-sm">← Back to Dashboard</a>
-<h2 class="text-accent2 text-2xl mt-3 mb-3">{{ title }}</h2>
-
-<div class="pagenav text-muted text-sm mb-2">
-  Page {{ page }}/{{ total_pages }} — total {{ total }}
-  {% if page > 1 %}<a class="text-accent" href="{{ prev_url }}">« Prev</a>{% endif %}
-  {% if page < total_pages %}<a class="text-accent ml-2" href="{{ next_url }}">Next »</a>{% endif %}
+<div class="page-head">
+  <h1 class="page-title">{{ title }}</h1>
+  <p class="page-sub">{{ total | fmtnum }} entries</p>
 </div>
 
-<ul class="space-y-1">
-  {% for it in items %}
-  <li class="break-all">
-    <a class="text-accent" href="{{ it.url }}" target="_blank" rel="noopener">{{ it.label }}</a>
-    {% for b in it.badges %}
-      <span class="badge-sm{{ ' bf' if b.bf else '' }}">{{ b.label }}</span>
-    {% endfor %}
-  </li>
-  {% else %}
-  <li class="text-muted">No items.</li>
-  {% endfor %}
-</ul>
+{% if q is defined %}
+<form method="get" action="{{ request.url.path }}" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Search…" class="search-input" autocomplete="off">
+  <button type="submit" class="btn-primary">Search</button>
+  {% if q %}<a class="badge-link" href="{{ request.url.path }}">Clear</a>{% endif %}
+</form>
+{% endif %}
 
-<div class="pagenav text-muted text-sm mt-3 mb-6">
-  {% if page > 1 %}<a class="text-accent" href="{{ prev_url }}">« Prev</a>{% endif %}
-  {% if page < total_pages %}<a class="text-accent ml-2" href="{{ next_url }}">Next »</a>{% endif %}
+{{ pager(prev_url, next_url, page, total_pages, total, 'entries') }}
+
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr><th>Host</th><th>Discovered by</th></tr>
+    </thead>
+    <tbody>
+      {% for it in items %}
+      <tr>
+        <td class="mono text-xs" style="word-break: break-all;">
+          <a class="text-accent" href="{{ it.url }}" target="_blank" rel="noopener">{{ it.label }}</a>
+        </td>
+        <td>
+          {% for b in it.badges %}
+            <span class="badge-sm{{ ' bf' if b.bf else '' }}">{{ b.label }}</span>
+          {% else %}<span class="text-muted text-xs">—</span>{% endfor %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="2" class="empty">
+        {% if q %}No entries match “{{ q }}”.{% else %}No entries recorded yet.{% endif %}
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 
+{{ pager(prev_url, next_url, page, total_pages, total, 'entries') }}
 {% endblock %}

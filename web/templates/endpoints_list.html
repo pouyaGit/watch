@@ -1,31 +1,79 @@
-{# endpoints_list.html — /ui/endpoints/.../... — hit_count + params per row #}
+{# endpoints_list.html — endpoint table (path-first presentation).
+   Used by /ui/endpoints (global: program + subdomain columns) and
+   /ui/endpoints/program/{p_name} (single program). Supports server-side
+   search, sorting (path / hits) and pagination that preserves filters. #}
 {% extends "base.html" %}
-{% block title %}{{ title }}{% endblock %}
+{% block title %}{{ title or 'Endpoints' }} — WATCH{% endblock %}
+{% block page %}{{ page_title or 'Endpoints' }}{% endblock %}
+
+{% from "macros.html" import sort_link, pager, empty_state with context %}
+
 {% block content %}
-<a href="{{ home_url }}" class="text-accent text-sm">← Back to Dashboard</a>
-<h2 class="text-accent2 text-2xl mt-3 mb-3">Endpoints — {{ program_name }}</h2>
+{% set is_global = not program_name %}
+{% if is_global %}
+<div class="page-head">
+  <h1 class="page-title">Endpoints</h1>
+  <p class="page-sub">{{ total | fmtnum }} unique paths across all programs</p>
+</div>
+{% else %}
+<a href="{{ programs_url }}" class="back-link">← Programs</a>
+<div class="page-head">
+  <h1 class="page-title">Endpoints — {{ program_name }}</h1>
+  <p class="page-sub">{{ total | fmtnum }} unique paths</p>
+</div>
+{% endif %}
 
-<div class="pagenav text-muted text-sm mb-2">
-  Page {{ page }}/{{ total_pages }} — total {{ total }}
-  {% if page > 1 %}<a class="text-accent" href="{{ prev_url }}">« Prev</a>{% endif %}
-  {% if page < total_pages %}<a class="text-accent ml-2" href="{{ next_url }}">Next »</a>{% endif %}
+<form method="get" action="{{ request.url.path }}" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  {% if program_name and not is_global %}<input type="hidden" name="x" value="1">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Search path or subdomain…" class="search-input" autocomplete="off">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="direction" value="{{ direction }}">
+  <button type="submit" class="btn-primary">Search</button>
+  {% if q %}<a class="badge-link" href="{{ request.url.path }}">Clear</a>{% endif %}
+</form>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'endpoints') }}
+
+{% set fparams = {'q': q} %}
+{% if is_global and program %}{% set _ = fparams.update({'program': program}) %}{% endif %}
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>{{ sort_link(sort_base, 'path', 'Path', sort, direction, fparams) }}</th>
+        {% if is_global %}<th>Program</th><th>Subdomain</th>{% endif %}
+        <th class="num">{{ sort_link(sort_base, 'hits', 'Hits', sort, direction, fparams) }}</th>
+        <th>Parameters</th>
+        <th>Example URL</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in items %}
+      <tr>
+        <td class="td-title">
+          <a class="prog-name" href="{{ it.url }}" target="_blank" rel="noopener" title="{{ it.path }}">{{ it.path }}</a>
+        </td>
+        {% if is_global %}
+        <td class="text-xs"><a class="text-accent" href="/ui/program/{{ it.program_name }}">{{ it.program_name }}</a></td>
+        <td class="mono text-xs text-muted td-domain" title="{{ it.subdomain }}">{{ it.subdomain }}</td>
+        {% endif %}
+        <td class="num text-xs">{{ it.hit_count | fmtnum }}</td>
+        <td class="text-xs text-muted td-title" title="{{ it.params_str or it.params | join(', ') }}">
+          {{ it.params_str or (it.params | join(', ')) or '—' }}
+        </td>
+        <td class="text-xs td-title">
+          <a class="text-accent" href="{{ it.url }}" target="_blank" rel="noopener">{{ it.url }}</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="{{ 5 if is_global else 4 }}" class="empty">
+        {% if q %}No endpoints match “{{ q }}”.{% else %}No endpoints recorded yet.{% endif %}
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 
-<ul class="space-y-1">
-  {% for it in items %}
-  <li class="break-all">
-    <a class="text-accent" href="{{ it.url }}" target="_blank" rel="noopener">{{ it.path }}</a>
-    <span class="text-muted text-xs"> (hits: {{ it.hit_count }})</span>
-    {% if it.params_str %}<span class="text-muted text-xs"> — params: {{ it.params_str }}</span>{% endif %}
-  </li>
-  {% else %}
-  <li class="text-muted">No items.</li>
-  {% endfor %}
-</ul>
-
-<div class="pagenav text-muted text-sm mt-3 mb-6">
-  {% if page > 1 %}<a class="text-accent" href="{{ prev_url }}">« Prev</a>{% endif %}
-  {% if page < total_pages %}<a class="text-accent ml-2" href="{{ next_url }}">Next »</a>{% endif %}
-</div>
-
+{{ pager(prev_url, next_url, page, total_pages, total, 'endpoints') }}
 {% endblock %}

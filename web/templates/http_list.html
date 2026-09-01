@@ -1,0 +1,68 @@
+{# http_list.html — global HTTP table (/ui/http): every Http record across
+   programs with server-side search / program filter / sorting / pagination. #}
+{% extends "base.html" %}
+{% block title %}HTTP — WATCH{% endblock %}
+{% block page %}HTTP{% endblock %}
+
+{% from "macros.html" import http_status, sort_link, pager, empty_state with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">HTTP</h1>
+  <p class="page-sub">{{ total | fmtnum }} HTTP records</p>
+</div>
+
+<form method="get" action="/ui/http" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Search subdomain, URL or title…"
+         class="search-input" autocomplete="off">
+  <select name="program" class="filter-select">
+    <option value="">All programs</option>
+    {% for pr in program_options %}
+      <option value="{{ pr }}"{{ ' selected' if program == pr }}>{{ pr }}</option>
+    {% endfor %}
+  </select>
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="direction" value="{{ direction }}">
+  <button type="submit" class="btn-primary">Apply</button>
+  {% if q or program %}<a class="badge-link" href="{{ http_url }}">Clear</a>{% endif %}
+</form>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'records') }}
+
+{% set fparams = {'q': q, 'program': program, 'limit': limit} %}
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>{{ sort_link(http_url, 'subdomain', 'Host', sort, direction, fparams) }}</th>
+        {% if program %}{% else %}<th>Program</th>{% endif %}
+        <th class="num">{{ sort_link(http_url, 'status', 'HTTP', sort, direction, fparams) }}</th>
+        <th>Title</th>
+        <th>Technologies</th>
+        <th>{{ sort_link(http_url, 'updated', 'Updated', sort, direction, fparams) }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in items %}
+      <tr>
+        <td class="td-domain">
+          <a class="text-accent" href="{{ d.url }}" target="_blank" rel="noopener" title="{{ d.subdomain }}">{{ d.subdomain }}</a>
+        </td>
+        {% if program %}{% else %}<td class="text-xs text-muted">{{ d.program_name }}</td>{% endif %}
+        <td class="num">{{ http_status(d.status_code) }}</td>
+        <td class="td-title" title="{{ d.title }}">{{ d.title or '—' }}</td>
+        <td class="text-xs text-muted td-title" title="{{ d.tech }}">{{ d.tech or '—' }}</td>
+        <td class="text-xs" title="{{ d.last_update | tehran }}">{{ d.ago }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">
+        {% if q or program %}No HTTP records match this filter.{% else %}No HTTP records yet.{% endif %}
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'records') }}
+{% endblock %}

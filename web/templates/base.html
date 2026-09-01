@@ -1,11 +1,14 @@
-{# base.html — site-wide shell. Tailwind via CDN, htmx + Alpine via CDN, dark
-   theme matching the original #0d1117 / #58a6ff palette. #}
+{# base.html — WATCH dashboard shell: fixed sidebar + top bar, dark
+   recon-platform theme. Sidebar groups: Overview / Discovery / Operations /
+   Changes / System. Alpine drives the mobile off-canvas toggle. Nav supports
+   an `active` context var (dashboard | programs | domains | http | urls |
+   endpoints | parameters | dns | runs | tasks | changes | search). #}
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Watch Dashboard{% endblock %}</title>
+  <title>{% block title %}WATCH &middot; Recon{% endblock %}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -13,15 +16,16 @@
       theme: {
         extend: {
           colors: {
-            bg:       '#0d1117',
-            panel:    '#161b22',
-            border:   '#30363d',
-            accent:   '#58a6ff',
-            accent2:  '#f0883e',
-            ok:       '#3fb950',
-            warn:     '#d29922',
-            err:      '#f85149',
-            muted:    '#8b949e',
+            bg:      '#0b0e14',
+            panel:   '#11161f',
+            panel2:  '#1a2230',
+            border:  '#262f3e',
+            accent:  '#58a6ff',
+            accent2: '#f0883e',
+            ok:      '#3fb950',
+            warn:    '#d29922',
+            err:     '#f85149',
+            muted:   '#8b949e',
           },
           fontFamily: {
             sans: ['"Segoe UI"', 'system-ui', '-apple-system', 'sans-serif'],
@@ -29,33 +33,95 @@
           },
         },
       },
-    }
+    };
   </script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script defer src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js"></script>
   <link rel="stylesheet" href="/static/css/custom.css">
 </head>
-<body class="bg-bg text-gray-200 font-sans min-h-screen">
-  <header class="border-b border-border bg-panel/60">
-    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-6">
-      <a href="{{ root_url }}" class="text-accent font-semibold text-lg">🔍 Watch</a>
-      <nav class="flex gap-4 text-sm">
-        <a href="{{ root_url }}"       class="nav-link">Dashboard</a>
-        <a href="{{ tasks_url }}"     class="nav-link">Tasks</a>
-        <a href="{{ dns_url }}"        class="nav-link">DNS Bruteforce</a>
-        <a href="{{ docs_url }}"       class="nav-link">API docs</a>
-      </nav>
-      <div class="ml-auto text-xs text-muted hidden md:block">v2</div>
+<body class="bg-bg text-gray-200 font-sans" x-data="{ navOpen: false }">
+
+  {# ---------- mobile overlay ---------- #}
+  <div class="nav-overlay" x-show="navOpen" x-transition.opacity @click="navOpen = false" x-cloak></div>
+
+  {# ---------- sidebar ---------- #}
+  <aside class="sidebar" :class="navOpen ? 'sidebar-open' : ''">
+    <div class="sidebar-head">
+      <a href="{{ root_url }}" class="brand">WATCH</a>
+      <span class="brand-sub">recon ops</span>
     </div>
-  </header>
 
-  <main class="max-w-6xl mx-auto px-4 py-6">
-    {% block content %}{% endblock %}
-  </main>
+    <nav class="sidebar-nav">
+      <p class="nav-group">Overview</p>
+      <a class="side-link{{ ' active' if active == 'dashboard' }}" href="{{ root_url }}" @click="navOpen = false">
+        <span class="side-ico">◈</span>Dashboard</a>
+      <a class="side-link{{ ' active' if active == 'programs' }}" href="{{ programs_url }}" @click="navOpen = false">
+        <span class="side-ico">◎</span>Programs</a>
 
-  <footer class="max-w-6xl mx-auto px-4 py-6 text-xs text-muted border-t border-border mt-12">
-    Watch recon dashboard · backend/ + web/ · api key is propagated via <code>?api_key=</code>
-  </footer>
+      <p class="nav-group">Discovery</p>
+      <a class="side-link{{ ' active' if active == 'domains' }}" href="{{ domains_url }}" @click="navOpen = false">
+        <span class="side-ico">⬡</span>Domains</a>
+      <a class="side-link{{ ' active' if active == 'http' }}" href="{{ http_url }}" @click="navOpen = false">
+        <span class="side-ico">⇄</span>HTTP</a>
+      <a class="side-link{{ ' active' if active == 'urls' }}" href="{{ urls_url }}" @click="navOpen = false">
+        <span class="side-ico">≡</span>URLs</a>
+      <a class="side-link{{ ' active' if active == 'endpoints' }}" href="{{ endpoints_url }}" @click="navOpen = false">
+        <span class="side-ico">⚟</span>Endpoints</a>
+      <a class="side-link{{ ' active' if active == 'parameters' }}" href="{{ parameters_url }}" @click="navOpen = false">
+        <span class="side-ico">$</span>Parameters</a>
+
+      <p class="nav-group">Operations</p>
+      <a class="side-link{{ ' active' if active == 'runs-crawl' }}" href="{{ runs_url }}#task-crawl_all" @click="navOpen = false">
+        <span class="side-ico">↻</span>Crawl</a>
+      <a class="side-link{{ ' active' if active == 'dns' }}" href="{{ dns_url }}" @click="navOpen = false">
+        <span class="side-ico">⚙</span>DNS Bruteforce</a>
+      <a class="side-link{{ ' active' if active == 'runs-params' }}" href="{{ runs_url }}#task-param_discovery" @click="navOpen = false">
+        <span class="side-ico">⚙</span>Parameter Discovery</a>
+
+      <p class="nav-group">Changes</p>
+      <a class="side-link{{ ' active' if active == 'changes' }}" href="{{ changes_url }}" @click="navOpen = false">
+        <span class="side-ico">±</span>Recent Changes</a>
+
+      <p class="nav-group">System</p>
+      <a class="side-link{{ ' active' if active == 'runs' }}" href="{{ runs_url }}" @click="navOpen = false">
+        <span class="side-ico">▤</span>Runs</a>
+      <a class="side-link{{ ' active' if active == 'tasks' }}" href="{{ tasks_url }}" @click="navOpen = false">
+        <span class="side-ico">✎</span>Tasks</a>
+      <a class="side-link{{ ' active' if active == 'docs' }}" href="{{ docs_url }}" @click="navOpen = false">
+        <span class="side-ico">⌘</span>API docs</a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <span class="tz-inline">Asia/Tehran</span>
+    </div>
+  </aside>
+
+  {# ---------- main column ---------- #}
+  <div class="app-main">
+    <header class="topbar">
+      <button class="topbar-burger" @click="navOpen = !navOpen" aria-label="Toggle navigation">☰</button>
+      <h1 class="topbar-title">{% block page %}{{ page_title or 'WATCH' }}{% endblock %}</h1>
+
+      <form class="topbar-search" method="get" action="/ui/search">
+        {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+        <input type="search" name="q" class="topbar-search-input" autocomplete="off"
+               placeholder="Search programs, domains, endpoints…"
+               value="{{ q if q is defined else '' }}">
+      </form>
+
+      <span class="tz-chip" title="All times shown in Asia/Tehran (UTC+3:30)">
+        <span class="dot dot-pulse"></span>Asia/Tehran
+      </span>
+    </header>
+
+    <main class="app-content">
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="app-footer">
+      WATCH reconnaissance dashboard &middot; api key propagated via <code>?api_key=</code>
+    </footer>
+  </div>
 
   <script src="/static/js/app.js" defer></script>
 </body>

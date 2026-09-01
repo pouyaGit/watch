@@ -4,23 +4,22 @@ backend/routers/programs.py — All the existing Programs/Subdomains/LiveSubdoma
 api.py with the URL paths unchanged so nothing currently pointing at this
 API breaks.
 
-HTML routes now render via Jinja2 templates from web/templates/ instead of
-string concatenation. The visual output is the same dark-theme look; the
-classes/colors live in web/static/css/custom.css.
-
-Phase 1 keeps the helper functions (paginate, build_url, provider_counts,
-etc.) here -- they were local to api.py before.
+HTML routes render via Jinja2 templates from web/templates (shared instance
+from backend/templating.py). List pages also support server-side search
+(``q``) and sorting (``sort`` / ``direction``) with a whitelisted field map.
 """
-import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
-from fastapi.templating import Jinja2Templates
 
+from backend import dashboard as dash
 from backend.deps import API_KEY, build_url, paginate
+from backend.templating import templates
+from backend.tz import fmt_ago, is_stale
 from database.db import (
     DnsBruteStatus,
     Endpoints,
@@ -33,9 +32,6 @@ from database.db import (
 
 router = APIRouter()
 
-_TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "web" / "templates"
-templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
-
 
 def _ctx(request: Request, **extra):
     base = {
@@ -44,8 +40,19 @@ def _ctx(request: Request, **extra):
         "root_url": build_url("/"),
         "home_url": build_url("/"),
         "tasks_url": build_url("/ui/tasks"),
+        "runs_url": build_url("/ui/runs"),
+        "changes_url": build_url("/ui/changes"),
+        "domains_url": build_url("/ui/domains"),
+        "http_url": build_url("/ui/http"),
+        "urls_url": build_url("/ui/urls"),
+        "endpoints_url": build_url("/ui/endpoints"),
+        "parameters_url": build_url("/ui/parameters"),
+        "search_url": build_url("/ui/search"),
+        "programs_url": build_url("/ui/programs"),
         "dns_url": build_url("/ui/dns-bruteforce/status"),
         "docs_url": build_url("/docs"),
+        "stats_link": build_url("/api/stats/by-program"),
+        "fresh_link": build_url("/ui/http/fresh"),
     }
     base.update(extra)
     return base
@@ -121,10 +128,10 @@ def get_unique_provider_subdomains(program_name, provider, page, limit):
 
 
 # ----- shared helpers for list-page rendering -----
-def _paginated_list_ctx(*, base_path, page, limit, total):
+def _paginated_list_ctx(*, base_path, page, limit, total, extra=None):
     total_pages = max(1, (total + limit - 1) // limit)
-    prev_url = build_url(base_path, page=page - 1, limit=limit) if page > 1 else None
-    next_url = build_url(base_path, page=page + 1, limit=limit) if page < total_pages else None
+    prev_url = build_url(base_path, page=page - 1, limit=limit, **(extra or {})) if page > 1 else None
+    next_url = build_url(base_path, page=page + 1, limit=limit, **(extra or {})) if page < total_pages else None
     return {
         "page": page,
         "total_pages": total_pages,
@@ -152,6 +159,385 @@ def _http_or_subdomain_items(records):
     return items
 
 
+# ----- shared search/sort helpers for list pages -----
+def _apply_search(qs, q, field):
+    """Case-insensitive substring search on ``field`` (escaped -- the value
+    is user input and must never be interpreted as a regex)."""
+    if q:
+        return qs.filter(**{f"{field}__icontains": q})
+    return qs
+
+
+def _apply_sort(qs, sort, direction, sort_map, default):
+    """Whitelisted server-side sort. ``sort_map`` maps a public sort key to a
+    mongoengine order_by token; unknown keys fall back to ``default``."""
+    token = sort_map.get(sort, default)
+    if str(direction).lower() in ("desc", "descending", "-1") and not token.startswith("-"):
+        token = "-" + token
+    return qs.order_by(token)
+
+
+# ====================== Live domains table ======================
+# One $lookup aggregation over LiveSubdomains joined with Http: server-side
+# search / CDN + HTTP-status filters / sorting / pagination. Never pulls the
+# whole collection into Python.
+_DOMAIN_SORTS = {
+    "domain": "subdomain",
+    "updated": "last_update",
+    "cdn": "cdn",
+    "status": "status_sort",
+}
+
+
+@router.get("/ui/domains", response_class=HTMLResponse)
+def ui_domains(request: Request, program: Optional[str] = None,
+               q: Optional[str] = None, cdn: Optional[str] = None,
+               status: Optional[str] = None, sort: str = "updated",
+               direction: str = "desc", page: int = 1, limit: int = 100):
+    limit = min(max(limit, 10), 200)
+    page = max(page, 1)
+    skip = (page - 1) * limit
+
+    match = {}
+    if program:
+        match["program_name"] = program
+    if q:
+        match["subdomain"] = {"$regex": re.escape(q), "$options": "i"}
+    if cdn:
+        match["cdn"] = cdn
+
+    status_match = {
+        "2xx": {"h.status_code": {"$gte": 200, "$lt": 300}},
+        "3xx": {"h.status_code": {"$gte": 300, "$lt": 400}},
+        "4xx": {"h.status_code": {"$gte": 400, "$lt": 500}},
+        "5xx": {"h.status_code": {"$gte": 500, "$lt": 600}},
+        "nohttp": {"h": {"$eq": {}}},
+    }.get(status or "")
+
+    http_coll = Http._get_collection().name
+    sort_field = _DOMAIN_SORTS.get(sort, "last_update")
+    sort_dir = -1 if str(direction).lower() in ("desc", "descending", "-1") else 1
+    sort_spec = (
+        {"status_sort": sort_dir} if sort_field == "status_sort"
+        else {sort_field: sort_dir}
+    )
+
+    pipeline = [
+        {"$match": match},
+        {"$lookup": {
+            "from": http_coll,
+            "let": {"sub": "$subdomain", "prog": "$program_name"},
+            "pipeline": [
+                {"$match": {"$expr": {"$and": [
+                    {"$eq": ["$subdomain", "$$sub"]},
+                    {"$eq": ["$program_name", "$$prog"]},
+                ]}}},
+                {"$limit": 1},
+                {"$project": {"_id": 0, "status_code": 1, "title": 1,
+                              "tech": 1, "url": 1}},
+            ],
+            "as": "h",
+        }},
+        {"$unwind": {"path": "$h", "preserveNullAndEmptyArrays": True}},
+        {"$addFields": {"h": {"$ifNull": ["$h", {}]},
+                        "status_sort": {"$ifNull": ["$h.status_code", -1]}}},
+    ]
+    if status_match:
+        pipeline.append({"$match": status_match})
+    pipeline.append({"$facet": {
+        "total": [{"$count": "count"}],
+        "items": [{"$sort": sort_spec}, {"$skip": skip}, {"$limit": limit}],
+    }})
+
+    doc = next(iter(LiveSubdomains._get_collection().aggregate(pipeline, allowDiskUse=True)), None)
+    total = doc["total"][0]["count"] if doc and doc.get("total") else 0
+    items = []
+    for row in (doc["items"] if doc else []):
+        h = row.get("h") or {}
+        items.append({
+            "subdomain": row.get("subdomain"),
+            "program_name": row.get("program_name"),
+            "url": h.get("url") or f"https://{row.get('subdomain')}",
+            "status_code": h.get("status_code"),
+            "title": h.get("title") or "",
+            "tech": ", ".join((h.get("tech") or [])[:4]),
+            "cdn": row.get("cdn") or "Normal",
+            "ips": ", ".join((row.get("ips") or [])[:2]),
+            "last_update": row.get("last_update"),
+            "ago": fmt_ago(row.get("last_update")),
+            "stale": is_stale(row.get("last_update"), 7),
+        })
+
+    cdn_options = sorted({c for c in LiveSubdomains._get_collection().distinct("cdn") if c})
+    program_options = sorted(dash._program_names())
+    base_path = "/ui/domains"
+    total_pages = max(1, (total + limit - 1) // limit)
+    return templates.TemplateResponse(
+        request,
+        "domains.html",
+        _ctx(
+            request,
+            active="domains",
+            page_title="Live Domains",
+            title="Live Domains",
+            program=program or "",
+            q=q or "",
+            cdn=cdn or "",
+            status=status or "",
+            sort=sort,
+            direction=direction,
+            cdn_options=cdn_options,
+            program_options=program_options,
+            items=items,
+            page=page,
+            limit=limit,
+            total=total,
+            total_pages=total_pages,
+            prev_url=build_url(base_path, program=program, q=q, cdn=cdn, status=status,
+                               sort=sort, direction=direction, page=page - 1, limit=limit) if page > 1 else None,
+            next_url=build_url(base_path, program=program, q=q, cdn=cdn, status=status,
+                               sort=sort, direction=direction, page=page + 1, limit=limit) if page < total_pages else None,
+        ),
+    )
+
+
+# ====================== Global HTTP table ======================
+# Sidebar "HTTP" destination: every Http record across all programs, with
+# server-side search / program filter / sorting / pagination. Same shape as
+# the domains page but keyed on the HTTP record (so it also covers hosts the
+# live-checker may not have re-confirmed).
+_HTTP_SORTS = {
+    "url": "url",
+    "subdomain": "subdomain",
+    "updated": "last_update",
+    "status": "status_code",
+}
+
+
+@router.get("/ui/http", response_class=HTMLResponse)
+def ui_http_all(request: Request, program: Optional[str] = None,
+                q: Optional[str] = None, sort: str = "updated",
+                direction: str = "desc", page: int = 1, limit: int = 100):
+    limit = min(max(limit, 10), 200)
+    page = max(page, 1)
+    qs = Http.objects()
+    if program:
+        qs = qs(program_name=program)
+    if q:
+        qs = qs(__raw__={"$or": [
+            {"subdomain": {"$regex": re.escape(q), "$options": "i"}},
+            {"url": {"$regex": re.escape(q), "$options": "i"}},
+            {"title": {"$regex": re.escape(q), "$options": "i"}},
+        ]})
+    qs = _apply_sort(qs, sort, direction, _HTTP_SORTS, "last_update")
+    total = qs.count()
+    items = []
+    for h in paginate(qs, page, limit):
+        items.append({
+            "subdomain": h.subdomain,
+            "program_name": h.program_name,
+            "url": h.url or f"https://{h.subdomain}",
+            "status_code": h.status_code,
+            "title": h.title or "",
+            "tech": ", ".join((h.tech or [])[:4]),
+            "last_update": h.last_update,
+            "ago": fmt_ago(h.last_update),
+        })
+    total_pages = max(1, (total + limit - 1) // limit)
+    base = "/ui/http"
+    return templates.TemplateResponse(
+        request,
+        "http_list.html",
+        _ctx(
+            request,
+            active="http",
+            page_title="HTTP",
+            title="HTTP",
+            program=program or "",
+            q=q or "",
+            sort=sort,
+            direction=direction,
+            program_options=sorted(dash._program_names()),
+            items=items,
+            page=page,
+            limit=limit,
+            total=total,
+            total_pages=total_pages,
+            prev_url=build_url(base, program=program, q=q, sort=sort,
+                               direction=direction, page=page - 1, limit=limit) if page > 1 else None,
+            next_url=build_url(base, program=program, q=q, sort=sort,
+                               direction=direction, page=page + 1, limit=limit) if page < total_pages else None,
+        ),
+    )
+
+
+# ====================== Global URLs list ======================
+@router.get("/ui/urls", response_class=HTMLResponse)
+def ui_urls_all(request: Request, program: Optional[str] = None,
+                q: Optional[str] = None, page: int = 1, limit: int = 200):
+    qs = Urls.objects()
+    if program:
+        qs = qs(program_name=program)
+    qs = _apply_search(qs.only("url", "program_name"), q, "url")
+    total = qs.count()
+    items = [
+        {"label": u.url, "url": u.url, "program_name": u.program_name}
+        for u in paginate(qs, page, limit) if u.url
+    ]
+    return templates.TemplateResponse(
+        request,
+        "list_simple.html",
+        _ctx(
+            request,
+            active="urls",
+            page_title="URLs",
+            title="URLs",
+            items=items,
+            q=q or "",
+            **_paginated_list_ctx(
+                base_path="/ui/urls", page=page, limit=limit, total=total,
+                extra={"q": q, "program": program},
+            ),
+        ),
+    )
+
+
+# ====================== Global endpoints table ======================
+_ENDPOINT_SORTS = {
+    "path": "path",
+    "hits": "hit_count",
+    "updated": "last_update",
+    "params": "params",
+}
+
+
+@router.get("/ui/endpoints", response_class=HTMLResponse)
+def ui_endpoints_all(request: Request, program: Optional[str] = None,
+                     q: Optional[str] = None, sort: str = "hits",
+                     direction: str = "desc", page: int = 1, limit: int = 100):
+    qs = Endpoints.objects()
+    if program:
+        qs = qs(program_name=program)
+    if q:
+        qs = qs(__raw__={"$or": [
+            {"path": {"$regex": re.escape(q), "$options": "i"}},
+            {"subdomain": {"$regex": re.escape(q), "$options": "i"}},
+        ]})
+    qs = _apply_sort(qs, sort, direction, _ENDPOINT_SORTS, "hit_count")
+    total = qs.count()
+    items = []
+    for e in paginate(qs, page, limit):
+        items.append({
+            "path": e.path,
+            "subdomain": e.subdomain,
+            "program_name": e.program_name,
+            "url": e.example_url or f"https://{e.subdomain}{e.path}",
+            "hit_count": e.hit_count,
+            "params": e.params or [],
+            "params_str": ", ".join(e.params or []),
+            "x8_checked": e.x8_checked,
+        })
+    total_pages = max(1, (total + limit - 1) // limit)
+    base = "/ui/endpoints"
+    return templates.TemplateResponse(
+        request,
+        "endpoints_list.html",
+        _ctx(
+            request,
+            active="endpoints",
+            page_title="Endpoints",
+            title="Endpoints",
+            program_name=program or "",
+            program=program or "",
+            sort_base=build_url("/ui/endpoints"),
+            q=q or "",
+            sort=sort,
+            direction=direction,
+            items=items,
+            page=page,
+            limit=limit,
+            total=total,
+            total_pages=total_pages,
+            prev_url=build_url(base, program=program, q=q, sort=sort,
+                               direction=direction, page=page - 1, limit=limit) if page > 1 else None,
+            next_url=build_url(base, program=program, q=q, sort=sort,
+                               direction=direction, page=page + 1, limit=limit) if page < total_pages else None,
+        ),
+    )
+
+
+# ====================== Global parameters table ======================
+# Distinct parameter names across all Endpoints, with how many endpoints /
+# programs expose each. One $unwind+$group aggregation (capped by pagination),
+# never a full collection pull.
+_PARAM_SORTS = {"name": "_id", "count": "count", "programs": "programs"}
+
+
+@router.get("/ui/parameters", response_class=HTMLResponse)
+def ui_parameters(request: Request, q: Optional[str] = None,
+                  sort: str = "count", direction: str = "desc",
+                  page: int = 1, limit: int = 100):
+    limit = min(max(limit, 10), 200)
+    page = max(page, 1)
+    skip = (page - 1) * limit
+
+    match = {"params": {"$nin": ["", None]}}
+    if q:
+        match["params"] = {"$regex": re.escape(q), "$options": "i"}
+
+    sort_field = _PARAM_SORTS.get(sort, "count")
+    sort_dir = -1 if str(direction).lower() in ("desc", "descending", "-1") else 1
+    pipeline = [
+        {"$unwind": "$params"},
+        {"$match": match},
+        {"$group": {
+            "_id": "$params",
+            "count": {"$sum": 1},
+            "programs": {"$addToSet": "$program_name"},
+        }},
+        {"$facet": {
+            "total": [{"$count": "count"}],
+            "items": [{"$sort": {sort_field: sort_dir}},
+                      {"$skip": skip}, {"$limit": limit}],
+        }},
+    ]
+    doc = next(iter(Endpoints._get_collection().aggregate(pipeline, allowDiskUse=True)), None)
+    total = doc["total"][0]["count"] if doc and doc.get("total") else 0
+    items = []
+    for row in (doc["items"] if doc else []):
+        progs = sorted(row.get("programs") or [])
+        items.append({
+            "name": row.get("_id"),
+            "count": row.get("count", 0),
+            "programs": progs,
+            "program_count": len(progs),
+        })
+    total_pages = max(1, (total + limit - 1) // limit)
+    base = "/ui/parameters"
+    return templates.TemplateResponse(
+        request,
+        "parameters.html",
+        _ctx(
+            request,
+            active="parameters",
+            page_title="Parameters",
+            title="Parameters",
+            q=q or "",
+            sort=sort,
+            direction=direction,
+            items=items,
+            page=page,
+            limit=limit,
+            total=total,
+            total_pages=total_pages,
+            prev_url=build_url(base, q=q, sort=sort, direction=direction,
+                               page=page - 1, limit=limit) if page > 1 else None,
+            next_url=build_url(base, q=q, sort=sort, direction=direction,
+                               page=page + 1, limit=limit) if page < total_pages else None,
+        ),
+    )
+
+
 # ====================== Subdomain uniqueness page ======================
 @router.get("/ui/subdomains/unique/{program_name}/{provider}", response_class=HTMLResponse)
 def ui_subdomains_unique(request: Request, program_name: str, provider: str,
@@ -175,8 +561,15 @@ def ui_subdomains_unique(request: Request, program_name: str, provider: str,
 
 # ====================== HTML list pages ======================
 @router.get("/ui/subdomains/program/{p_name}", response_class=HTMLResponse)
-def ui_subdomains(request: Request, p_name: str, page: int = 1, limit: int = 100):
-    qs = Subdomains.objects(program_name=p_name).only("subdomain", "providers")
+def ui_subdomains(request: Request, p_name: str, page: int = 1, limit: int = 100,
+                  q: Optional[str] = None, sort: str = "subdomain",
+                  direction: str = "asc"):
+    qs = _apply_sort(
+        _apply_search(Subdomains.objects(program_name=p_name).only("subdomain", "providers"), q, "subdomain"),
+        sort, direction,
+        {"subdomain": "subdomain", "updated": "last_update", "created": "created_date"},
+        "subdomain",
+    )
     total = qs.count()
     rows = [(s.subdomain, s.providers) for s in paginate(qs, page, limit)]
     return templates.TemplateResponse(
@@ -186,23 +579,33 @@ def ui_subdomains(request: Request, p_name: str, page: int = 1, limit: int = 100
             request,
             title=f"Subdomains — {p_name}",
             items=_http_or_subdomain_items(rows),
+            q=q or "",
+            sort=sort,
+            direction=direction,
             **_paginated_list_ctx(
                 base_path=f"/ui/subdomains/program/{p_name}",
                 page=page, limit=limit, total=total,
+                extra={"q": q, "sort": sort, "direction": direction},
             ),
         ),
     )
 
 
 @router.get("/ui/lives/program/{p_name}", response_class=HTMLResponse)
-def ui_lives(request: Request, p_name: str, page: int = 1, limit: int = 100):
-    qs = LiveSubdomains.objects(program_name=p_name).only("subdomain")
+def ui_lives(request: Request, p_name: str, page: int = 1, limit: int = 100,
+             q: Optional[str] = None, sort: str = "subdomain", direction: str = "asc"):
+    qs = _apply_sort(
+        _apply_search(LiveSubdomains.objects(program_name=p_name).only("subdomain"), q, "subdomain"),
+        sort, direction,
+        {"subdomain": "subdomain", "updated": "last_update", "cdn": "cdn"},
+        "subdomain",
+    )
     total = qs.count()
     page_items = list(paginate(qs, page, limit))
     names = [s.subdomain for s in page_items]
     provider_map = {
         s.subdomain: s.providers
-        for s in Subdomains.objects(subdomain__in=names).only("subdomain", "providers")
+        for s in Subdomains.objects(program_name=p_name, subdomain__in=names).only("subdomain", "providers")
     }
     rows = [(n, provider_map.get(n, [])) for n in names]
     return templates.TemplateResponse(
@@ -212,22 +615,27 @@ def ui_lives(request: Request, p_name: str, page: int = 1, limit: int = 100):
             request,
             title=f"Live Subdomains — {p_name}",
             items=_http_or_subdomain_items(rows),
+            q=q or "",
+            sort=sort,
+            direction=direction,
             **_paginated_list_ctx(
                 base_path=f"/ui/lives/program/{p_name}",
                 page=page, limit=limit, total=total,
+                extra={"q": q, "sort": sort, "direction": direction},
             ),
         ),
     )
 
 
 @router.get("/ui/http/program/{p_name}", response_class=HTMLResponse)
-def ui_http(request: Request, p_name: str, page: int = 1, limit: int = 100):
-    qs = Http.objects(program_name=p_name).only("url", "subdomain")
+def ui_http(request: Request, p_name: str, page: int = 1, limit: int = 100,
+            q: Optional[str] = None):
+    qs = _apply_search(Http.objects(program_name=p_name).only("url", "subdomain"), q, "subdomain")
     total = qs.count()
     names = [h.subdomain for h in qs if h.subdomain]
     provider_map = {
         s.subdomain: s.providers
-        for s in Subdomains.objects(subdomain__in=names).only("subdomain", "providers")
+        for s in Subdomains.objects(program_name=p_name, subdomain__in=names).only("subdomain", "providers")
     }
     items = []
     for h in paginate(qs, page, limit):
@@ -248,9 +656,11 @@ def ui_http(request: Request, p_name: str, page: int = 1, limit: int = 100):
             request,
             title=f"HTTP — {p_name}",
             items=items,
+            q=q or "",
             **_paginated_list_ctx(
                 base_path=f"/ui/http/program/{p_name}",
                 page=page, limit=limit, total=total,
+                extra={"q": q},
             ),
         ),
     )
@@ -380,8 +790,9 @@ def ui_http_tech(request: Request, program_name: str, tech: str,
 
 
 @router.get("/ui/urls/program/{p_name}", response_class=HTMLResponse)
-def ui_urls(request: Request, p_name: str, page: int = 1, limit: int = 200):
-    qs = Urls.objects(program_name=p_name).only("url")
+def ui_urls(request: Request, p_name: str, page: int = 1, limit: int = 200,
+            q: Optional[str] = None):
+    qs = _apply_search(Urls.objects(program_name=p_name).only("url"), q, "url")
     total = qs.count()
     items = [{"label": u.url, "url": u.url} for u in paginate(qs, page, limit) if u.url]
     return templates.TemplateResponse(
@@ -389,19 +800,28 @@ def ui_urls(request: Request, p_name: str, page: int = 1, limit: int = 200):
             "list_simple.html",
             _ctx(
             request,
+            active="urls",
+            page_title=f"URLs — {p_name}",
             title=f"URLs — {p_name}",
             items=items,
+            q=q or "",
             **_paginated_list_ctx(
                 base_path=f"/ui/urls/program/{p_name}",
                 page=page, limit=limit, total=total,
+                extra={"q": q},
             ),
         ),
     )
 
 
 @router.get("/ui/endpoints/program/{p_name}", response_class=HTMLResponse)
-def ui_endpoints(request: Request, p_name: str, page: int = 1, limit: int = 100):
-    qs = Endpoints.objects(program_name=p_name).order_by("-hit_count")
+def ui_endpoints(request: Request, p_name: str, page: int = 1, limit: int = 100,
+                 q: Optional[str] = None, sort: str = "hits",
+                 direction: str = "desc"):
+    qs = _apply_sort(
+        _apply_search(Endpoints.objects(program_name=p_name), q, "path"),
+        sort, direction, _ENDPOINT_SORTS, "hit_count",
+    )
     total = qs.count()
     items = []
     for e in paginate(qs, page, limit):
@@ -409,51 +829,65 @@ def ui_endpoints(request: Request, p_name: str, page: int = 1, limit: int = 100)
         params_str = ", ".join(e.params) if e.params else ""
         items.append({
             "path": e.path,
+            "subdomain": e.subdomain,
+            "program_name": p_name,
             "url": link,
             "hit_count": e.hit_count,
             "params_str": params_str,
+            "params": e.params or [],
+            "x8_checked": e.x8_checked,
         })
     return templates.TemplateResponse(
             request,
             "endpoints_list.html",
             _ctx(
             request,
+            active="endpoints",
+            page_title=f"Endpoints — {p_name}",
             title=f"Endpoints — {p_name}",
             program_name=p_name,
+            program="",
+            sort_base=build_url(f"/ui/endpoints/program/{p_name}"),
+            q=q or "",
+            sort=sort,
+            direction=direction,
             items=items,
             **_paginated_list_ctx(
                 base_path=f"/ui/endpoints/program/{p_name}",
                 page=page, limit=limit, total=total,
+                extra={"q": q, "sort": sort, "direction": direction},
             ),
         ),
     )
 
 
 @router.get("/ui/dns-bruteforce/status", response_class=HTMLResponse)
-def ui_dns_bruteforce_status(request: Request):
-    statuses = list(DnsBruteStatus.objects().order_by("program_name", "domain"))
+def ui_dns_bruteforce_status(request: Request, q: Optional[str] = None):
+    from backend.tz import age_days, fmt_tehran
+    statuses_raw = list(DnsBruteStatus.objects().order_by("program_name", "domain"))
+    if q:
+        ql = q.lower()
+        statuses_raw = [s for s in statuses_raw
+                        if ql in (s.program_name or "").lower() or ql in (s.domain or "").lower()]
     rendered = []
-    for s in statuses:
-        def fmt(dt):
-            if not dt:
-                return ("never", False)
-            days_ago = (datetime.now() - dt).days
-            return (f'{dt.strftime("%Y-%m-%d %H:%M")} ({days_ago}d ago)', days_ago > 8)
-        last_static,    static_stale    = fmt(s.last_static_run)
-        last_dynamic,   dynamic_stale   = fmt(s.last_dynamic_run)
+    for s in statuses_raw:
+        static_days = age_days(s.last_static_run)
+        dynamic_days = age_days(s.last_dynamic_run)
         rendered.append({
             "program_name": s.program_name,
             "domain": s.domain,
             "feasible": s.feasible,
-            "last_static": last_static,
-            "last_static_stale": static_stale,
-            "last_dynamic": last_dynamic,
-            "last_dynamic_stale": dynamic_stale,
+            "last_static": fmt_tehran(s.last_static_run),
+            "last_static_days": static_days,
+            "last_static_stale": static_days is None or static_days > 8,
+            "last_dynamic": fmt_tehran(s.last_dynamic_run),
+            "last_dynamic_days": dynamic_days,
+            "last_dynamic_stale": dynamic_days is None or dynamic_days > 8,
         })
     return templates.TemplateResponse(
             request,
             "dns_status.html",
-            _ctx(request, statuses=rendered),
+            _ctx(request, active="dns", page_title="DNS Bruteforce", statuses=rendered, q=q or ""),
     )
 
 
@@ -474,17 +908,29 @@ def api_dns_bruteforce_status():
 
 @router.get("/api/stats/by-program")
 def stats_by_program():
+    """Per-program stats. Existing keys preserved; new keys (urls, endpoints,
+    params, last-activity) added additively so current consumers are unaffected.
+    Computed from the shared aggregation/cache layer: NO per-program .count()
+    loops (constant number of whole-collection $group aggregations)."""
+    from backend import dashboard as dash
     out = {}
-    for p in Programs.objects().only("program_name"):
-        name = p.program_name
-        out[name] = {
-            "subdomains": Subdomains.objects(program_name=name).count(),
-            "live_subdomains": LiveSubdomains.objects(program_name=name).count(),
-            "http": Http.objects(program_name=name).count(),
-            "urls": Urls.objects(program_name=name).count(),
-            "endpoints": Endpoints.objects(program_name=name).count(),
-            "endpoints_with_params": Endpoints.objects(program_name=name, params__ne=[]).count(),
-            "endpoints_x8_checked": Endpoints.objects(program_name=name, x8_checked=True).count(),
+    for row in dash.compute_program_rows(dash._program_names(), dash._metrics()):
+        out[row["program_name"]] = {
+            # --- legacy keys (unchanged) ---
+            "subdomains": row["subdomains"],
+            "live_subdomains": row["live"],
+            "http": row["http"],
+            "urls": row["urls"],
+            "endpoints": row["endpoints"],
+            # --- new keys ---
+            "endpoints_with_params": row["endpoints_with_params"],
+            "endpoints_x8_checked": row["endpoints_x8_checked"],
+            "params": row["params"],
+            "changes_24h": row["changes_24h"],
+            "last_crawl": row["last_crawl"].isoformat() if row["last_crawl"] else None,
+            "last_param_discovery": row["last_param"].isoformat() if row["last_param"] else None,
+            "last_dns": row["last_dns"].isoformat() if row["last_dns"] else None,
+            "last_activity": row["last_activity"].isoformat() if row["last_activity"] else None,
         }
     return out
 

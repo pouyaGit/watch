@@ -1,43 +1,68 @@
-{# dns_status.html — /ui/dns-bruteforce/status #}
+{# dns_status.html — /ui/dns-bruteforce/status (Tehran timestamps, age badges) #}
 {% extends "base.html" %}
 {% block title %}DNS Bruteforce Status{% endblock %}
 {% block content %}
-<a href="{{ home_url }}" class="text-accent text-sm">← Back to Dashboard</a>
-<h2 class="text-accent2 text-2xl mt-3 mb-4">DNS Bruteforce Status</h2>
+<h1 class="page-title">DNS Bruteforce Status</h1>
 
 <p class="text-muted text-sm mb-3">
-  Red timestamp = more than 8 days since last run (something's probably stuck —
+  ⚠ red / "⚠ Nd ago" = more than 8 days since last run (something's probably stuck —
   check <code>systemctl status watch-dns-static</code> / <code>watch-dns-dynamic</code>).
 </p>
 
-<table class="w-full border-collapse text-sm">
-  <thead>
-    <tr class="text-left border-b border-border">
-      <th class="py-1 pr-3">Program</th>
-      <th class="py-1 pr-3">Domain</th>
-      <th class="py-1 pr-3">Feasible</th>
-      <th class="py-1 pr-3">Last static run</th>
-      <th class="py-1 pr-3">Last dynamic run</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for s in statuses %}
-    <tr class="border-b border-border/50">
-      <td class="py-1 pr-3">{{ s.program_name }}</td>
-      <td class="py-1 pr-3 font-mono text-xs">{{ s.domain }}</td>
-      <td class="py-1 pr-3">
-        {% if s.feasible %}
-          <span class="text-ok border border-ok rounded px-2 py-0.5 text-xs">yes</span>
-        {% else %}
-          <span class="text-err border border-err rounded px-2 py-0.5 text-xs">no (wildcard)</span>
-        {% endif %}
-      </td>
-      <td class="py-1 pr-3 {{ 'text-err' if s.last_static_stale else '' }}">{{ s.last_static }}</td>
-      <td class="py-1 pr-3 {{ 'text-err' if s.last_dynamic_stale else '' }}">{{ s.last_dynamic }}</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="5" class="py-2 text-muted">No DNS brute statuses yet.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+<form method="get" action="/ui/dns-bruteforce/status" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Search program / domain…" class="search-input" autocomplete="off">
+  <button type="submit" class="btn-primary">Search</button>
+</form>
+
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Program</th>
+        <th>Domain</th>
+        <th>Feasible</th>
+        <th>Last static BF</th>
+        <th>Last dynamic BF</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in statuses %}
+      <tr>
+        <td class="text-accent">{{ s.program_name }}</td>
+        <td class="font-mono text-xs">{{ s.domain }}</td>
+        <td>
+          {% if s.feasible %}
+            <span class="text-ok border border-ok rounded px-2 py-0.5 text-xs">yes</span>
+          {% elif s.feasible is none %}
+            <span class="text-muted border border-border rounded px-2 py-0.5 text-xs">unknown</span>
+          {% else %}
+            <span class="text-err border border-err rounded px-2 py-0.5 text-xs">no (wildcard)</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if s.last_static_days is none %}
+            <span class="badge-idle">— never</span>
+          {% elif s.last_static_stale %}
+            <span class="badge-warn">⚠ {{ s.last_static_days }}d ago</span> <span class="text-xs text-muted" title="{{ s.last_static }}">{{ s.last_static }}</span>
+          {% else %}
+            <span class="badge-ok">✓ {{ s.last_static_days }}d ago</span> <span class="text-xs text-muted" title="{{ s.last_static }}">{{ s.last_static }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if s.last_dynamic_days is none %}
+            <span class="badge-idle">— never</span>
+          {% elif s.last_dynamic_stale %}
+            <span class="badge-warn">⚠ {{ s.last_dynamic_days }}d ago</span> <span class="text-xs text-muted" title="{{ s.last_dynamic }}">{{ s.last_dynamic }}</span>
+          {% else %}
+            <span class="badge-ok">✓ {{ s.last_dynamic_days }}d ago</span> <span class="text-xs text-muted" title="{{ s.last_dynamic }}">{{ s.last_dynamic }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">No DNS brute statuses yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endblock %}

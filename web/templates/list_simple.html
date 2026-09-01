@@ -1,29 +1,54 @@
-{# list_simple.html — generic list page used by /ui/urls/.../... #}
+{# list_simple.html — generic URL list page (/ui/urls, /ui/urls/program/...).
+   Table layout with copy-friendly monospace URLs; server-side search box
+   when the route supports it; pagination preserves ?q=. #}
 {% extends "base.html" %}
-{% block title %}{{ title }}{% endblock %}
+{% block title %}{{ title }} — WATCH{% endblock %}
+{% block page %}{{ page_title or title }}{% endblock %}
+
+{% from "macros.html" import pager, empty_state with context %}
+
 {% block content %}
-<a href="{{ home_url }}" class="text-accent text-sm">← Back to Dashboard</a>
-<h2 class="text-accent2 text-2xl mt-3 mb-3">{{ title }}</h2>
-
-<div class="pagenav text-muted text-sm mb-2">
-  Page {{ page }}/{{ total_pages }} — total {{ total }}
-  {% if page > 1 %}<a class="text-accent" href="{{ prev_url }}">« Prev</a>{% endif %}
-  {% if page < total_pages %}<a class="text-accent ml-2" href="{{ next_url }}">Next »</a>{% endif %}
+{% set has_program = items and items[0].get('program_name') is defined and items[0].get('program_name') %}
+<div class="page-head">
+  <h1 class="page-title">{{ title }}</h1>
+  <p class="page-sub">{{ total | fmtnum }} URLs</p>
 </div>
 
-<ul class="space-y-1">
-  {% for it in items %}
-  <li class="break-all">
-    <a class="text-accent" href="{{ it.url }}" target="_blank" rel="noopener">{{ it.label }}</a>
-  </li>
-  {% else %}
-  <li class="text-muted">No items.</li>
-  {% endfor %}
-</ul>
+{% if q is defined %}
+<form method="get" action="{{ request.url.path }}" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Search URL…" class="search-input" autocomplete="off">
+  <button type="submit" class="btn-primary">Search</button>
+  {% if q %}<a class="badge-link" href="{{ request.url.path }}">Clear</a>{% endif %}
+</form>
+{% endif %}
 
-<div class="pagenav text-muted text-sm mt-3 mb-6">
-  {% if page > 1 %}<a class="text-accent" href="{{ prev_url }}">« Prev</a>{% endif %}
-  {% if page < total_pages %}<a class="text-accent ml-2" href="{{ next_url }}">Next »</a>{% endif %}
+{{ pager(prev_url, next_url, page, total_pages, total, 'URLs') }}
+
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>URL</th>
+        {% if has_program %}<th>Program</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in items %}
+      <tr>
+        <td class="mono text-xs" style="word-break: break-all;">
+          <a class="text-accent" href="{{ it.url }}" target="_blank" rel="noopener">{{ it.label }}</a>
+        </td>
+        {% if has_program %}<td class="text-xs text-muted">{{ it.program_name }}</td>{% endif %}
+      </tr>
+      {% else %}
+      <tr><td colspan="2" class="empty">
+        {% if q %}No URLs match “{{ q }}”.{% else %}No URLs recorded yet.{% endif %}
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 
+{{ pager(prev_url, next_url, page, total_pages, total, 'URLs') }}
 {% endblock %}

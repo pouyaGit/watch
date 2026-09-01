@@ -1,0 +1,109 @@
+{# search.html — global recon search results (programs / live domains /
+   endpoints / URLs). Every section is capped server-side and links to the
+   full filterable listing for that asset type. #}
+{% extends "base.html" %}
+{% block title %}Search — WATCH{% endblock %}
+{% block page %}Search{% endblock %}
+
+{% from "macros.html" import empty_state with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Search</h1>
+  {% if q %}
+  <p class="page-sub">Results for <span class="mono text-accent">{{ q }}</span></p>
+  {% else %}
+  <p class="page-sub">Search programs, domains, endpoints and URLs</p>
+  {% endif %}
+</div>
+
+<form method="get" action="/ui/search" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Search programs, domains, endpoints…"
+         class="search-input" autocomplete="off" autofocus>
+  <button type="submit" class="btn-primary">Search</button>
+</form>
+
+{% if not q %}
+{{ empty_state("Type a query to search recon data.", "Program names, subdomains, endpoint paths and URLs.") }}
+{% else %}
+{% set total_hits = (results.programs | length) + (results.domains | length) + (results.endpoints | length) + (results.urls | length) %}
+{% if total_hits == 0 %}
+{{ empty_state("No results for “" ~ q ~ "”.", "Try a shorter or partial term (search is substring-based).") }}
+{% endif %}
+
+<div class="panel">
+  <div class="panel-body">
+
+    {% if results.programs %}
+    <div class="search-section-head">
+      <h3>Programs</h3>
+      <span class="search-count">{{ results.programs | length }} shown{% if full_programs %} · <a class="text-accent" href="{{ full_programs }}">all matching →</a>{% endif %}</span>
+    </div>
+    <div class="search-section">
+      {% for p in results.programs %}
+      <div class="search-item">
+        <div class="s-main">
+          <a class="prog-name" href="{{ p.detail_url }}">{{ p.program_name }}</a>
+          <div class="s-sub mono">{{ p.live | fmtnum }} live · {{ p.subdomains | fmtnum }} subs · {{ p.endpoints | fmtnum }} endpoints</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if results.domains %}
+    <div class="search-section-head">
+      <h3>Live Domains</h3>
+      <span class="search-count">{{ results.domains | length }} shown{% if full_domains %} · <a class="text-accent" href="{{ full_domains }}">all matching →</a>{% endif %}</span>
+    </div>
+    <div class="search-section">
+      {% for d in results.domains %}
+      <div class="search-item">
+        <div class="s-main">
+          <a class="text-accent mono text-xs" href="{{ d.url }}" target="_blank" rel="noopener">{{ d.subdomain }}</a>
+          <div class="s-sub">program: {{ d.program_name }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if results.endpoints %}
+    <div class="search-section-head">
+      <h3>Endpoints</h3>
+      <span class="search-count">{{ results.endpoints | length }} shown{% if full_endpoints %} · <a class="text-accent" href="{{ full_endpoints }}">all matching →</a>{% endif %}</span>
+    </div>
+    <div class="search-section">
+      {% for e in results.endpoints %}
+      <div class="search-item">
+        <div class="s-main">
+          <span class="prog-name mono text-xs">{{ e.path }}</span>
+          <div class="s-sub">{{ e.program_name }} · {{ e.subdomain }} · hits {{ e.hit_count | fmtnum }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if results.urls %}
+    <div class="search-section-head">
+      <h3>URLs</h3>
+      <span class="search-count">{{ results.urls | length }} shown{% if full_urls %} · <a class="text-accent" href="{{ full_urls }}">all matching →</a>{% endif %}</span>
+    </div>
+    <div class="search-section">
+      {% for u in results.urls %}
+      <div class="search-item">
+        <div class="s-main">
+          <a class="text-accent mono text-xs" style="word-break: break-all;" href="{{ u.url }}" target="_blank" rel="noopener">{{ u.url }}</a>
+          <div class="s-sub">program: {{ u.program_name }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endif %}
+{% endblock %}
