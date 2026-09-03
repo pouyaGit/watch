@@ -28,6 +28,7 @@ from ai.verification import browser_executor as browser_module
 from ai.verification.browser_executor import (
     BrowserEvidenceExecutor,
 )
+from ai.verification.oracle import evaluate_e2_network
 from ai.verification.verifier import XSSVerifier
 from ai.researcher.xss_orchestrator import (
     XSSAnalysisAudit,
@@ -830,6 +831,176 @@ class BrowserEvidenceExecutorRuntimeChannelsTests(unittest.TestCase):
                 for entry in evidence.browser.dom_changes
             )
         )
+
+
+class BrowserEvidenceExecutorOracleBoundaryTests(unittest.TestCase):
+    """E2 oracle requests vs. the generic network sink.
+
+    Preferred architecture (anti-harvest evidence boundary):
+
+        browser.network_requests
+            = generic runtime network observations
+
+        oracle_network_events
+            = executor-owned, explicitly classified oracle
+              observations
+
+    An E2 oracle request URL legitimately contains D (the derived
+    oracle value). It MUST therefore never enter the generic sink,
+    where a naive anti-harvest pass could misinterpret it as
+    pre-execution material. Generic (non-oracle) runtime network
+    evidence MUST be preserved unchanged.
+    """
+
+    ORACLE_D = "0123456789abcdef"
+
+    def _default_page(self) -> str:
+        return "<html><body>page</body></html>"
+
+    # TEST 7: the legitimate oracle request remains observable as E2
+    # evidence after the generic network-sink cleanup.
+    def test_oracle_request_recorded_as_e2_not_in_generic_sink(self):
+        attempt = _attempt()
+        sess = FakeSession()
+        ex = _executor(sess)
+        ctx = sess.new_context()
+        oracle_url = (
+            "https://target.example.test"
+            "/.watch-oracle/" + self.ORACLE_D
+        )
+
+        def _route(req):
+            page = ctx._pages[-1]
+            page.add_post_nav_hook(
+                lambda: page.emit_request_finished(
+                    oracle_url, from_main_frame=False
+                )
+            )
+            return {
+                "action": "fulfilled",
+                "status": 200,
+                "body": self._default_page(),
+                "headers": {"content-type": "text/html"},
+            }
+
+        ctx.add_test_route(_route)
+        evidence = ex.execute(attempt)
+        self.assertEqual(
+            evidence.attempt_status, AttemptStatus.SUCCEEDED
+        )
+        # The oracle request IS recorded in the dedicated,
+        # executor-owned oracle channel...
+        self.assertEqual(len(evidence.oracle_network_events), 1)
+        event = evidence.oracle_network_events[0]
+        self.assertEqual(event.url, oracle_url)
+        self.assertEqual(event.path, "/.watch-oracle/" + self.ORACLE_D)
+        self.assertFalse(event.is_navigation)
+        # ...and it IS valid E2 evidence...
+        self.assertTrue(
+            evaluate_e2_network(
+                evidence.oracle_network_events,
+                self.ORACLE_D,
+                attempt.endpoint,
+            )
+        )
+        # ...while the generic sink contains NO oracle request and
+        # therefore NO D.
+        self.assertNotIn(
+            oracle_url,
+            "\n".join(evidence.browser.network_requests),
+        )
+        self.assertNotIn(
+            self.ORACLE_D,
+            "\n".join(evidence.browser.network_requests),
+        )
+
+    def test_oracle_response_path_also_excluded_from_generic_sink(self):
+        # The ``response`` listener must behave like
+        # ``requestfinished``: oracle URLs stay out of the generic
+        # sink but remain in the dedicated oracle channel.
+        attempt = _attempt()
+        sess = FakeSession()
+        ex = _executor(sess)
+        ctx = sess.new_context()
+        oracle_url = (
+            "https://target.example.test"
+            "/.watch-oracle/" + self.ORACLE_D
+        )
+
+        def _route(req):
+            page = ctx._pages[-1]
+            page.add_post_nav_hook(
+                lambda: page.emit_response(
+                    oracle_url, from_main_frame=False
+                )
+            )
+            return {
+                "action": "fulfilled",
+                "status": 200,
+                "body": self._default_page(),
+                "headers": {"content-type": "text/html"},
+            }
+
+        ctx.add_test_route(_route)
+        evidence = ex.execute(attempt)
+        self.assertEqual(
+            evidence.attempt_status, AttemptStatus.SUCCEEDED
+        )
+        self.assertTrue(
+            any(
+                event.url == oracle_url
+                for event in evidence.oracle_network_events
+            )
+        )
+        self.assertNotIn(
+            self.ORACLE_D,
+            "\n".join(evidence.browser.network_requests),
+        )
+
+    def test_generic_runtime_requests_still_observed(self):
+        # The sink cleanup must be surgical: non-oracle runtime
+        # requests (even ones that merely LOOK similar) remain
+        # generic network evidence.
+        attempt = _attempt()
+        sess = FakeSession()
+        ex = _executor(sess)
+        ctx = sess.new_context()
+        plain_url = (
+            "https://target.example.test/api/status?probe="
+            + self.ORACLE_D
+        )
+        lookalike_url = (
+            "https://target.example.test/watch-oracle/"
+            + self.ORACLE_D
+        )
+
+        def _route(req):
+            page = ctx._pages[-1]
+            page.add_post_nav_hook(
+                lambda: (
+                    page.emit_request_finished(
+                        plain_url, from_main_frame=False
+                    ),
+                    page.emit_request_finished(
+                        lookalike_url, from_main_frame=False
+                    ),
+                )
+            )
+            return {
+                "action": "fulfilled",
+                "status": 200,
+                "body": self._default_page(),
+                "headers": {"content-type": "text/html"},
+            }
+
+        ctx.add_test_route(_route)
+        evidence = ex.execute(attempt)
+        joined = "\n".join(evidence.browser.network_requests)
+        # Non-oracle requests stay in the generic sink...
+        self.assertIn("/api/status", joined)
+        self.assertIn("/watch-oracle/", joined)
+        # ...and neither is classified as an oracle request.
+        self.assertEqual(evidence.oracle_network_events, [])
 
 
 class BrowserEvidenceExecutorCrossOriginBlockingTests(unittest.TestCase):

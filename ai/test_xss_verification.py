@@ -37,8 +37,12 @@ from ai.schemas.xss_verification import (
     correlation_token_from_attempt,
 )
 from ai.verification.verifier import (
+    STORED_READ_PHASE,
+    STORED_SUBMIT_PHASE,
     XSSVerifier,
     build_oracle_verification_attempt,
+    build_stored_round,
+    stored_round_id,
 )
 from ai.verification.oracle import (
     ORACLE_PATH_PREFIX,
@@ -207,11 +211,10 @@ def _attempts_for_analysis(
 
     The plan builder in :class:`XSSVerifier` produces a
     HTTP attempt and a browser attempt per LLM payload.
-    For ``xss_type == "stored"`` the browser attempt is
-    built with ``phase="stored"`` from the start (no
-    post-hoc mutation), so its ``attempt_id`` and
-    ``correlation_token`` are derived against the final
-    phase. This helper mirrors that behaviour so the
+    Stored XSS cases instead produce gated oracle rounds
+    (``stored_submit`` + ``stored_read`` sharing a
+    ``round_id``); use :func:`build_stored_round` for those.
+    This helper mirrors the non-stored behaviour so the
     tests can correlate executor responses to attempts
     by ``attempt_id`` and ``logical_pair_id``.
 
@@ -224,7 +227,6 @@ def _attempts_for_analysis(
     case = analysis.case
     xss_type = (case.xss_type or "").strip().lower()
     is_dom = xss_type in {"dom", "mutation"}
-    is_stored = xss_type == "stored"
     attempts: list[VerificationAttempt] = []
     for suggested in analysis.llm_result.suggested_payloads:
         if not is_dom:
@@ -244,9 +246,9 @@ def _attempts_for_analysis(
                     phase="http",
                 )
             )
-        # Stored XSS: the browser attempt uses phase="stored"
-        # from the start so identity is internally consistent.
-        browser_phase = "stored" if is_stored else "browser"
+        # Plain browser candidate for non-stored classes.
+        # Stored XSS cases use gated oracle rounds built by
+        # :func:`build_stored_round`, not mirrored here.
         attempts.append(
             build_verification_attempt(
                 case_id=case.case_id,
@@ -260,7 +262,7 @@ def _attempts_for_analysis(
                 source_ids=list(suggested.source_ids),
                 based_on_pattern=suggested.based_on_pattern,
                 mode=VerificationMode.BROWSER_EXECUTION,
-                phase=browser_phase,
+                phase="browser",
             )
         )
     return attempts
@@ -366,11 +368,126 @@ def _browser_evidence(
     )
 
 
+# Fixed round timestamps (READ strictly after SUBMIT).
+_STORED_T0 = "2026-09-01T00:00:00+00:00"
+_STORED_T1 = "2026-09-01T00:00:01+00:00"
+_STORED_T2 = "2026-09-01T00:00:02+00:00"
+_STORED_T3 = "2026-09-01T00:00:03+00:00"
+
+
+def _stored_round_for(
+    case, *, run_salt: str = "test-run-salt"
+) -> tuple[VerificationAttempt, VerificationAttempt]:
+    """Build one stored oracle round exactly as the verifier does."""
+
+    built = build_stored_round(
+        case=case,
+        suggested_payload=PAYLOAD,
+        payload_origin="knowledge",
+        knowledge_ids=[KNOWLEDGE_ID],
+        source_ids=[SOURCE_ID],
+        based_on_pattern=PATTERN,
+        run_salt=run_salt,
+    )
+    assert built is not None, (
+        "fixture context must be planner-supported"
+    )
+    return built
+
+
+def _stored_submit_evidence(
+    submit: VerificationAttempt,
+    *,
+    status: int = 201,
+    location: str | None = None,
+    attempt_status: AttemptStatus = AttemptStatus.SUCCEEDED,
+) -> VerificationEvidence:
+    if location is None:
+        location = _DEFAULT_ENDPOINT
+    return VerificationEvidence(
+        attempt_id=submit.attempt_id,
+        attempt_status=attempt_status,
+        request_url=submit.endpoint,
+        request_method=submit.method,
+        response_status=status
+        if attempt_status == AttemptStatus.SUCCEEDED
+        else None,
+        location_header=location,
+        object_hint=location,
+        intended_request_url=submit.endpoint,
+        actual_request_url=submit.endpoint,
+        started_at=_STORED_T0,
+        finished_at=_STORED_T1,
+    )
+
+
+def _stored_read_evidence(
+    read: VerificationAttempt,
+    url: str,
+    *,
+    dialogs: list | None = None,
+    oracle_net: list | None = None,
+    evals: list | None = None,
+    dom: list | None = None,
+) -> VerificationEvidence:
+    return VerificationEvidence(
+        attempt_id=read.attempt_id,
+        attempt_status=AttemptStatus.SUCCEEDED,
+        request_url=read.endpoint,
+        request_method="GET",
+        response_status=200,
+        dialog_events=list(dialogs or []),
+        oracle_network_events=list(oracle_net or []),
+        eval_invocations=list(evals or []),
+        browser=BrowserExecutionObservation(
+            executed_script=bool(dialogs or oracle_net or evals),
+            dom_changes=list(dom or []),
+        ),
+        intended_request_url=url,
+        actual_request_url=url,
+        started_at=_STORED_T2,
+        finished_at=_STORED_T3,
+    )
+
+
+class _SaltedStoredExecutor:
+    """Dynamic stored-round executor for production-builder tests.
+
+    Answers a SUBMIT with acceptance (``Location`` == endpoint,
+    so no READ rebuild is needed) and a READ with exact E1 proof
+    of the attempt's own oracle value. Binding-safe by
+    construction: every evidence field derives from the attempt
+    it answers.
+    """
+
+    def __init__(self):
+        self.calls: list[VerificationAttempt] = []
+
+    def execute(
+        self, attempt: VerificationAttempt
+    ) -> VerificationEvidence:
+        self.calls.append(attempt)
+        phase = (attempt.phase or "").strip().lower()
+        if phase == STORED_SUBMIT_PHASE:
+            return _stored_submit_evidence(attempt)
+        if phase == STORED_READ_PHASE:
+            return _stored_read_evidence(
+                attempt,
+                attempt.endpoint,
+                dialogs=[
+                    DialogEvent(
+                        kind="alert",
+                        message=attempt.oracle_value or "",
+                    )
+                ],
+            )
+        raise AssertionError(f"unexpected phase {phase!r}")
+
+
 class _FakeExecutor:
     """In-memory VerificationExecutor that returns canned
     evidence for each attempt in order, or raises if no
     canned response is available."""
-
     def __init__(
         self,
         responses: Iterable[VerificationEvidence | Exception] | None = None,
@@ -1534,122 +1651,106 @@ class XSSVerifierStoredXSSTests(unittest.TestCase):
     def test_stored_xss_without_round_trip_yields_no_confirmed(
         self,
     ):
-        # Stored case: only one phase observed. The
-        # verifier must NOT produce CONFIRMED.
+        # Stored round whose SUBMIT is rejected: the READ is
+        # gated out (never executed) and nothing can confirm.
         case = _case(xss_type="stored")
         analysis = _analysis(case=case)
-        attempts = _attempts_for_analysis(analysis)
-        self.assertTrue(
-            any(a.phase == "stored" for a in attempts)
-        )
-        token = attempts[0].correlation_token
-
+        submit, read = _stored_round_for(case)
         executor = _FakeExecutor(
             [
-                _http_evidence(
-                    attempt=attempts[0],
-                ),
-                _browser_evidence(
-                    attempt=attempts[1],
-                    executed_script=True,
-                    correlation_token_in_runtime=True,
-                    observed_correlation_token=token,
-                    network_requests=[f"https://x.test/{token}"],
-                ),
+                _stored_submit_evidence(
+                    submit,
+                    status=500,
+                    location=None,
+                    attempt_status=AttemptStatus.FAILED,
+                )
             ]
         )
-        result = XSSVerifier(executor).verify(analysis)
+        result = XSSVerifier(
+            executor, run_salt="test-run-salt"
+        ).verify(
+            analysis,
+            plan=VerificationPlan(attempts=[submit, read]),
+        )
 
         statuses = [f.status for f in result.findings]
         self.assertNotIn("CONFIRMED", statuses)
         self.assertNotIn("NOT_VULNERABLE", statuses)
+        # Gating: only SUBMIT was executed, READ never ran.
+        self.assertEqual(len(executor.calls), 1)
+        self.assertEqual(executor.calls[0].phase, STORED_SUBMIT_PHASE)
 
     def test_stored_xss_with_complete_round_trip_yields_confirmed(
         self,
     ):
-        # H2: a complete SUBMIT/READ round trip with
-        # matching observed correlation tokens must yield
-        # CONFIRMED.
+        # Stored oracle round: accepted SUBMIT, clean READ, exact
+        # E1 execution proof of the round's own D must yield
+        # CONFIRMED (JAVASCRIPT_EXECUTION via E1).
         case = _case(xss_type="stored")
         analysis = _analysis(case=case)
-        attempts = _attempts_for_analysis(analysis)
-        stored_attempt = next(
-            a for a in attempts if a.phase == "stored"
+        submit, read = _stored_round_for(case)
+        value = submit.oracle_value or ""
+        read_evidence = _stored_read_evidence(
+            read,
+            _DEFAULT_ENDPOINT,
+            dialogs=[DialogEvent(kind="alert", message=value)],
         )
-        token = stored_attempt.correlation_token
-
         executor = _FakeExecutor(
             [
-                _http_evidence(
-                    attempt=attempts[0],
-                ),
-                _browser_evidence(
-                    attempt=attempts[1],
-                    executed_script=True,
-                    correlation_token_in_runtime=True,
-                    observed_correlation_token=token,
-                    network_requests=[f"https://x.test/{token}"],
-                    stored_phases=[
-                        StoredXSSPhaseObservation(
-                            phase=StoredXSSPhase.SUBMIT,
-                            attempt_id=stored_attempt.attempt_id,
-                            observed_correlation_token=token,
-                        ),
-                        StoredXSSPhaseObservation(
-                            phase=StoredXSSPhase.READ,
-                            attempt_id=stored_attempt.attempt_id,
-                            observed_correlation_token=token,
-                        ),
-                    ],
-                ),
+                _stored_submit_evidence(submit),
+                read_evidence,
             ]
         )
-        result = XSSVerifier(executor).verify(analysis)
+        result = XSSVerifier(
+            executor, run_salt="test-run-salt"
+        ).verify(
+            analysis,
+            plan=VerificationPlan(attempts=[submit, read]),
+        )
 
         statuses = [f.status for f in result.findings]
         self.assertIn("CONFIRMED", statuses)
         self.assertNotIn("NOT_VULNERABLE", statuses)
+        confirmed = [
+            f for f in result.findings if f.status == "CONFIRMED"
+        ]
+        self.assertEqual(
+            confirmed[0].confirmation_state, "JAVASCRIPT_EXECUTION"
+        )
+        self.assertEqual(confirmed[0].oracle_channels, ["E1"])
+        self.assertEqual(confirmed[0].round_id, submit.round_id)
 
     def test_stored_xss_mismatched_phase_tokens_yield_potential(
         self,
     ):
-        # H2: a round trip with mismatched observed
-        # correlation tokens is at most POTENTIAL.
+        # Stored round whose READ carries the wrong oracle value:
+        # execution proof fails, so no CONFIRMED. The ceiling is
+        # POTENTIAL only when a storage signal exists.
         case = _case(xss_type="stored")
         analysis = _analysis(case=case)
-        attempts = _attempts_for_analysis(analysis)
-        stored_attempt = next(
-            a for a in attempts if a.phase == "stored"
+        submit, read = _stored_round_for(case)
+        read_evidence = _stored_read_evidence(
+            read,
+            _DEFAULT_ENDPOINT,
+            dialogs=[
+                DialogEvent(
+                    kind="alert", message="deadbeefdeadbeef"
+                )
+            ],
+            dom=[submit.payload],
         )
-        token = stored_attempt.correlation_token
-
         executor = _FakeExecutor(
             [
-                _http_evidence(
-                    attempt=attempts[0],
-                ),
-                _browser_evidence(
-                    attempt=attempts[1],
-                    executed_script=True,
-                    correlation_token_in_runtime=True,
-                    observed_correlation_token=token,
-                    network_requests=[f"https://x.test/{token}"],
-                    stored_phases=[
-                        StoredXSSPhaseObservation(
-                            phase=StoredXSSPhase.SUBMIT,
-                            attempt_id=stored_attempt.attempt_id,
-                            observed_correlation_token=token,
-                        ),
-                        StoredXSSPhaseObservation(
-                            phase=StoredXSSPhase.READ,
-                            attempt_id=stored_attempt.attempt_id,
-                            observed_correlation_token="ct-other",
-                        ),
-                    ],
-                ),
+                _stored_submit_evidence(submit),
+                read_evidence,
             ]
         )
-        result = XSSVerifier(executor).verify(analysis)
+        result = XSSVerifier(
+            executor, run_salt="test-run-salt"
+        ).verify(
+            analysis,
+            plan=VerificationPlan(attempts=[submit, read]),
+        )
 
         statuses = [f.status for f in result.findings]
         self.assertNotIn("CONFIRMED", statuses)
@@ -2875,41 +2976,15 @@ class XSSVerifierPositiveCasesTests(unittest.TestCase):
     # 4. stored XSS with complete structured round trip
     #    + correlation → CONFIRMED.
     def test_positive_4_stored_round_trip_confirmed(self):
+        # Stored oracle round through the production plan
+        # builder: accepted SUBMIT + clean READ + exact E1 proof
+        # of the round's own D yields exactly one CONFIRMED.
         case = _case(xss_type="stored")
         analysis = _analysis(case=case)
-        attempts = _attempts_for_analysis(analysis)
-        stored_attempt = next(
-            a for a in attempts if a.phase == "stored"
-        )
-        token = stored_attempt.correlation_token
-
-        executor = _FakeExecutor(
-            [
-                _http_evidence(
-                    attempt=attempts[0],
-                ),
-                _browser_evidence(
-                    attempt=attempts[1],
-                    executed_script=True,
-                    correlation_token_in_runtime=True,
-                    observed_correlation_token=token,
-                    network_requests=[f"https://x.test/{token}"],
-                    stored_phases=[
-                        StoredXSSPhaseObservation(
-                            phase=StoredXSSPhase.SUBMIT,
-                            attempt_id=stored_attempt.attempt_id,
-                            observed_correlation_token=token,
-                        ),
-                        StoredXSSPhaseObservation(
-                            phase=StoredXSSPhase.READ,
-                            attempt_id=stored_attempt.attempt_id,
-                            observed_correlation_token=token,
-                        ),
-                    ],
-                ),
-            ]
-        )
-        result = XSSVerifier(executor).verify(analysis)
+        executor = _SaltedStoredExecutor()
+        result = XSSVerifier(
+            executor, run_salt="test-run-salt"
+        ).verify(analysis)
         confirmed = [
             f for f in result.findings if f.status == "CONFIRMED"
         ]
@@ -3285,52 +3360,45 @@ class XSSVerifierLogicalPairingTests(unittest.TestCase):
         )
 
     def test_stored_complete_round_trip_yields_confirmed(self):
-        # Stored case: HTTP attempt (phase="http") and a
-        # stored browser attempt (phase="stored" from the
-        # start) share ``logical_pair_id``. The browser
-        # evidence carries SUBMIT + READ observations with
-        # matching correlation tokens, and the runtime
-        # independently observed the token. Must produce
-        # CONFIRMED.
+        # Stored case: the plan holds a gated SUBMIT + READ round
+        # sharing ``round_id``. Accepted SUBMIT, clean READ, and
+        # exact E2 execution proof of the round's own D must
+        # produce CONFIRMED (OBSERVABLE_EFFECT via E2).
         case = _case(xss_type="stored")
         analysis = _analysis(case=case)
-        attempts = _attempts_for_analysis(analysis)
-        # Sanity: the browser attempt is built with
-        # ``phase="stored"`` from the start, not mutated
-        # afterwards.
-        self.assertEqual(attempts[1].phase, "stored")
-        self.assertNotEqual(attempts[0].phase, "stored")
+        submit, read = _stored_round_for(case)
+        # Sanity: distinct phases and attempt ids, one round.
+        self.assertEqual(submit.phase, STORED_SUBMIT_PHASE)
+        self.assertEqual(read.phase, STORED_READ_PHASE)
+        self.assertNotEqual(submit.attempt_id, read.attempt_id)
+        self.assertEqual(submit.round_id, read.round_id)
 
-        http_attempt = attempts[0]
-        stored_attempt = attempts[1]
-        token = stored_attempt.correlation_token
-
-        plan = VerificationPlan(attempts=attempts)
+        value = submit.oracle_value or ""
+        origin = "{0}://{1}".format(
+            *urlsplit(_DEFAULT_ENDPOINT)[:2]
+        )
+        plan = VerificationPlan(attempts=[submit, read])
         executor = _FakeExecutor(
             [
-                self._matching_http_evidence(http_attempt),
-                _browser_evidence(
-                    attempt=stored_attempt,
-                    executed_script=True,
-                    correlation_token_in_runtime=True,
-                    observed_correlation_token=token,
-                    network_requests=[f"https://x.test/{token}"],
-                    stored_phases=[
-                        StoredXSSPhaseObservation(
-                            phase=StoredXSSPhase.SUBMIT,
-                            attempt_id=stored_attempt.attempt_id,
-                            observed_correlation_token=token,
-                        ),
-                        StoredXSSPhaseObservation(
-                            phase=StoredXSSPhase.READ,
-                            attempt_id=stored_attempt.attempt_id,
-                            observed_correlation_token=token,
-                        ),
+                _stored_submit_evidence(submit),
+                _stored_read_evidence(
+                    read,
+                    _DEFAULT_ENDPOINT,
+                    oracle_net=[
+                        NetworkOracleEvent(
+                            url=(
+                                f"{origin}/.watch-oracle/{value}"
+                            ),
+                            path=f"/.watch-oracle/{value}",
+                            is_navigation=False,
+                        )
                     ],
                 ),
             ]
         )
-        result = XSSVerifier(executor).verify(analysis, plan=plan)
+        result = XSSVerifier(
+            executor, run_salt="test-run-salt"
+        ).verify(analysis, plan=plan)
 
         confirmed = [
             f for f in result.findings if f.status == "CONFIRMED"
@@ -3339,64 +3407,62 @@ class XSSVerifierLogicalPairingTests(unittest.TestCase):
         self.assertNotIn(
             "NOT_VULNERABLE", [f.status for f in result.findings]
         )
+        self.assertEqual(confirmed[0].oracle_channels, ["E2"])
+        self.assertEqual(
+            confirmed[0].confirmation_state, "OBSERVABLE_EFFECT"
+        )
 
     def test_stored_attempt_identity_uses_final_phase(self):
-        # The stored browser attempt in the plan must
-        # have ``attempt_id`` and ``correlation_token``
-        # derived against ``phase="stored"`` from the
-        # start, not against ``phase="browser"`` followed
-        # by a post-hoc mutation.
+        # The stored round's SUBMIT and READ attempts carry the
+        # oracle identity of the SUBMIT-candidate derivation, a
+        # shared run-salted round_id, and distinct phases from
+        # the start (no post-hoc mutation).
         case = _case(xss_type="stored")
+        submit, read = _stored_round_for(case)
+
+        self.assertEqual(submit.phase, STORED_SUBMIT_PHASE)
+        self.assertEqual(read.phase, STORED_READ_PHASE)
+        self.assertIsNotNone(submit.oracle_identity)
+        self.assertEqual(
+            submit.oracle_identity, read.oracle_identity
+        )
+        self.assertEqual(
+            submit.oracle_seed,
+            oracle_seed(
+                "test-run-salt",
+                submit.oracle_identity or "",
+                STORED_SUBMIT_PHASE,
+            ),
+        )
+        self.assertEqual(
+            submit.round_id,
+            stored_round_id(
+                "test-run-salt", submit.oracle_identity or ""
+            ),
+        )
+        self.assertEqual(submit.payload, read.payload)
+        self.assertIn(submit.oracle_seed or "x", submit.payload)
+        self.assertNotIn(
+            submit.oracle_value or "y", submit.payload
+        )
+
+        # And the production plan builder must emit the same
+        # round shape for a stored case.
         analysis = _analysis(case=case)
-        attempts = _attempts_for_analysis(analysis)
-        stored_attempt = attempts[1]
-
-        expected = build_verification_attempt(
-            case_id=case.case_id,
-            endpoint=case.endpoint,
-            method=case.method,
-            parameter=case.parameter,
-            parameter_location=case.parameter_location,
-            payload=PAYLOAD,
-            payload_origin="knowledge",
-            knowledge_ids=[KNOWLEDGE_ID],
-            source_ids=[SOURCE_ID],
-            based_on_pattern=PATTERN,
-            mode=VerificationMode.BROWSER_EXECUTION,
-            phase="stored",
-        )
-        self.assertEqual(stored_attempt.attempt_id, expected.attempt_id)
-        self.assertEqual(
-            stored_attempt.correlation_token,
-            expected.correlation_token,
-        )
-        self.assertEqual(stored_attempt.phase, expected.phase)
-
-        # And the plan produced by the verifier must also
-        # contain an attempt with this exact identity.
         result = XSSVerifier(
-            _FakeExecutor(
-                [
-                    self._matching_http_evidence(attempts[0]),
-                    _browser_evidence(
-                        attempt=stored_attempt,
-                        executed_script=False,
-                        correlation_token_in_runtime=False,
-                    ),
-                ]
-            )
+            _SaltedStoredExecutor(), run_salt="test-run-salt"
         ).verify(analysis)
-        produced_stored = next(
-            a
-            for a in result.attempts
-            if a.phase == "stored"
+        phases = [a.phase for a in result.attempts]
+        self.assertEqual(
+            phases, [STORED_SUBMIT_PHASE, STORED_READ_PHASE]
+        )
+        produced_submit, produced_read = result.attempts
+        self.assertEqual(
+            produced_submit.round_id, produced_read.round_id
         )
         self.assertEqual(
-            produced_stored.attempt_id, expected.attempt_id
-        )
-        self.assertEqual(
-            produced_stored.correlation_token,
-            expected.correlation_token,
+            produced_submit.oracle_identity,
+            produced_read.oracle_identity,
         )
 
 

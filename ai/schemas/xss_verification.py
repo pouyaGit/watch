@@ -82,6 +82,65 @@ class WAFObservation(BaseModel):
     note: str = ""
 
 
+class DialogEvent(BaseModel):
+    """
+    First-class structured dialog evidence (E1 dialog oracle).
+
+    Captured by the browser executor's Playwright ``dialog`` listener
+    (executor-owned transport; page JavaScript cannot inject fake
+    events). The eventual oracle predicate is:
+
+        kind in {alert, confirm, prompt} AND message == oracle_value
+
+    with exact full-string equality only.
+    """
+
+    kind: str
+    message: str
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+class NetworkOracleEvent(BaseModel):
+    """
+    Structured network-oracle evidence (E2 network oracle).
+
+    One page-initiated, NON-navigation request whose decoded pathname
+    starts with ``/.watch-oracle/``. The request attempt itself is the
+    signal; a 404 response is acceptable. The executor records the raw
+    URL; the predicate percent-decodes the path ONCE and compares it
+    exactly to ``/.watch-oracle/<oracle_value>``. The query string never
+    participates in matching.
+    """
+
+    url: str
+    path: str
+    method: str = "GET"
+    resource_type: str = ""
+    is_navigation: bool = False
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+class EvalInvocation(BaseModel):
+    """
+    Structured eval-family invocation evidence (E3 eval oracle).
+
+    Recorded by the trusted instrumentation transport for ``eval`` and
+    string ``setTimeout`` calls. The predicate requires the recorded
+    value to equal the payload EXACTLY, and is disabled entirely when
+    the payload exceeds the instrumentation's 240-char truncation limit.
+    """
+
+    operator: str
+    value: str
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
 class StoredXSSPhase(str, Enum):
     """
     The phase of a stored-XSS verification round trip.
@@ -105,11 +164,19 @@ class StoredXSSPhaseObservation(BaseModel):
     observed at that phase. The verifier correlates
     SUBMIT/READ pairs by attempt_id and confirms they
     share a correlation token.
+
+    ``round_id`` optionally binds the observation to the
+    stored round that produced it (v1 oracle rounds). It
+    is advisory transport metadata; the verifier binds
+    rounds by the attempts' ``round_id`` fields, never by
+    trusting this value alone. It MUST NEVER carry oracle
+    material (no S, no D).
     """
 
     phase: StoredXSSPhase
     attempt_id: str
     observed_correlation_token: str | None = None
+    round_id: str | None = None
 
 
 def _canonical_json(payload: dict) -> str:
@@ -420,6 +487,16 @@ class VerificationAttempt(BaseModel):
     # observed correlation token, NOT via phase.
     phase: str = "primary"
 
+    # Execution-oracle infrastructure (xss-oracle-design.md).
+    # Populated only for oracle attempts created by the trusted
+    # planner; ``None`` keeps every existing attempt unchanged
+    # (backward compatible). The seed S MAY travel inside the
+    # payload; the derived oracle value D MUST NEVER appear on
+    # the wire (enforced independently by
+    # ``ai.verification.oracle.anti_harvest_violations``).
+    oracle_seed: str | None = None
+    oracle_value: str | None = None
+    oracle_version: int | None = None
     # Deterministic pre-oracle candidate identity the oracle seed was
     # minted against (the paired plain-browser attempt's ``attempt_id``).
     # Required because the oracle attempt's own ``attempt_id`` includes
@@ -430,6 +507,13 @@ class VerificationAttempt(BaseModel):
     # ``logical_pair_id`` candidate. Only oracle attempts carry it;
     # ``None`` keeps every existing attempt unchanged.
     oracle_identity: str | None = None
+    # Stored-XSS round identifier shared by the SUBMIT and READ
+    # attempts of one stored round (``"sr-" + sha256(...)``,
+    # verifier-derived, run-salted, single-use, never on the wire).
+    # ``None`` keeps every existing attempt unchanged. Stored rounds
+    # pair by ``round_id`` (never by list position); non-stored
+    # attempts leave this unset.
+    round_id: str | None = None
 
     @field_validator(
         "attempt_id", "logical_pair_id", "correlation_token"
@@ -648,6 +732,35 @@ class VerificationEvidence(BaseModel):
     stored_phases: list[StoredXSSPhaseObservation] = Field(
         default_factory=list
     )
+    # Execution-oracle evidence (xss-oracle-design.md). All fields are
+    # optional with empty defaults so every existing evidence producer
+    # and test remains valid. These channels are executor-owned: dialog
+    # events come from the Playwright dialog listener, network-oracle
+    # events from the page-initiated runtime request listeners, and
+    # eval invocations from the capability-protected instrumentation
+    # transport. Verdict semantics are NOT changed in this task.
+    dialog_events: list[DialogEvent] = Field(default_factory=list)
+    oracle_network_events: list[NetworkOracleEvent] = Field(
+        default_factory=list
+    )
+    eval_invocations: list[EvalInvocation] = Field(default_factory=list)
+    # Stored-XSS SUBMIT forensics (all optional/defaulted for backward
+    # compatibility; existing producers leave them unset). Transport
+    # facts recorded by the HTTP executor for ``stored_submit``
+    # attempts: sha256 of the exact submitted body bytes, sha256 of
+    # the response body, the redirect hop list (capped), the raw
+    # ``Location`` header value when present, and the advisory
+    # object-hint (page-controlled discovery hint, never proof).
+    request_body_hash: str | None = None
+    response_body_hash: str | None = None
+    redirect_chain: list[str] = Field(default_factory=list)
+    location_header: str | None = None
+    object_hint: str | None = None
+    # Request identity for binding: the URL the executor intended to
+    # request (with the bound input) and the URL actually reached after
+    # redirects. Redirect information is preserved, never destroyed.
+    intended_request_url: str | None = None
+    actual_request_url: str | None = None
     started_at: str = Field(
         default_factory=lambda: datetime.now(
             timezone.utc
@@ -704,6 +817,9 @@ class XSSVerificationResult(BaseModel):
 __all__ = [
     "AttemptStatus",
     "BrowserExecutionObservation",
+    "DialogEvent",
+    "EvalInvocation",
+    "NetworkOracleEvent",
     "ReflectionLocation",
     "ReflectionObservation",
     "SourceToSinkStep",

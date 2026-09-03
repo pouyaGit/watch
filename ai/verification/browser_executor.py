@@ -4,9 +4,11 @@ import multiprocessing as mp
 import re
 import secrets
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Callable, Iterable, Protocol
 from urllib.parse import (
     parse_qsl,
+    unquote,
     urlencode,
     urlsplit,
     urlunsplit,
@@ -15,6 +17,9 @@ from urllib.parse import (
 from ai.schemas.xss_verification import (
     AttemptStatus,
     BrowserExecutionObservation,
+    DialogEvent,
+    EvalInvocation,
+    NetworkOracleEvent,
     ReflectionObservation,
     ReflectionLocation,
     SourceToSinkStep,
@@ -26,6 +31,7 @@ from ai.schemas.xss_verification import (
     WAFObservation,
     WAFObservationKind,
 )
+from ai.verification.oracle import ORACLE_PATH_PREFIX
 
 
 try:
@@ -415,6 +421,26 @@ def _is_downgrade(current_scheme: str, target_scheme: str) -> bool:
     return current_scheme == "https" and target_scheme != "https"
 
 
+def _is_oracle_request_url(url: str) -> bool:
+    """True when the URL is an executor-owned E2 oracle request.
+
+    The decoded pathname must start with ``/.watch-oracle/``. Oracle
+    requests are classified evidence, NOT generic runtime telemetry:
+    they carry D (the derived oracle value) in the path by design, so
+    they MUST NOT enter the generic ``network_requests`` sink where a
+    naive anti-harvest pass could misinterpret them as pre-execution
+    material. They are recorded instead in the dedicated
+    ``oracle_network_events`` channel and validated by
+    ``evaluate_e2_network``.
+    """
+
+    try:
+        path = unquote(urlsplit(url).path or "")
+    except ValueError:
+        return False
+    return path.startswith(ORACLE_PATH_PREFIX)
+
+
 def _bound_value(payload: str, correlation_token: str) -> str:
     return f"{payload}{_TOKEN_SEPARATOR}{correlation_token}"
 
@@ -699,6 +725,18 @@ class _BrowserAttemptState:
     error_reason: str | None = None
     sink_observed: bool = False
     token_observed: bool = False
+    # Execution-oracle evidence (xss-oracle-design.md). All three
+    # channels are executor-owned: dialog events come from the
+    # Playwright dialog listener, network-oracle events from the
+    # page-initiated runtime request listeners (navigations never
+    # count), and eval invocations from the capability-protected
+    # instrumentation transport. The page cannot inject into any of
+    # them.
+    dialog_events: list[DialogEvent] = field(default_factory=list)
+    oracle_network_events: list[NetworkOracleEvent] = field(
+        default_factory=list
+    )
+    eval_invocations: list[EvalInvocation] = field(default_factory=list)
     # Per-attempt transport capability. Generated in Python;
     # embedded only inside the init script's closure. Every
     # instrumentation event that reaches the Python-side
@@ -890,11 +928,27 @@ class BrowserEvidenceExecutor:
         # token as anything other than the input value. For the
         # current executor, the only allowed carrier is the URL
         # query string. The bound URL is constructed here.
-        bound_input = _bound_value(attempt.payload, attempt.correlation_token)
-        state.bound_url = self._build_bound_url(
-            attempt.endpoint, attempt.parameter, bound_input,
-            parameter_location=attempt.parameter_location,
-        )
+        #
+        # Stored XSS READ (``phase == "stored_read"``) is the
+        # exception: the READ navigation MUST be clean. The
+        # endpoint is the verifier-discovered display URL and is
+        # navigated bare, with no payload, seed, value, token,
+        # or round material bound into it. The only route by
+        # which oracle material can reach that page is
+        # server-side persistence.
+        if (attempt.phase or "").strip().lower() == "stored_read":
+            parts = urlsplit(attempt.endpoint)
+            if parts.scheme not in ("http", "https") or not parts.hostname:
+                raise _UnsupportedBrowserRequest(
+                    f"unsupported_browser_endpoint_scheme:{parts.scheme!r}"
+                )
+            state.bound_url = attempt.endpoint
+        else:
+            bound_input = _bound_value(attempt.payload, attempt.correlation_token)
+            state.bound_url = self._build_bound_url(
+                attempt.endpoint, attempt.parameter, bound_input,
+                parameter_location=attempt.parameter_location,
+            )
 
         session = self._session or _PlaywrightSession()
         context = session.new_context()
@@ -1097,6 +1151,22 @@ class BrowserEvidenceExecutor:
             if kind == "sinks":
                 state.sink_observed = True
                 state.sinks.append_dom(truncated)
+                # Structured eval-family invocation evidence (E3).
+                # Recorded only for the two supported operators; the
+                # recorded value is already bounded by the init
+                # script's truncation (240 chars), which is why E3 is
+                # disabled for longer payloads instead of comparing
+                # truncated prefixes.
+                if op in ("eval", "setTimeout:string"):
+                    state.eval_invocations.append(
+                        EvalInvocation(
+                            operator=op,
+                            value=value,
+                            timestamp=datetime.now(
+                                timezone.utc
+                            ).isoformat(),
+                        )
+                    )
             elif kind == "observables":
                 state.sinks.append_dom(truncated)
             elif kind == "storage":
@@ -1234,6 +1304,17 @@ class BrowserEvidenceExecutor:
             try:
                 kind = getattr(dlg, "type", "alert")
                 msg = getattr(dlg, "message", "")
+                # First-class structured dialog evidence (E1). The
+                # Playwright dialog listener is executor-owned; page
+                # JavaScript cannot fabricate these events. The legacy
+                # console-channel record is kept unchanged.
+                state.dialog_events.append(
+                    DialogEvent(
+                        kind=str(kind),
+                        message=str(msg),
+                        timestamp=datetime.now(timezone.utc).isoformat(),
+                    )
+                )
                 state.sinks.append_console(f"dialog:{kind}:{msg}")
                 accept = getattr(dlg, "accept", None)
                 if callable(accept):
@@ -1274,6 +1355,38 @@ class BrowserEvidenceExecutor:
             except Exception:  # noqa: BLE001
                 pass
 
+        def _record_oracle_request(
+            req: object, url: str, resource_type: str
+        ) -> None:
+            """Capture a page-initiated network-oracle request (E2).
+
+            Callers guarantee the request is NOT a navigation. The
+            decoded pathname must start with ``/.watch-oracle/``; the
+            raw URL is recorded and the query never participates in
+            matching (the predicate decodes once and compares exactly).
+            """
+
+            try:
+                path = unquote(urlsplit(url).path or "")
+                if not path.startswith(ORACLE_PATH_PREFIX):
+                    return
+                state.oracle_network_events.append(
+                    NetworkOracleEvent(
+                        url=url,
+                        path=path,
+                        method=str(
+                            getattr(req, "method", "GET") or "GET"
+                        ),
+                        resource_type=str(resource_type or ""),
+                        is_navigation=False,
+                        timestamp=datetime.now(
+                            timezone.utc
+                        ).isoformat(),
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
         def _on_request_finished(req: object) -> None:
             # Initial nav and navigation-machinery redirect
             # hops are excluded from runtime channels. The
@@ -1290,7 +1403,17 @@ class BrowserEvidenceExecutor:
                 if not url:
                     return
                 url = _redact_credentials_in_url(url)
-                state.sinks.append_network(url)
+                # E2 oracle requests are executor-owned classified
+                # evidence; they never enter the generic network sink
+                # (their URL carries D by design). Generic telemetry
+                # keeps only non-oracle runtime requests.
+                if not _is_oracle_request_url(url):
+                    state.sinks.append_network(url)
+                _record_oracle_request(
+                    req,
+                    url,
+                    getattr(req, "resource_type", "") or "",
+                )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -1303,8 +1426,14 @@ class BrowserEvidenceExecutor:
                 if req is not None and _is_navigation_request(req):
                     return
                 url = _redact_credentials_in_url(url)
-                if url not in state.sinks.network_requests:
-                    state.sinks.append_network(url)
+                if not _is_oracle_request_url(url):
+                    if url not in state.sinks.network_requests:
+                        state.sinks.append_network(url)
+                _record_oracle_request(
+                    req if req is not None else resp,
+                    url,
+                    getattr(resp, "resource_type", "") or "",
+                )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -1607,6 +1736,31 @@ class BrowserEvidenceExecutor:
             # If the token is not observed, the executor
             # reports nothing for stored phases. The
             # orchestrator must drive a SUBMIT pass.
+        elif (attempt.phase or "").strip().lower() == "stored_read":
+            # Oracle-round READ observation. The READ navigation
+            # is clean, so the correlation token is advisory only
+            # (it is not expected on the wire). An observation is
+            # recorded when the token appears OR when any
+            # executor-owned oracle channel fired; the verifier
+            # decides what the observation means and never treats
+            # the token as execution proof. The round_id binds
+            # this observation to its stored round. No oracle
+            # value is carried here (D travels exclusively
+            # through the executor-owned oracle channels).
+            if (
+                observed_token is not None
+                or state.dialog_events
+                or state.oracle_network_events
+                or state.eval_invocations
+            ):
+                stored_phases.append(
+                    StoredXSSPhaseObservation(
+                        phase=StoredXSSPhase.READ,
+                        attempt_id=attempt.attempt_id,
+                        observed_correlation_token=observed_token,
+                        round_id=attempt.round_id,
+                    )
+                )
 
         # WAF observations: kept empty. The browser executor
         # has no WAF classification logic; WAF metadata is
@@ -1638,6 +1792,11 @@ class BrowserEvidenceExecutor:
             browser=browser,
             waf_observations=waf,
             stored_phases=stored_phases,
+            dialog_events=list(state.dialog_events),
+            oracle_network_events=list(state.oracle_network_events),
+            eval_invocations=list(state.eval_invocations),
+            intended_request_url=state.bound_url,
+            actual_request_url=state.final_url or state.bound_url,
         )
 
     # ------------------------------------------------------------------

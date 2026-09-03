@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import html as _html
 import re
 from typing import Mapping
@@ -43,6 +44,21 @@ _RESPONSE_SENSITIVE_HEADERS = frozenset(
 _REDACTED_PLACEHOLDER = "[REDACTED]"
 
 _REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
+
+# Phase labels for the Stored XSS v1 round model. A ``stored_submit``
+# attempt performs the persistence operation (GET query or POST
+# form, single field); a ``stored_read`` browser attempt later reads
+# the stored object back through a clean navigation.
+STORED_SUBMIT_PHASE = "stored_submit"
+STORED_READ_PHASE = "stored_read"
+# Legacy single-pass stored phase. New plans never emit it; the
+# verifier demotes it to at most a non-confirming finding and it
+# must never yield a positive verdict.
+LEGACY_STORED_PHASE = "stored"
+
+# HTTP methods with a defined v1 SUBMIT shape. Anything else fails
+# closed with ``unsupported_submit_shape`` (never silently remapped).
+_SUBMIT_BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 
 _CHUNK_SIZE = 65536
 _ERROR_REASON_LIMIT = 200
@@ -307,6 +323,65 @@ class HTTPEvidenceExecutor:
         pairs.append((parameter, value))
         return urlunsplit(parts._replace(query=urlencode(pairs)))
 
+    @staticmethod
+    def _submit_shape_error(
+        attempt: VerificationAttempt,
+    ) -> str | None:
+        """
+        Validate the v1 Stored XSS SUBMIT shape. Returns an error
+        reason string when the shape is unsupported, else None.
+
+        Supported (unauthenticated, single-field only):
+
+        - GET/HEAD with ``parameter_location == "query"``.
+        - POST/PUT/PATCH with ``parameter_location`` in
+          ``{"body", "form"}``.
+
+        Everything else (JSON, multipart, file uploads,
+        multi-field forms, header/cookie/path locations, missing
+        parameter names, body methods without a body location,
+        GET with a body location) fails closed. A POST is NEVER
+        downgraded to GET.
+        """
+
+        location = (attempt.parameter_location or "").strip().lower()
+        method = (attempt.method or "").upper()
+        if not attempt.parameter:
+            return "unsupported_submit_shape:missing_parameter_name"
+        if method in ("GET", "HEAD"):
+            if location != "query":
+                return (
+                    "unsupported_submit_shape:"
+                    f"method_{method}_requires_query_location"
+                )
+            return None
+        if method in _SUBMIT_BODY_METHODS:
+            if location not in ("body", "form"):
+                return (
+                    "unsupported_submit_shape:"
+                    f"method_{method}_requires_body_form_location"
+                )
+            return None
+        return f"unsupported_submit_shape:method_{method!r}"
+
+    @staticmethod
+    def _request_body_bytes(
+        method: str,
+        intended_url: str,
+        data: dict[str, str] | None,
+    ) -> bytes:
+        """
+        The exact bytes the SUBMIT interaction sent, for hashing.
+        Form posts hash the urlencoded body; query submissions
+        hash the intended URL (the bytes on the wire carry the
+        value in the request line). Never includes secret header
+        values (hash input is URL/body only).
+        """
+
+        if data:
+            return urlencode(data).encode("utf-8")
+        return (intended_url or "").encode("utf-8")
+
     # ------------------------------------------------------------------
     # Transport
     # ------------------------------------------------------------------
@@ -318,7 +393,7 @@ class HTTPEvidenceExecutor:
         data: dict[str, str] | None,
         headers: dict[str, str],
         sensitive_values: tuple[str, ...],
-    ) -> tuple[object, str]:
+    ) -> tuple[object, str, list[str], str | None]:
         current_method = method
         current_url = url
         current_data = data
@@ -328,6 +403,14 @@ class HTTPEvidenceExecutor:
         # max_redirects remains an independent upper bound for
         # non-cyclic chains of distinct URLs.
         visited = {current_url}
+        # Redirect forensics for stored SUBMIT acceptance and audit:
+        # one ``"<status> <url>"`` entry per hop, including the
+        # initial request and the final response URL. Bounded by
+        # max_redirects + 1 by construction. ``last_location`` is
+        # the most recent raw ``Location`` header value observed
+        # (page-controlled discovery hint, never proof).
+        chain: list[str] = [f"request {current_url}"]
+        last_location: str | None = None
 
         for _hop in range(self.max_redirects + 1):
             try:
@@ -354,9 +437,18 @@ class HTTPEvidenceExecutor:
                 ) from exc
 
             if response.status_code not in _REDIRECT_STATUS_CODES:
-                return response, current_url
+                chain.append(
+                    f"{response.status_code} {current_url}"
+                )
+                return response, current_url, chain, last_location
 
             location = response.headers.get("Location")
+            if isinstance(location, str) and location:
+                last_location = location[:2048]
+            chain.append(
+                f"{response.status_code} {current_url} "
+                f"-> {last_location or ''}".rstrip()
+            )
             self._close(response)
             if not location:
                 raise _VerificationError(
@@ -468,7 +560,18 @@ class HTTPEvidenceExecutor:
                 f"{attempt.mode.value}"
             )
 
+        is_submit = (
+            attempt.phase or ""
+        ).strip().lower() == STORED_SUBMIT_PHASE
+        if is_submit:
+            shape_error = self._submit_shape_error(attempt)
+            if shape_error is not None:
+                return self._error_evidence(
+                    attempt, shape_error, AttemptStatus.ERROR
+                )
+
         method, url, data, extra_headers = self._build_request(attempt)
+        intended_request_url = url
         merged_headers = {
             **_session_default_headers(self.session),
             **extra_headers,
@@ -480,7 +583,12 @@ class HTTPEvidenceExecutor:
         )
 
         try:
-            response, _final_url = self._send_following_redirects(
+            (
+                response,
+                final_url,
+                redirect_chain,
+                last_location,
+            ) = self._send_following_redirects(
                 method, url, data, merged_headers, sensitive_values
             )
         except _TransportTimeout as exc:
@@ -491,6 +599,7 @@ class HTTPEvidenceExecutor:
             return self._error_evidence(
                 attempt, str(exc), AttemptStatus.ERROR
             )
+        actual_request_url = final_url or intended_request_url
 
         body_text = self._read_bounded_body(response)
         status_code = response.status_code
@@ -541,6 +650,19 @@ class HTTPEvidenceExecutor:
             reflection=reflection,
             waf_observations=waf_observations,
             error_reason=error_reason,
+            intended_request_url=intended_request_url,
+            actual_request_url=actual_request_url,
+            request_body_hash=_sha256_hex(
+                self._request_body_bytes(
+                    method, intended_request_url, data
+                )
+            ),
+            response_body_hash=_sha256_hex(body_text or ""),
+            redirect_chain=list(redirect_chain),
+            location_header=last_location
+            or response.headers.get("Location"),
+            object_hint=last_location
+            or response.headers.get("Location"),
         )
 
     def _analyse_success_body(
@@ -795,6 +917,14 @@ def _no_reflection() -> ReflectionObservation:
         matched_correlation_token=False,
         observed_correlation_token=None,
     )
+
+
+def _sha256_hex(text: str | bytes) -> str:
+    if isinstance(text, bytes):
+        digest = hashlib.sha256(text).hexdigest()
+    else:
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return digest
 
 
 __all__ = [

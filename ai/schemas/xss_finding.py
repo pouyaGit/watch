@@ -85,6 +85,13 @@ class XSSFinding(BaseModel):
     confirmation_state: str | None = None
     oracle_channels: list[str] = Field(default_factory=list)
 
+    # Stored-XSS round audit annotation (verifier-derived, NEVER
+    # page-controlled). ``round_id`` names the stored round that
+    # produced this finding; ``read_url`` records the READ navigation
+    # target. Both are audit metadata only, never proof inputs.
+    round_id: str | None = None
+    read_url: str | None = None
+
     created_at: str = Field(
         default_factory=lambda:
         datetime.now(

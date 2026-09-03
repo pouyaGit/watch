@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import re
+from datetime import datetime, timezone
 from typing import Iterable
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from pydantic import ValidationError
 
@@ -12,7 +14,6 @@ from ai.schemas.xss_verification import (
     AttemptStatus,
     ReflectionLocation,
     SourceToSinkStep,
-    StoredXSSPhase,
     VerificationAttempt,
     VerificationEvidence,
     VerificationMode,
@@ -33,9 +34,24 @@ from ai.verification.oracle import (
     evaluate_e2_network,
     evaluate_e3_eval,
     oracle_seed,
+    oracle_value_from_seed,
     validate_oracle_pair,
 )
 from ai.researcher.xss_orchestrator import XSSAnalysisResult
+
+try:
+    import tldextract as _tldextract
+except ImportError:  # pragma: no cover
+    _tldextract = None  # type: ignore[assignment]
+
+# Offline public-suffix extraction for the stored READ-hint sanity
+# check (same semantics as the HTTP executor's redirect policy; the
+# verifier NEVER touches the network to resolve suffix data).
+_OFFLINE_TLD_EXTRACT = (
+    _tldextract.TLDExtract(suffix_list_urls=())
+    if _tldextract is not None
+    else None
+)
 
 
 # Statuses that may produce an XSSFinding. INCONCLUSIVE is
@@ -81,6 +97,57 @@ _CONFIRMATION_STATE_OBSERVABLE_EFFECT = "OBSERVABLE_EFFECT"
 # Phase label used for oracle-attempt identity. The seed derivation
 # uses this phase, and the verifier re-derives it for freshness.
 ORACLE_ATTEMPT_PHASE = "oracle"
+
+# Stored XSS v1 round phases. SUBMIT performs the persistence
+# operation over HTTP; READ retrieves the stored object through a
+# clean browser navigation. They are distinct attempts with
+# distinct attempt_ids, paired by ``round_id``.
+STORED_SUBMIT_PHASE = "stored_submit"
+STORED_READ_PHASE = "stored_read"
+# Legacy single-pass stored phase. New plans never emit it; when
+# encountered (old injected plans) it is demoted to at most
+# POTENTIAL and MUST NEVER yield a confirming verdict.
+LEGACY_STORED_PHASE = "stored"
+
+# Confirmation-state value for a stored round that proved
+# acceptance + attribution + reachability but NOT execution.
+_STORED_STATE_STORAGE_ATTRIBUTED = "STORAGE_ATTRIBUTED"
+
+# Body markers that unambiguously signal the SUBMIT did not
+# establish an anonymous persisted submission. Any hit fails the
+# SUBMIT closed (INCONCLUSIVE); READ is never attempted. Markers
+# name explicit FAILURE semantics — a bare field or product word
+# (e.g. an ``<input name="csrf_token">`` or "CSRF protection"
+# text) must never match. In particular there is intentionally NO
+# bare ``"csrf"`` entry: normal form field names such as
+# ``csrf_token`` / ``csrfmiddlewaretoken`` are not failures.
+_SUBMIT_REJECT_BODY_MARKERS = (
+    "captcha",
+    "invalid csrf",
+    "csrf validation failed",
+    "csrf token invalid",
+    "csrf token mismatch",
+    "csrf token expired",
+    "missing csrf token",
+    "csrf_required",
+    "invalid token",
+    "token mismatch",
+    "token expired",
+    "mfa",
+    "multi-factor",
+)
+
+# Clock-skew tolerance for evidence timestamps. Evidence dated
+# more than this far in the future is rejected outright.
+_EVIDENCE_FUTURE_SKEW_SECONDS = 300
+
+# Cap on harvested links scanned for the D3 READ-discovery
+# fallback so hostile bodies cannot bloat discovery.
+_READ_LINK_SCAN_LIMIT = 32
+_HREF_RE = re.compile(
+    r"""href\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))""",
+    re.IGNORECASE,
+)
 
 
 def _origin_of(url: str) -> tuple[str, str, str] | None:
@@ -163,6 +230,160 @@ def build_oracle_verification_attempt(
     )
 
 
+def stored_round_id(
+    run_salt: str,
+    submit_identity: str,
+    round_seq: int = 0,
+) -> str:
+    """Derive the deterministic stored-round identifier.
+
+    ``round_id = "sr-" + sha256(run_salt ‖ 0x00 ‖ submit_identity
+    ‖ 0x00 ‖ round_seq)[:32]``. Run-salted (replay separation
+    across runs), unique per (run, candidate, retry). The round_id
+    is an index, never a secret and never on the wire; round
+    security comes from S/D, not from hiding the round_id.
+    """
+
+    digest = hashlib.sha256(
+        f"{run_salt}\x00{submit_identity}\x00{int(round_seq)}".encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    return "sr-" + digest[:32]
+
+
+def build_stored_round(
+    *,
+    case: XSSCase,
+    suggested_payload: str,
+    payload_origin: str,
+    knowledge_ids: list[str],
+    source_ids: list[str],
+    based_on_pattern: str | None,
+    run_salt: str,
+    round_seq: int = 0,
+) -> tuple[VerificationAttempt, VerificationAttempt] | None:
+    """Build one Stored XSS v1 round (SUBMIT + READ attempts).
+
+    Seed-ownership resolution (breaks the seed/payload cycle the
+    same way the reflected oracle path does): a draft SUBMIT
+    attempt is built from the LLM pattern first; its
+    ``attempt_id`` is the stable per-candidate identity the
+    oracle seed is minted against
+    (``oracle_seed(run_salt, candidate_id, "stored_submit")``).
+    The final SUBMIT attempt carries the planner-owned oracle
+    payload ``O`` (which embeds S but NEVER D); the READ attempt
+    carries the same ``O`` with a clean-navigation contract. Both
+    attempts record ``oracle_identity == candidate_id`` and share
+    the ``round_id``.
+
+    Flow: candidate identity → S → O → SUBMIT attempt → READ
+    attempt → (post-SUBMIT) D = W(S) observed at READ via E1/E2/E3.
+
+    ``round_seq`` separates retries: the draft identity (and hence
+    S/D/round_id) is fresh per retry, so a previous round's oracle
+    material can never satisfy a new round. Retries mint a new
+    round; rounds are never reused.
+
+    Returns ``None`` when ``OraclePlanner`` does not support
+    ``case.context.type`` (no unprovable payload is ever
+    submitted; the candidate stays non-confirming).
+    """
+
+    draft_phase = (
+        STORED_SUBMIT_PHASE
+        if int(round_seq) == 0
+        else f"{STORED_SUBMIT_PHASE}+r{int(round_seq)}"
+    )
+    draft_submit = build_verification_attempt(
+        case_id=case.case_id,
+        endpoint=case.endpoint,
+        method=case.method,
+        parameter=case.parameter,
+        parameter_location=case.parameter_location,
+        payload=suggested_payload,
+        payload_origin=payload_origin,  # type: ignore[arg-type]
+        knowledge_ids=list(knowledge_ids),
+        source_ids=list(source_ids),
+        based_on_pattern=based_on_pattern,
+        mode=VerificationMode.HTTP_REFLECTION,
+        phase=draft_phase,
+    )
+    candidate_id = draft_submit.attempt_id
+
+    planner = OraclePlanner()
+    try:
+        plan = planner.plan(
+            context_type=case.context.type,
+            case_id=case.case_id,
+            attempt_id=candidate_id,
+            logical_pair_id=draft_submit.logical_pair_id,
+            run_salt=run_salt,
+            phase=STORED_SUBMIT_PHASE,
+            delivery_pattern=suggested_payload,  # attribution only
+        )
+    except ValueError:
+        return None
+    if not plan.supported:
+        return None
+
+    round_id = stored_round_id(run_salt, candidate_id, round_seq)
+    oracle_fields = {
+        "oracle_seed": plan.seed,
+        "oracle_value": plan.oracle_value,
+        "oracle_version": plan.version,
+        "oracle_identity": candidate_id,
+        "round_id": round_id,
+    }
+
+    submit = build_verification_attempt(
+        case_id=case.case_id,
+        endpoint=case.endpoint,
+        method=case.method,
+        parameter=case.parameter,
+        parameter_location=case.parameter_location,
+        payload=plan.payload,
+        payload_origin="model_generated",
+        knowledge_ids=[],
+        source_ids=[],
+        based_on_pattern=based_on_pattern,
+        mode=VerificationMode.HTTP_REFLECTION,
+        phase=STORED_SUBMIT_PHASE,
+    )
+    submit = submit.model_copy(
+        update={
+            "logical_pair_id": draft_submit.logical_pair_id,
+            **oracle_fields,
+        }
+    )
+
+    # READ endpoint is a placeholder until post-SUBMIT discovery
+    # (Location → case endpoint → body link) selects the display
+    # URL; ``verify()`` rebuilds the READ attempt when discovery
+    # yields a different URL.
+    read = build_verification_attempt(
+        case_id=case.case_id,
+        endpoint=case.endpoint,
+        method="GET",
+        parameter=case.parameter,
+        parameter_location=case.parameter_location,
+        payload=plan.payload,
+        payload_origin="model_generated",
+        knowledge_ids=[],
+        source_ids=[],
+        based_on_pattern=based_on_pattern,
+        mode=VerificationMode.BROWSER_EXECUTION,
+        phase=STORED_READ_PHASE,
+    )
+    read = read.model_copy(
+        update={
+            "logical_pair_id": draft_submit.logical_pair_id,
+            **oracle_fields,
+        }
+    )
+    return submit, read
+
+
 class XSSVerifier:
     """
     Deterministic, evidence-bound XSS verifier.
@@ -222,10 +443,17 @@ class XSSVerifier:
       ``JAVASCRIPT_EXECUTION``; E2 annotates
       ``OBSERVABLE_EFFECT`` (attacker-chosen network
       effect). Multiple channels never raise severity.
-    - ``CONFIRMED`` (stored, legacy, OUT OF SCOPE): the
-      stored SUBMIT/READ round-trip path is intentionally
-      unchanged by oracle integration; its findings carry
-      no ``confirmation_state``.
+    - ``CONFIRMED`` (stored oracle round): the ONLY stored route
+      to a confirming verdict. Requires a complete gated round:
+      SUBMIT accepted, round-bound (``round_id`` shared,
+      ``oracle_identity`` shared, ordering proven, READ clean),
+      run-fresh, anti-harvest clean, and valid E1/E2/E3 execution
+      proof of the round's OWN oracle value D during the READ
+      phase. Findings carry ``confirmation_state``
+      (JAVASCRIPT_EXECUTION / OBSERVABLE_EFFECT) and
+      ``oracle_channels``. The legacy single-pass
+      ``phase="stored"`` token predicate can yield at most
+      POTENTIAL and MUST NEVER yield a confirming verdict.
     - ``INCONCLUSIVE``: any other combination. This
       includes transport failure, executor error,
       evidence-attempt binding mismatch, WAF block or
@@ -300,17 +528,157 @@ class XSSVerifier:
         # needs to look up the HTTP attempt/evidence for the
         # same logical_pair_id; the map is the only way to
         # find that pair without trusting list position.
+        #
+        # Stored rounds are excluded from the bulk loop: they
+        # execute under gated sequencing (SUBMIT first; READ only
+        # when SUBMIT is accepted AND a clean same-origin READ URL
+        # is discovered). Rounds stay serialized by construction.
+        stored_phases = frozenset(
+            {STORED_SUBMIT_PHASE, STORED_READ_PHASE}
+        )
+        regular_attempts = [
+            a
+            for a in chosen_plan.attempts
+            if (a.phase or "").strip().lower() not in stored_phases
+        ]
+        stored_attempts = [
+            a
+            for a in chosen_plan.attempts
+            if (a.phase or "").strip().lower() in stored_phases
+        ]
         evidence_by_attempt: dict[str, VerificationEvidence] = {}
-        for attempt in chosen_plan.attempts:
+        for attempt in regular_attempts:
             evidence = self._safe_execute(attempt)
             evidence = self._enforce_evidence_binding(
                 attempt, evidence
             )
             evidence_by_attempt[attempt.attempt_id] = evidence
 
+        stored_notes: list[str] = []
+        round_order: list[str] = []
+        round_submit: dict[str, VerificationAttempt] = {}
+        round_read: dict[str, VerificationAttempt] = {}
+        for attempt in stored_attempts:
+            round_id = attempt.round_id or ""
+            phase = (attempt.phase or "").strip().lower()
+            if not round_id:
+                stored_notes.append(
+                    "stored_round_missing_round_id:"
+                    f"{attempt.attempt_id}"
+                )
+                continue
+            if round_id not in round_submit and round_id not in round_read:
+                round_order.append(round_id)
+            target = (
+                round_submit
+                if phase == STORED_SUBMIT_PHASE
+                else round_read
+                if phase == STORED_READ_PHASE
+                else None
+            )
+            if target is None:
+                stored_notes.append(
+                    f"stored_round_unexpected_phase:{phase}"
+                )
+                continue
+            if round_id in target:
+                # Duplicate SUBMIT/READ for one round: ambiguous
+                # pairing is never guessed; the extra attempt is
+                # ignored (fails closed, INCONCLUSIVE, no finding).
+                stored_notes.append(
+                    f"stored_duplicate_round_attempt:{round_id}:{phase}"
+                )
+                continue
+            target[round_id] = attempt
+
+        consumed_rounds: set[str] = set()
+        for round_id in round_order:
+            submit = round_submit.get(round_id)
+            read = round_read.get(round_id)
+            if submit is None or read is None:
+                stored_notes.append(
+                    f"stored_incomplete_round:{round_id}"
+                )
+                continue
+            if round_id in consumed_rounds:
+                stored_notes.append(
+                    f"stored_duplicate_round:{round_id}"
+                )
+                continue
+            consumed_rounds.add(round_id)
+            submit_evidence = self._enforce_evidence_binding(
+                submit, self._safe_execute(submit)
+            )
+            evidence_by_attempt[submit.attempt_id] = submit_evidence
+            accepted, accept_signal = self._submit_accepted(
+                submit_attempt=submit,
+                submit_evidence=submit_evidence,
+            )
+            if not accepted:
+                stored_notes.append(
+                    f"stored_submit_not_accepted:{round_id}:"
+                    f"{accept_signal}"
+                )
+                continue
+            read_url = self.discover_stored_read_url(
+                case=owned_case,
+                submit_attempt=submit,
+                submit_evidence=submit_evidence,
+            )
+            if read_url is None:
+                stored_notes.append(
+                    f"stored_read_location_unknown:{round_id}"
+                )
+                continue
+            if read.endpoint != read_url:
+                # Rebuild the READ attempt against the discovered
+                # display URL. Identity material (round_id,
+                # oracle seed/value/identity, payload) is
+                # preserved; only the navigation target changes.
+                # The oracle seed stays owned by the SUBMIT
+                # candidate identity, so no circular dependency
+                # is introduced.
+                original_read_id = read.attempt_id
+                rebuilt = build_verification_attempt(
+                    case_id=read.case_id,
+                    endpoint=read_url,
+                    method="GET",
+                    parameter=read.parameter,
+                    parameter_location=read.parameter_location,
+                    payload=read.payload,
+                    payload_origin="model_generated",
+                    knowledge_ids=[],
+                    source_ids=[],
+                    based_on_pattern=read.based_on_pattern,
+                    mode=VerificationMode.BROWSER_EXECUTION,
+                    phase=STORED_READ_PHASE,
+                )
+                read = rebuilt.model_copy(
+                    update={
+                        "logical_pair_id": read.logical_pair_id,
+                        "oracle_seed": read.oracle_seed,
+                        "oracle_value": read.oracle_value,
+                        "oracle_version": read.oracle_version,
+                        "oracle_identity": read.oracle_identity,
+                        "round_id": read.round_id,
+                    }
+                )
+                round_read[round_id] = read
+                for index, planned in enumerate(
+                    chosen_plan.attempts
+                ):
+                    if planned.attempt_id == original_read_id:
+                        chosen_plan.attempts[index] = read
+                        break
+            read_evidence = self._enforce_evidence_binding(
+                read, self._safe_execute(read)
+            )
+            evidence_by_attempt[read.attempt_id] = read_evidence
+
         evidence_list = [
             evidence_by_attempt[a.attempt_id]
             for a in chosen_plan.attempts
+            if a.attempt_id in evidence_by_attempt
         ]
 
         # Pre-compute the HTTP attempt and evidence for every
@@ -326,6 +694,10 @@ class XSSVerifier:
         http_attempt_by_pair: dict[str, VerificationAttempt] = {}
         for attempt in chosen_plan.attempts:
             if attempt.mode != VerificationMode.HTTP_REFLECTION:
+                continue
+            if attempt.attempt_id not in evidence_by_attempt:
+                # Gated-out attempt (e.g. a stored SUBMIT whose
+                # round is incomplete): no evidence, no pairing.
                 continue
             existing = http_evidence_by_pair.get(
                 attempt.logical_pair_id
@@ -374,7 +746,12 @@ class XSSVerifier:
 
         findings: list[XSSFinding] = []
         for attempt in chosen_plan.attempts:
-            evidence = evidence_by_attempt[attempt.attempt_id]
+            evidence = evidence_by_attempt.get(attempt.attempt_id)
+            if evidence is None:
+                # Gated-out attempt (e.g. a stored READ whose
+                # SUBMIT was not accepted): no verdict, no
+                # finding. INCONCLUSIVE by omission.
+                continue
             paired_http_evidence = (
                 http_evidence_by_pair.get(attempt.logical_pair_id)
                 if attempt.mode == VerificationMode.BROWSER_EXECUTION
@@ -401,6 +778,26 @@ class XSSVerifier:
                 candidate_attempt = candidate_attempt_by_pair.get(
                     attempt.logical_pair_id
                 )
+            # Stored READ attempts bind to their round's SUBMIT
+            # attempt/evidence via ``round_id`` (never list
+            # position). Only the registered round pair is
+            # eligible.
+            stored_submit_attempt = None
+            stored_submit_evidence = None
+            attempt_phase = (attempt.phase or "").strip().lower()
+            if attempt_phase == STORED_READ_PHASE:
+                round_id = attempt.round_id or ""
+                registered_read = round_read.get(round_id)
+                if round_id and registered_read is attempt:
+                    stored_submit_attempt = round_submit.get(
+                        round_id
+                    )
+                    if stored_submit_attempt is not None:
+                        stored_submit_evidence = (
+                            evidence_by_attempt.get(
+                                stored_submit_attempt.attempt_id
+                            )
+                        )
             status, confirmation_state, oracle_channels = (
                 self._classify(
                     attempt=attempt,
@@ -409,6 +806,8 @@ class XSSVerifier:
                     paired_http_evidence=paired_http_evidence,
                     paired_http_attempt=paired_http_attempt,
                     candidate_attempt=candidate_attempt,
+                    stored_submit_attempt=stored_submit_attempt,
+                    stored_submit_evidence=stored_submit_evidence,
                 )
             )
             if status in _PRODUCES_FINDING_STATUSES:
@@ -424,6 +823,7 @@ class XSSVerifier:
                 )
 
         audit = self._build_audit(evidence_list, chosen_plan)
+        audit.notes.extend(stored_notes)
 
         return XSSVerificationResult(
             case_id=owned_case.case_id,
@@ -445,11 +845,15 @@ class XSSVerifier:
         mutation cases rely on browser execution, so the
         HTTP reflection attempt is skipped for them.
 
-        For ``xss_type == "stored"`` the browser attempt is
-        built with ``phase="stored"`` from the start, so
-        its ``attempt_id`` and ``correlation_token`` are
-        derived against the final phase and are internally
-        self-consistent.
+        For ``xss_type == "stored"`` one gated round (SUBMIT +
+        READ, phases ``"stored_submit"`` / ``"stored_read"``) is
+        built per LLM payload via :func:`build_stored_round` when
+        ``run_salt`` is configured. The legacy single-pass
+        ``phase="stored"`` browser attempt is never emitted for
+        new plans. Without ``run_salt``, or when the planner
+        reports an unsupported context, NO stored attempt is
+        built (no unprovable payload is ever submitted); the
+        candidate stays non-confirming.
 
         Note: ``verification_ideas`` are NOT turned into
         attempts. The verifier cannot safely derive an
@@ -464,6 +868,28 @@ class XSSVerifier:
 
         attempts: list[VerificationAttempt] = []
         for suggested in analysis.llm_result.suggested_payloads:
+            if is_stored:
+                # Gated oracle round. Unsupported contexts yield
+                # no attempts (fail closed before SUBMIT).
+                if self.run_salt is not None:
+                    stored_round = build_stored_round(
+                        case=case,
+                        suggested_payload=suggested.pattern,
+                        payload_origin=suggested.origin,
+                        knowledge_ids=list(
+                            suggested.knowledge_ids
+                        ),
+                        source_ids=list(suggested.source_ids),
+                        based_on_pattern=(
+                            suggested.based_on_pattern
+                        ),
+                        run_salt=self.run_salt,
+                    )
+                    if stored_round is not None:
+                        submit_attempt, read_attempt = stored_round
+                        attempts.append(submit_attempt)
+                        attempts.append(read_attempt)
+                continue
             if not is_dom_flavour:
                 attempts.append(
                     build_verification_attempt(
@@ -485,11 +911,8 @@ class XSSVerifier:
                         phase="http",
                     )
                 )
-            # Stored XSS uses phase="stored" for the browser
-            # attempt from the start, so the attempt_id and
-            # correlation_token are derived against the
-            # final phase.
-            browser_phase = "stored" if is_stored else "browser"
+            # Plain browser candidate plus its trusted oracle
+            # attempt (non-stored classes only).
             browser_attempt = build_verification_attempt(
                 case_id=case.case_id,
                 endpoint=case.endpoint,
@@ -506,16 +929,15 @@ class XSSVerifier:
                 source_ids=list(suggested.source_ids),
                 based_on_pattern=suggested.based_on_pattern,
                 mode=VerificationMode.BROWSER_EXECUTION,
-                phase=browser_phase,
+                phase="browser",
             )
             attempts.append(browser_attempt)
             # Trusted oracle attempt (one per candidate payload).
-            # Only when run_salt is configured. Stored XSS rounds are
-            # out of scope and never receive an oracle attempt. When
+            # Only when run_salt is configured. When
             # OraclePlanner does not support the case context, NO
             # oracle attempt is created (no fallback skeleton is
             # invented); the candidate remains POTENTIAL.
-            if self.run_salt is not None and not is_stored:
+            if self.run_salt is not None:
                 oracle_attempt = (
                     build_oracle_verification_attempt(
                         case=case,
@@ -620,6 +1042,8 @@ class XSSVerifier:
         paired_http_evidence: VerificationEvidence | None = None,
         paired_http_attempt: VerificationAttempt | None = None,
         candidate_attempt: VerificationAttempt | None = None,
+        stored_submit_attempt: VerificationAttempt | None = None,
+        stored_submit_evidence: VerificationEvidence | None = None,
     ) -> tuple[str, str | None, list[str]]:
         """
         Map (attempt, evidence) to a security status plus the
@@ -629,9 +1053,9 @@ class XSSVerifier:
 
         - ``status``: INCONCLUSIVE / POTENTIAL / CONFIRMED.
         - ``confirmation_state``: REFLECTION / SINK_REACHED /
-          JAVASCRIPT_EXECUTION / OBSERVABLE_EFFECT, or None when the
-          status is not the product of a confirmation-stage path
-          (e.g. the out-of-scope legacy stored CONFIRMED path).
+          JAVASCRIPT_EXECUTION / OBSERVABLE_EFFECT /
+          STORAGE_ATTRIBUTED, or None when the status is not the
+          product of a confirmation-stage path.
         - ``oracle_channels``: deterministic sorted subset of
           E1/E2/E3 that proved execution (empty unless CONFIRMED came
           from oracle proof).
@@ -644,13 +1068,17 @@ class XSSVerifier:
 
         Oracle attempts (``attempt.phase == "oracle"``) may only be
         CONFIRMED by valid E1/E2/E3 execution proof; no other signal
-        can promote them.
+        can promote them. Stored READ attempts
+        (``phase == "stored_read"``) may only be CONFIRMED by the
+        stored-oracle round proof.
 
         ``paired_http_evidence`` and ``paired_http_attempt`` are the
         HTTP attempt/evidence for the same ``logical_pair_id`` (or
         ``None`` if no HTTP attempt exists for the pair, e.g. DOM
         XSS). ``candidate_attempt`` is the paired plain-browser
-        attempt for oracle attempts.
+        attempt for oracle attempts. ``stored_submit_attempt`` and
+        ``stored_submit_evidence`` are the round's SUBMIT pair for
+        stored READ attempts (resolved by ``round_id``).
         """
 
         # Rule 1: transport failures.
@@ -681,22 +1109,48 @@ class XSSVerifier:
         if evidence.attempt_status != AttemptStatus.SUCCEEDED:
             return "INCONCLUSIVE", None, []
 
-        # Rule 2: stored XSS requires a complete
-        # SUBMIT/READ round trip with matching observed
-        # correlation tokens equal to the attempt's
-        # correlation_token. A single stored observation
-        # cannot produce CONFIRMED. Stored-XSS SUBMIT ->
-        # READ is OUT OF SCOPE for oracle integration; this
-        # path is intentionally unchanged.
-        if (attempt.phase or "").strip().lower() == "stored":
-            status = self._classify_stored(
-                attempt=attempt,
-                evidence=evidence,
-                case_xss_type=case_xss_type,
-                paired_http_evidence=paired_http_evidence,
-                paired_http_attempt=paired_http_attempt,
+        attempt_phase = (attempt.phase or "").strip().lower()
+
+        # Rule 2a: stored SUBMIT attempts never confirm. At most a
+        # capped POTENTIAL when the SUBMIT response itself reflects
+        # meaningfully (S1 evidence about the submission endpoint,
+        # never stored proof).
+        if attempt_phase == STORED_SUBMIT_PHASE:
+            if self._http_path_confirms(
+                attempt=attempt, evidence=evidence
+            ):
+                return (
+                    "POTENTIAL",
+                    _CONFIRMATION_STATE_REFLECTION,
+                    [],
+                )
+            return "INCONCLUSIVE", None, []
+
+        # Rule 2b: stored READ attempts are classified by the
+        # stored-oracle round proof ONLY. No other signal can
+        # promote them.
+        if attempt_phase == STORED_READ_PHASE:
+            return self._classify_stored_oracle(
+                read_attempt=attempt,
+                read_evidence=evidence,
+                submit_attempt=stored_submit_attempt,
+                submit_evidence=stored_submit_evidence,
             )
-            return status, None, []
+
+        # Rule 2c: legacy single-pass stored phase. Demoted to at
+        # most POTENTIAL; it MUST NEVER yield a confirming
+        # verdict regardless of token observations.
+        if attempt_phase == LEGACY_STORED_PHASE:
+            ok, _reason = self._browser_preconditions_met(
+                attempt=attempt, evidence=evidence
+            )
+            if ok or evidence.stored_phases:
+                return (
+                    "POTENTIAL",
+                    _STORED_STATE_STORAGE_ATTRIBUTED,
+                    [],
+                )
+            return "INCONCLUSIVE", None, []
 
         # Rule 3: oracle attempts are classified by their own
         # execution-proof path. Oracle evidence is the ONLY route to
@@ -1054,89 +1508,565 @@ class XSSVerifier:
         paired_http_attempt: VerificationAttempt | None = None,
     ) -> str:
         """
-        Stored XSS classification.
+        Legacy stored classification — DEMOTED, never confirming.
 
-        The stored plan builder creates the browser attempt
-        with ``phase="stored"`` from the start, so its
-        ``attempt_id`` and ``correlation_token`` are
-        derived against the final phase and are
-        internally self-consistent.
-
-        CONFIRMED requires:
-
-        1. A paired HTTP attempt and evidence were issued
-           for the same ``logical_pair_id`` AND the HTTP
-           evidence satisfies ``_http_path_confirms`` for
-           the paired HTTP attempt. The check is on the
-           HTTP attempt/evidence, NEVER on the stored
-           browser attempt/evidence.
-        2. A SUBMIT phase observation and a READ phase
-           observation, both referring to the same
-           attempt_id, both with
-           ``observed_correlation_token`` equal to the
-           attempt's correlation_token.
-        3. The browser runtime independently observed the
-           correlation_token in a structured channel.
-
-        Otherwise, at most POTENTIAL. A single stored
-        observation can never produce CONFIRMED.
+        The pre-oracle predicate (paired HTTP reflection +
+        SUBMIT/READ token equality + runtime token) proved data
+        reached a channel, never that attacker code executed, and
+        could not attribute execution to Watch's own submission.
+        It MUST NEVER return a confirming verdict. Retained as a
+        POTENTIAL-only shim for old injected plans; new plans never
+        route here (they use ``stored_submit`` / ``stored_read``
+        round attempts classified by
+        :meth:`_classify_stored_oracle`).
         """
 
-        if (
-            paired_http_attempt is None
-            or paired_http_evidence is None
+        return "POTENTIAL"
+
+    # ------------------------------------------------------------------
+    # Stored XSS v1 oracle round
+    # ------------------------------------------------------------------
+
+    def _submit_accepted(
+        self,
+        *,
+        submit_attempt: VerificationAttempt,
+        submit_evidence: VerificationEvidence,
+    ) -> tuple[bool, str]:
+        """Gate predicate for the SUBMIT leg of a stored round.
+
+        Returns ``(accepted, signal)`` where ``signal`` names the
+        acceptance evidence (``location_header``,
+        ``meaningful_reflection``, ``success_status``) or the
+        rejection reason (``transport`` / ``waf`` / ``status`` /
+        ``auth_required`` / ``csrf_required`` /
+        ``unsupported_submit``).
+
+        Acceptance is a precondition, NEVER proof of storage:
+        only READ-side execution of the round's own D can
+        confirm. HTTP 200 alone is acceptance with a weak
+        signal (``success_status`` + ``persistence_unknown``
+        audit), never storage proof.
+        """
+
+        if submit_evidence.attempt_status != AttemptStatus.SUCCEEDED:
+            return False, "transport"
+        for waf in submit_evidence.waf_observations:
+            if waf.kind in (
+                WAFObservationKind.BLOCK,
+                WAFObservationKind.TRANSFORM,
+            ):
+                return False, "waf"
+        status = submit_evidence.response_status or 0
+        if status in (401, 403, 407):
+            # Authenticated stored XSS is out of scope: fail
+            # closed, never handle credentials.
+            return False, "auth_required"
+        if status in (402, 405, 406, 409, 410, 423, 451):
+            return False, f"status_{status}"
+        if not 200 <= status < 400:
+            return False, f"status_{status}"
+        body = submit_evidence.response_body_truncated or ""
+        lowered = body.lower()
+        for marker in _SUBMIT_REJECT_BODY_MARKERS:
+            if marker in lowered:
+                if "csrf" in marker or "token" in marker:
+                    return False, "csrf_required"
+                return False, f"rejected_{marker.replace(' ', '_')}"
+        if submit_evidence.location_header:
+            return True, "location_header"
+        if self._http_path_confirms(
+            attempt=submit_attempt, evidence=submit_evidence
         ):
-            return "INCONCLUSIVE"
+            return True, "meaningful_reflection"
+        return True, "success_status"
 
-        # The HTTP check is on the PAIRED HTTP attempt and
-        # PAIRED HTTP evidence, never on the stored
-        # browser attempt/evidence. The stored browser
-        # attempt's correlation_token differs from the
-        # paired HTTP attempt's correlation_token by
-        # construction, and the browser evidence's
-        # ``reflection`` field is not the HTTP-side
-        # reflection.
-        if not self._http_path_confirms(
-            attempt=paired_http_attempt,
-            evidence=paired_http_evidence,
-        ):
-            # For stored XSS, a single observation can
-            # still be POTENTIAL if the HTTP path confirms.
-            return "INCONCLUSIVE"
+    @staticmethod
+    def _registrable_domain(hostname: str) -> str | None:
+        if _OFFLINE_TLD_EXTRACT is None:
+            return None
+        try:
+            ext = _OFFLINE_TLD_EXTRACT(hostname or "")
+        except Exception:  # noqa: BLE001
+            return None
+        if not ext.domain or not ext.suffix:
+            return None
+        return f"{ext.domain}.{ext.suffix}"
 
-        phases = evidence.stored_phases
-        submit = [
-            p
-            for p in phases
-            if p.phase == StoredXSSPhase.SUBMIT
-            and p.attempt_id == attempt.attempt_id
-        ]
-        read = [
-            p
-            for p in phases
-            if p.phase == StoredXSSPhase.READ
-            and p.attempt_id == attempt.attempt_id
-        ]
-        if not submit or not read:
-            # Single-phase observation: at most POTENTIAL.
-            return "POTENTIAL"
+    def discover_stored_read_url(
+        self,
+        *,
+        case: XSSCase,
+        submit_attempt: VerificationAttempt,
+        submit_evidence: VerificationEvidence,
+    ) -> str | None:
+        """Select the READ navigation URL for a stored round.
 
-        if not all(
-            self._token_matches(
-                expected=attempt.correlation_token,
-                observed=p.observed_correlation_token,
+        v1 discovery order (all hints, never proof):
+
+        1. same-origin ``Location`` header (resolved against the
+           SUBMIT final URL);
+        2. the case endpoint itself;
+        3. the first same-origin ``<a href>`` link in the SUBMIT
+           response body.
+
+        Returns the URL string or ``None``
+        (``read_location_unknown``). Cross-origin hints and
+        HTTPS downgrades fail closed. A hint containing the
+        round's own oracle material fails closed
+        (``read_not_clean`` at discovery time; the verifier
+        re-checks after READ regardless).
+        """
+
+        case_origin = _origin_of(case.endpoint)
+        if case_origin is None:
+            return None
+
+        def _acceptable(raw: str | None) -> str | None:
+            if not raw:
+                return None
+            base = (
+                submit_evidence.actual_request_url
+                or submit_evidence.intended_request_url
+                or submit_attempt.endpoint
             )
-            for p in (submit + read)
-        ):
-            return "POTENTIAL"
+            try:
+                resolved = urljoin(base, raw)
+            except Exception:  # noqa: BLE001
+                return None
+            parts = urlsplit(resolved)
+            if parts.scheme not in ("http", "https"):
+                return None
+            if not parts.hostname:
+                return None
+            if (
+                case_origin[0] == "https"
+                and parts.scheme != "https"
+            ):
+                return None
+            target_origin = _origin_of(resolved)
+            if target_origin is None:
+                return None
+            if target_origin == case_origin:
+                return self._read_url_clean_or_none(
+                    resolved, submit_attempt
+                )
+            # Outer bound: same registrable domain (allows
+            # app-legitimate display splits such as www. ↔ app.).
+            # Unresolvable domains fail closed. The fallback also
+            # requires the same effective port: a same-host
+            # different-port hint is not an acceptable READ target.
+            case_host = (urlsplit(case.endpoint).hostname or "").lower()
+            if self._registrable_domain(
+                parts.hostname
+            ) != self._registrable_domain(case_host):
+                return None
+            case_parts = urlsplit(case.endpoint)
+            candidate_port = parts.port or (
+                443 if parts.scheme == "https" else 80
+            )
+            case_port = case_parts.port or (
+                443 if case_parts.scheme == "https" else 80
+            )
+            if candidate_port != case_port:
+                return None
+            return self._read_url_clean_or_none(
+                resolved, submit_attempt
+            )
 
-        if evidence.browser is not None and not self._runtime_token_observed(
-            token=attempt.correlation_token,
-            browser=evidence.browser,
-        ):
-            return "POTENTIAL"
+        hint = submit_evidence.location_header or (
+            submit_evidence.object_hint or ""
+        )
+        accepted = _acceptable(hint)
+        if accepted is not None:
+            return accepted
+        if hint:
+            # A present-but-unacceptable hint (cross-origin,
+            # downgrade, unclean) fails closed: do NOT fall back
+            # to the endpoint, which would READ the wrong object.
+            return None
+        accepted_endpoint = _acceptable(case.endpoint)
+        if accepted_endpoint is not None:
+            return accepted_endpoint
+        body = submit_evidence.response_body_truncated or ""
+        for match in _HREF_RE.finditer(body[:65536]):
+            raw = (
+                match.group(2)
+                or match.group(3)
+                or match.group(4)
+                or ""
+            )
+            accepted = _acceptable(raw.strip())
+            if accepted is not None:
+                return accepted
+            if len(match.string) > 0 and match.start() > 32768:
+                break
+        return None
 
-        return "CONFIRMED"
+    @staticmethod
+    def _read_url_clean_or_none(
+        url: str, submit_attempt: VerificationAttempt
+    ) -> str | None:
+        """Discovery-time clean-URL check (defense in depth).
+
+        The post-READ :meth:`_clean_read_ok` re-check is
+        authoritative; this keeps a polluted hint from ever
+        becoming a navigation target.
+        """
+
+        seed = submit_attempt.oracle_seed or ""
+        value = submit_attempt.oracle_value or ""
+        token = submit_attempt.correlation_token or ""
+        if seed and seed in url:
+            return None
+        if value and value in url:
+            return None
+        if token and token in url:
+            return None
+        if submit_attempt.payload and submit_attempt.payload in url:
+            return None
+        return url
+
+    @staticmethod
+    def _parse_evidence_time(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    def _stored_round_ordered(
+        self,
+        *,
+        submit_evidence: VerificationEvidence,
+        read_evidence: VerificationEvidence,
+    ) -> bool:
+        """Require READ.started > SUBMIT.finished (no heuristics).
+
+        Unparseable timestamps, future timestamps (beyond skew
+        tolerance), and reversed/equal ordering all fail closed.
+        """
+
+        now = datetime.now(timezone.utc)
+        submit_finished = self._parse_evidence_time(
+            submit_evidence.finished_at
+        )
+        read_started = self._parse_evidence_time(
+            read_evidence.started_at
+        )
+        if submit_finished is None or read_started is None:
+            return False
+        skew = _EVIDENCE_FUTURE_SKEW_SECONDS
+        if (submit_finished - now).total_seconds() > skew:
+            return False
+        if (read_started - now).total_seconds() > skew:
+            return False
+        return read_started > submit_finished
+
+    def _clean_read_ok(
+        self,
+        *,
+        read_attempt: VerificationAttempt,
+        read_evidence: VerificationEvidence,
+    ) -> bool:
+        """Independently validate the clean-READ invariant.
+
+        The READ navigation URLs (intended AND actual) must
+        contain none of: S, D, the READ correlation token, the
+        round_id, or the oracle payload. The executor already
+        guarantees clean navigation; this fails closed on any
+        violation (defense in depth — indicates an executor
+        bug or a reflecting display URL).
+        """
+
+        urls = [
+            read_evidence.intended_request_url or "",
+            read_evidence.actual_request_url or "",
+        ]
+        needles = [
+            read_attempt.oracle_seed or "",
+            read_attempt.oracle_value or "",
+            read_attempt.correlation_token or "",
+            read_attempt.round_id or "",
+            read_attempt.payload or "",
+        ]
+        for url in urls:
+            if not url:
+                return False
+            for needle in needles:
+                if needle and needle in url:
+                    return False
+        return True
+
+    def _stored_oracle_proof(
+        self,
+        *,
+        submit_attempt: VerificationAttempt,
+        read_attempt: VerificationAttempt,
+        submit_evidence: VerificationEvidence,
+        read_evidence: VerificationEvidence,
+    ) -> tuple[bool, list[str], str]:
+        """Single-source-of-truth stored execution proof.
+
+        Enforces, in order (any failure => rejected):
+
+        1. Evidence identity binding for BOTH legs
+           (attempt_id / request_url / request_method).
+        2. Round binding: shared non-empty ``round_id``;
+           shared ``oracle_identity``; ``oracle_identity``
+           non-empty.
+        3. Oracle pair validity: ``validate_oracle_pair`` on the
+           READ carrier; SUBMIT and READ carry identical S/D.
+        4. Run freshness: the seed re-derives under the CURRENT
+           run's salt from the SUBMIT-candidate identity:
+           ``oracle_seed(run_salt, oracle_identity,
+           "stored_submit") == S``. Stale/cross-run evidence
+           fails here. (The seed is minted from the
+           SUBMIT-candidate identity — the draft SUBMIT id —
+           which breaks the otherwise-circular seed/payload
+           dependency exactly as the reflected oracle path
+           seeds from its plain-browser candidate.)
+        5. Same-origin: READ final origin == READ intended
+           origin (redirect to an unrelated origin rejected).
+        6. Ordering: READ started strictly after SUBMIT
+           finished (no heuristics).
+        7. Clean READ: no S/D/token/round/payload in either
+           READ navigation URL.
+        8. Anti-harvest over PRE-EXECUTION material only:
+           SUBMIT payload/bound-input/URLs AND READ URLs.
+           Post-execution oracle channels are NEVER scanned.
+        9. Exact E1/E2/E3 predicates over the READ
+           executor-owned channels (E2 origin = READ origin;
+           E3 recomputed, payload <= 240).
+
+        Returns ``(ok, channels, state)`` with deterministic
+        sorted channels and OBSERVABLE_EFFECT iff E2 fired.
+        """
+
+        if self.run_salt is None:
+            return False, [], ""
+
+        # 1. Evidence identity binding (both legs).
+        for attempt, evidence in (
+            (submit_attempt, submit_evidence),
+            (read_attempt, read_evidence),
+        ):
+            if evidence.attempt_id != attempt.attempt_id:
+                return False, [], ""
+            if evidence.request_url != attempt.endpoint:
+                return False, [], ""
+            if evidence.request_method != attempt.method:
+                return False, [], ""
+
+        # 2. Round binding.
+        if not read_attempt.round_id:
+            return False, [], ""
+        if read_attempt.round_id != submit_attempt.round_id:
+            return False, [], ""
+        if not read_attempt.oracle_identity:
+            return False, [], ""
+        if (
+            read_attempt.oracle_identity
+            != submit_attempt.oracle_identity
+        ):
+            return False, [], ""
+
+        # 3. Oracle pair validity + cross-leg consistency.
+        seed = read_attempt.oracle_seed or ""
+        value = read_attempt.oracle_value or ""
+        if not seed or not value:
+            return False, [], ""
+        try:
+            validate_oracle_pair(seed, value)
+        except ValueError:
+            return False, [], ""
+        if submit_attempt.oracle_seed != seed:
+            return False, [], ""
+        if submit_attempt.oracle_value != value:
+            return False, [], ""
+
+        # 4. Run freshness from the SUBMIT-candidate identity.
+        if (
+            oracle_seed(
+                self.run_salt,
+                read_attempt.oracle_identity or "",
+                STORED_SUBMIT_PHASE,
+            )
+            != seed
+        ):
+            return False, [], ""
+        # The READ carrier must name the expected derived value:
+        # recompute D locally, never trust page evidence for it.
+        if oracle_value_from_seed(seed) != value:
+            return False, [], ""
+
+        # 5. Same-origin READ (intended vs final vs attempt
+        # endpoint). Mirrors the reflected binding: the final URL
+        # the browser actually reached MUST be on the READ
+        # attempt's endpoint origin. A final URL from an unrelated
+        # origin — even when intended and final agree with each
+        # other — is rejected.
+        intended = read_evidence.intended_request_url or ""
+        final = read_evidence.actual_request_url or ""
+        final_origin = _origin_of(final)
+        if final_origin is None:
+            return False, [], ""
+        if final_origin != _origin_of(intended):
+            return False, [], ""
+        endpoint_origin = _origin_of(read_attempt.endpoint)
+        if endpoint_origin is None or final_origin != endpoint_origin:
+            return False, [], ""
+
+        # 6. Ordering.
+        if not self._stored_round_ordered(
+            submit_evidence=submit_evidence,
+            read_evidence=read_evidence,
+        ):
+            return False, [], ""
+
+        # 7. Clean READ.
+        if not self._clean_read_ok(
+            read_attempt=read_attempt, read_evidence=read_evidence
+        ):
+            return False, [], ""
+
+        # 8. Anti-harvest over PRE-EXECUTION material only.
+        submit_pre = PreExecutionInput(
+            payload=submit_attempt.payload,
+            bound_input=(
+                f"{submit_attempt.payload}"
+                f"~~{submit_attempt.correlation_token}"
+            ),
+            intended_request_url=(
+                submit_evidence.intended_request_url or ""
+            ),
+            actual_request_url=(
+                submit_evidence.actual_request_url or ""
+            ),
+        )
+        if anti_harvest_violations(seed, value, submit_pre):
+            return False, [], ""
+        read_pre = PreExecutionInput(
+            payload=read_attempt.payload,
+            bound_input=read_attempt.payload,
+            intended_request_url=intended,
+            actual_request_url=final,
+        )
+        if anti_harvest_violations(seed, value, read_pre):
+            return False, [], ""
+
+        # 9. Exact predicates over READ executor-owned channels.
+        channels: list[str] = []
+        if evaluate_e1_dialog(read_evidence.dialog_events, value):
+            channels.append("E1")
+        if evaluate_e2_network(
+            read_evidence.oracle_network_events,
+            value,
+            read_attempt.endpoint,
+        ):
+            channels.append("E2")
+        if evaluate_e3_eval(
+            read_evidence.eval_invocations, read_attempt.payload
+        ):
+            channels.append("E3")
+        if not channels:
+            return False, [], ""
+        channels = sorted(channels)
+        state = (
+            _CONFIRMATION_STATE_OBSERVABLE_EFFECT
+            if "E2" in channels
+            else _CONFIRMATION_STATE_JAVASCRIPT_EXECUTION
+        )
+        return True, channels, state
+
+    def _read_shows_storage(
+        self,
+        *,
+        read_attempt: VerificationAttempt,
+        read_evidence: VerificationEvidence,
+    ) -> bool:
+        """Advisory storage signal for the POTENTIAL ceiling.
+
+        True when the READ content carries the round's token or
+        payload bytes in a generic channel — evidence that
+        *something* persisted, never execution proof.
+        """
+
+        browser = read_evidence.browser
+        if browser is None:
+            return False
+        channels = (
+            browser.dom_changes,
+            browser.console_messages,
+            browser.network_requests,
+            browser.storage_writes,
+        )
+        needles = [
+            n
+            for n in (
+                read_attempt.correlation_token,
+                read_attempt.payload,
+            )
+            if n
+        ]
+        for channel in channels:
+            for entry in channel:
+                if not isinstance(entry, str):
+                    continue
+                for needle in needles:
+                    if needle in entry:
+                        return True
+        return False
+
+    def _classify_stored_oracle(
+        self,
+        *,
+        read_attempt: VerificationAttempt,
+        read_evidence: VerificationEvidence,
+        submit_attempt: VerificationAttempt | None,
+        submit_evidence: VerificationEvidence | None,
+    ) -> tuple[str, str | None, list[str]]:
+        """Stored READ classification (sole stored verdict path).
+
+        ``CONFIRMED`` requires the full
+        :meth:`_stored_oracle_proof` (SUBMIT accepted, round
+        bound, ordered, clean, fresh, anti-harvest clean, exact
+        E1/E2/E3 of the round's OWN D). Without execution proof
+        the ceiling is POTENTIAL (``STORAGE_ATTRIBUTED``) when a
+        storage signal exists, else INCONCLUSIVE. Submission
+        success, reflection, tokens, and generic browser events
+        can NEVER confirm here.
+        """
+
+        if submit_attempt is None or submit_evidence is None:
+            return "INCONCLUSIVE", None, []
+        accepted, _signal = self._submit_accepted(
+            submit_attempt=submit_attempt,
+            submit_evidence=submit_evidence,
+        )
+        if not accepted:
+            return "INCONCLUSIVE", None, []
+        ok, channels, state = self._stored_oracle_proof(
+            submit_attempt=submit_attempt,
+            read_attempt=read_attempt,
+            submit_evidence=submit_evidence,
+            read_evidence=read_evidence,
+        )
+        if ok:
+            return "CONFIRMED", state, channels
+        if self._read_shows_storage(
+            read_attempt=read_attempt, read_evidence=read_evidence
+        ):
+            return (
+                "POTENTIAL",
+                _STORED_STATE_STORAGE_ATTRIBUTED,
+                [],
+            )
+        return "INCONCLUSIVE", None, []
 
     def _http_path_confirms(
         self,
@@ -1346,6 +2276,18 @@ class XSSVerifier:
             status=status,
         )
 
+        # Stored-round audit annotation (verifier-derived
+        # metadata only, never proof): the round that produced
+        # the finding and the READ navigation target.
+        stored_round_id = attempt.round_id
+        stored_read_url = None
+        if (
+            (attempt.phase or "").strip().lower()
+            == STORED_READ_PHASE
+            and evidence.actual_request_url
+        ):
+            stored_read_url = evidence.actual_request_url
+
         return XSSFinding(
             finding_id=finding_id,
             case_id=case.case_id,
@@ -1372,6 +2314,8 @@ class XSSVerifier:
             remediation_notes=[],
             confirmation_state=confirmation_state,
             oracle_channels=list(oracle_channels or []),
+            round_id=stored_round_id,
+            read_url=stored_read_url,
         )
 
     @staticmethod
