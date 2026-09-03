@@ -110,6 +110,8 @@ class XSSVerificationPipeline:
 def build_default_verifier(
     http_executor,
     browser_executor,
+    *,
+    run_salt: str | None = None,
 ) -> XSSVerifier:
     """
     Production composition helper for the verifier side.
@@ -130,11 +132,18 @@ def build_default_verifier(
     belongs to the caller, keeping dependency injection
     explicit at every layer. This helper only composes the
     already-injected executors into the verifier.
+
+    ``run_salt`` is the per-run execution-oracle salt. It is
+    forwarded to :class:`XSSVerifier` and is NEVER persisted on
+    attempts, evidence, or findings and NEVER exposed to the LLM.
+    ``None`` (the default) disables oracle integration and
+    preserves the existing positional construction contract.
     """
 
     return XSSVerifier(
         CompositeVerificationExecutor(
             http_executor=http_executor,
             browser_executor=browser_executor,
-        )
+        ),
+        run_salt=run_salt,
     )

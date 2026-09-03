@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from typing import Iterable
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
@@ -23,6 +24,17 @@ from ai.schemas.xss_verification import (
     build_verification_attempt,
 )
 from ai.verification import VerificationExecutor
+from ai.verification.oracle import (
+    ORACLE_VERSION,
+    OraclePlanner,
+    PreExecutionInput,
+    anti_harvest_violations,
+    evaluate_e1_dialog,
+    evaluate_e2_network,
+    evaluate_e3_eval,
+    oracle_seed,
+    validate_oracle_pair,
+)
 from ai.researcher.xss_orchestrator import XSSAnalysisResult
 
 
@@ -59,6 +71,97 @@ _STATUS_TO_CONFIDENCE: dict[str, float] = {
     "INCONCLUSIVE": 0.20,
 }
 
+# Confirmation-state values for the verifier's stage-annotation model.
+# These are authoritative verifier-derived labels, never LLM-controlled.
+_CONFIRMATION_STATE_REFLECTION = "REFLECTION"
+_CONFIRMATION_STATE_SINK_REACHED = "SINK_REACHED"
+_CONFIRMATION_STATE_JAVASCRIPT_EXECUTION = "JAVASCRIPT_EXECUTION"
+_CONFIRMATION_STATE_OBSERVABLE_EFFECT = "OBSERVABLE_EFFECT"
+
+# Phase label used for oracle-attempt identity. The seed derivation
+# uses this phase, and the verifier re-derives it for freshness.
+ORACLE_ATTEMPT_PHASE = "oracle"
+
+
+def _origin_of(url: str) -> tuple[str, str, str] | None:
+    """Best-effort origin extraction for arbitrary URLs.
+
+    Mirrors ``ai.verification.oracle._origin`` — used here for
+    same-origin enforcement on oracle evidence.
+    """
+
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in ("http", "https") or not host:
+        return None
+    port = parts.port
+    if port is None:
+        port = 443 if parts.scheme == "https" else 80
+    return parts.scheme.lower(), host, str(port)
+
+
+def build_oracle_verification_attempt(
+    *,
+    case: XSSCase,
+    candidate: VerificationAttempt,
+    run_salt: str,
+) -> VerificationAttempt | None:
+    """Build a trusted oracle-attempt resource for the candidate.
+
+    The oracle attempt is an ADDITIONAL browser-mode attempt whose
+    payload is the planner-owned oracle payload (contains the seed S
+    but NEVER the derived value D). It is SEEDED from the candidate's
+    identity to break the otherwise-circular seed/payload dependency:
+    ``OraclePlanner.plan(attempt_id=candidate.attempt_id, ...)``.
+
+    Returns ``None`` when ``OraclePlanner`` does not support
+    ``case.context.type`` (the candidate stays POTENTIAL; no fallback
+    oracle skeleton is invented).
+    """
+
+    planner = OraclePlanner()
+    try:
+        plan = planner.plan(
+            context_type=case.context.type,
+            case_id=case.case_id,
+            attempt_id=candidate.attempt_id,
+            logical_pair_id=candidate.logical_pair_id,
+            run_salt=run_salt,
+            phase=ORACLE_ATTEMPT_PHASE,
+            delivery_pattern=candidate.payload,  # attribution only
+        )
+    except ValueError:
+        return None
+    if not plan.supported:
+        return None
+
+    oracle_attempt = build_verification_attempt(
+        case_id=case.case_id,
+        endpoint=case.endpoint,
+        method=case.method,
+        parameter=case.parameter,
+        parameter_location=case.parameter_location,
+        payload=plan.payload,
+        payload_origin="model_generated",
+        knowledge_ids=[],
+        source_ids=[],
+        based_on_pattern=candidate.based_on_pattern,
+        mode=VerificationMode.BROWSER_EXECUTION,
+        phase=ORACLE_ATTEMPT_PHASE,
+    )
+    return oracle_attempt.model_copy(
+        update={
+            "logical_pair_id": candidate.logical_pair_id,
+            "oracle_seed": plan.seed,
+            "oracle_value": plan.oracle_value,
+            "oracle_version": plan.version,
+            "oracle_identity": candidate.attempt_id,
+        }
+    )
+
 
 class XSSVerifier:
     """
@@ -89,40 +192,40 @@ class XSSVerifier:
       location, AND the executor's
       ``observed_correlation_token`` matches the
       attempt's ``correlation_token`` string. No WAF
-      block/transform. No stored-XSS round trip
-      required (single observation is enough for
-      POTENTIAL but never for CONFIRMED).
-    - ``CONFIRMED`` (reflected): the above POTENTIAL
-      conditions for the HTTP attempt AND a paired
-      browser attempt (same ``logical_pair_id``) whose
-      structured runtime channel contains the attempt's
-      ``correlation_token`` string AND whose
-      source-to-sink chain's parameter step binds
-      exactly to ``attempt.parameter``,
-      ``attempt.parameter_location``, and
-      ``attempt.endpoint``. The HTTP and browser
-      attempts must share ``method`` (enforced via the
-      shared ``logical_pair_id``).
-    - ``CONFIRMED`` (DOM): browser attempt only. The
-      case's ``xss_type`` is ``"dom"`` and the plan
-      builder does not create a paired HTTP attempt.
-      The chain binding above and the structured
-      runtime token observation are still required.
-    - ``CONFIRMED`` (mutation): browser attempt only.
-      The case's ``xss_type`` is ``"mutation"`` and the
-      plan builder does not create a paired HTTP
-      attempt. The same browser preconditions as DOM
-      apply.
-    - ``CONFIRMED`` (stored): a paired HTTP attempt
-      (same ``logical_pair_id``) whose evidence
-      satisfies ``_http_path_confirms``, AND SUBMIT and
-      READ phase observations in the stored browser
-      evidence with matching observed correlation tokens
-      equal to the stored attempt's
-      ``correlation_token``, AND the browser runtime
-      independently observed the token in a structured
-      channel. A single stored observation yields at
-      most ``POTENTIAL``.
+      block/transform. Annotated
+      ``confirmation_state="REFLECTION"``.
+    - ``POTENTIAL`` (browser sink-reached): the mandated
+      demotion. A plain browser attempt whose
+      source-to-sink chain binds to the attempt AND whose
+      runtime channels contain the correlation token
+      yields ``confirmation_state="SINK_REACHED"``. This
+      data-stage evidence is NEVER execution proof.
+    - ``CONFIRMED`` (oracle execution proof): the ONLY
+      route to CONFIRMED. Requires a dedicated oracle
+      attempt (``phase == "oracle"``, seeded from its
+      paired plain-browser candidate via
+      ``oracle_identity``) whose executor-owned evidence
+      satisfies E1 (exact dialog == D), E2 (exact
+      same-origin ``/.watch-oracle/<D>`` request), or E3
+      (exact eval-family invocation of the payload,
+      <=240 chars), PLUS: oracle pair validity
+      (``validate_oracle_pair``), run freshness (the seed
+      re-derives under the CURRENT ``run_salt`` — stale or
+      cross-run evidence is rejected), candidate identity
+      (``oracle_identity == candidate.attempt_id``), and
+      anti-harvest (D absent from ALL pre-execution
+      material). For reflected/unknown cases the paired
+      HTTP attempt must additionally satisfy
+      ``_http_path_confirms``; DOM/mutation cases require
+      no HTTP pair (source/sink evidence is advisory
+      attribution only). E1/E3 annotate
+      ``JAVASCRIPT_EXECUTION``; E2 annotates
+      ``OBSERVABLE_EFFECT`` (attacker-chosen network
+      effect). Multiple channels never raise severity.
+    - ``CONFIRMED`` (stored, legacy, OUT OF SCOPE): the
+      stored SUBMIT/READ round-trip path is intentionally
+      unchanged by oracle integration; its findings carry
+      no ``confirmation_state``.
     - ``INCONCLUSIVE``: any other combination. This
       includes transport failure, executor error,
       evidence-attempt binding mismatch, WAF block or
@@ -131,8 +234,10 @@ class XSSVerifier:
       without an independently observable correlation
       token, DOM/mutation execution without the browser
       preconditions, reflected execution with no
-      matching HTTP pair, and stored XSS without a
-      complete round trip.
+      matching HTTP pair, stored XSS without a
+      complete round trip, and any oracle attempt whose
+      execution proof fails any binding/freshness/
+      identity/anti-harvest/predicate check.
 
     ``NOT_VULNERABLE`` is NEVER produced. The current
     evidence schema does not capture the structured
@@ -143,12 +248,23 @@ class XSSVerifier:
     is found.
     """
 
-    def __init__(self, executor: VerificationExecutor) -> None:
+    def __init__(
+        self,
+        executor: VerificationExecutor,
+        *,
+        run_salt: str | None = None,
+    ) -> None:
         if executor is None or not hasattr(executor, "execute"):
             raise TypeError(
                 "executor must implement VerificationExecutor.execute"
             )
         self.executor = executor
+        # Per-run oracle salt. ``None`` disables oracle integration
+        # (fail closed): no oracle attempts are planned and the
+        # mandated browser CONFIRMED -> POTENTIAL demotion still
+        # applies. The salt is NEVER persisted on attempts, evidence,
+        # or findings and is NEVER exposed to the LLM.
+        self.run_salt = run_salt
 
     def verify(
         self,
@@ -229,6 +345,31 @@ class XSSVerifier:
                     attempt
                 )
 
+        # Oracle pairing maps, keyed by ``logical_pair_id`` (never
+        # list position). ``oracle_attempt_by_pair`` resolves the
+        # oracle attempt for a candidate pair;
+        # ``candidate_attempt_by_pair`` resolves the plain browser
+        # attempt the oracle was seeded against, so the verifier can
+        # enforce ``attempt.oracle_identity == candidate.attempt_id``
+        # before accepting execution proof.
+        oracle_attempt_by_pair: dict[str, VerificationAttempt] = {}
+        candidate_attempt_by_pair: dict[str, VerificationAttempt] = {}
+        for attempt in chosen_plan.attempts:
+            if attempt.phase == ORACLE_ATTEMPT_PHASE:
+                if attempt.logical_pair_id not in oracle_attempt_by_pair:
+                    oracle_attempt_by_pair[attempt.logical_pair_id] = (
+                        attempt
+                    )
+            elif (
+                attempt.mode == VerificationMode.BROWSER_EXECUTION
+                and attempt.oracle_value is None
+                and attempt.logical_pair_id
+                not in candidate_attempt_by_pair
+            ):
+                candidate_attempt_by_pair[attempt.logical_pair_id] = (
+                    attempt
+                )
+
         case_xss_type = (owned_case.xss_type or "").strip().lower()
 
         findings: list[XSSFinding] = []
@@ -244,12 +385,31 @@ class XSSVerifier:
                 if attempt.mode == VerificationMode.BROWSER_EXECUTION
                 else None
             )
-            status = self._classify(
-                attempt=attempt,
-                evidence=evidence,
-                case_xss_type=case_xss_type,
-                paired_http_evidence=paired_http_evidence,
-                paired_http_attempt=paired_http_attempt,
+            # Oracle attempts bind to their paired plain-browser
+            # candidate via ``oracle_identity``. The candidate is
+            # resolved by ``logical_pair_id`` only, and ONLY the
+            # registered oracle attempt for the pair is eligible —
+            # a duplicate oracle attempt for the same pair fails
+            # closed (ambiguous pairing is never guessed).
+            candidate_attempt = None
+            if (
+                attempt.mode == VerificationMode.BROWSER_EXECUTION
+                and attempt.phase == ORACLE_ATTEMPT_PHASE
+                and oracle_attempt_by_pair.get(attempt.logical_pair_id)
+                is attempt
+            ):
+                candidate_attempt = candidate_attempt_by_pair.get(
+                    attempt.logical_pair_id
+                )
+            status, confirmation_state, oracle_channels = (
+                self._classify(
+                    attempt=attempt,
+                    evidence=evidence,
+                    case_xss_type=case_xss_type,
+                    paired_http_evidence=paired_http_evidence,
+                    paired_http_attempt=paired_http_attempt,
+                    candidate_attempt=candidate_attempt,
+                )
             )
             if status in _PRODUCES_FINDING_STATUSES:
                 findings.append(
@@ -258,6 +418,8 @@ class XSSVerifier:
                         attempt=attempt,
                         evidence=evidence,
                         status=status,
+                        confirmation_state=confirmation_state,
+                        oracle_channels=oracle_channels,
                     )
                 )
 
@@ -328,26 +490,41 @@ class XSSVerifier:
             # correlation_token are derived against the
             # final phase.
             browser_phase = "stored" if is_stored else "browser"
-            attempts.append(
-                build_verification_attempt(
-                    case_id=case.case_id,
-                    endpoint=case.endpoint,
-                    method=case.method,
-                    parameter=case.parameter,
-                    parameter_location=(
-                        case.parameter_location
-                    ),
-                    payload=suggested.pattern,
-                    payload_origin=suggested.origin,
-                    knowledge_ids=list(
-                        suggested.knowledge_ids
-                    ),
-                    source_ids=list(suggested.source_ids),
-                    based_on_pattern=suggested.based_on_pattern,
-                    mode=VerificationMode.BROWSER_EXECUTION,
-                    phase=browser_phase,
-                )
+            browser_attempt = build_verification_attempt(
+                case_id=case.case_id,
+                endpoint=case.endpoint,
+                method=case.method,
+                parameter=case.parameter,
+                parameter_location=(
+                    case.parameter_location
+                ),
+                payload=suggested.pattern,
+                payload_origin=suggested.origin,
+                knowledge_ids=list(
+                    suggested.knowledge_ids
+                ),
+                source_ids=list(suggested.source_ids),
+                based_on_pattern=suggested.based_on_pattern,
+                mode=VerificationMode.BROWSER_EXECUTION,
+                phase=browser_phase,
             )
+            attempts.append(browser_attempt)
+            # Trusted oracle attempt (one per candidate payload).
+            # Only when run_salt is configured. Stored XSS rounds are
+            # out of scope and never receive an oracle attempt. When
+            # OraclePlanner does not support the case context, NO
+            # oracle attempt is created (no fallback skeleton is
+            # invented); the candidate remains POTENTIAL.
+            if self.run_salt is not None and not is_stored:
+                oracle_attempt = (
+                    build_oracle_verification_attempt(
+                        case=case,
+                        candidate=browser_attempt,
+                        run_salt=self.run_salt,
+                    )
+                )
+                if oracle_attempt is not None:
+                    attempts.append(oracle_attempt)
 
         return VerificationPlan(attempts=attempts)
 
@@ -442,25 +619,38 @@ class XSSVerifier:
         case_xss_type: str,
         paired_http_evidence: VerificationEvidence | None = None,
         paired_http_attempt: VerificationAttempt | None = None,
-    ) -> str:
+        candidate_attempt: VerificationAttempt | None = None,
+    ) -> tuple[str, str | None, list[str]]:
         """
-        Map (attempt, evidence) to a security status.
+        Map (attempt, evidence) to a security status plus the
+        verifier-derived confirmation detail.
 
-        The verifier treats the executor as an evidence
-        provider, not as an authority. Booleans on the
-        evidence schema are advisory; the verifier
-        independently matches the attempt's
-        ``correlation_token`` against
-        ``observed_correlation_token`` and against the
-        structured runtime channels.
+        Returns ``(status, confirmation_state, oracle_channels)``:
 
-        ``paired_http_evidence`` and ``paired_http_attempt``
-        are the HTTP attempt/evidence for the same
-        ``logical_pair_id`` (or ``None`` if no HTTP attempt
-        exists for the pair, e.g. DOM XSS). For
-        reflected/mutation XSS the browser CONFIRMED verdict
-        requires both the browser preconditions and a
-        confirming paired HTTP attempt/evidence.
+        - ``status``: INCONCLUSIVE / POTENTIAL / CONFIRMED.
+        - ``confirmation_state``: REFLECTION / SINK_REACHED /
+          JAVASCRIPT_EXECUTION / OBSERVABLE_EFFECT, or None when the
+          status is not the product of a confirmation-stage path
+          (e.g. the out-of-scope legacy stored CONFIRMED path).
+        - ``oracle_channels``: deterministic sorted subset of
+          E1/E2/E3 that proved execution (empty unless CONFIRMED came
+          from oracle proof).
+
+        The verifier treats the executor as an evidence provider, not
+        as an authority. Booleans on the evidence schema are advisory;
+        the verifier independently matches the attempt's
+        ``correlation_token`` against ``observed_correlation_token``
+        and against the structured runtime channels.
+
+        Oracle attempts (``attempt.phase == "oracle"``) may only be
+        CONFIRMED by valid E1/E2/E3 execution proof; no other signal
+        can promote them.
+
+        ``paired_http_evidence`` and ``paired_http_attempt`` are the
+        HTTP attempt/evidence for the same ``logical_pair_id`` (or
+        ``None`` if no HTTP attempt exists for the pair, e.g. DOM
+        XSS). ``candidate_attempt`` is the paired plain-browser
+        attempt for oracle attempts.
         """
 
         # Rule 1: transport failures.
@@ -469,7 +659,7 @@ class XSSVerifier:
             AttemptStatus.ERROR,
             AttemptStatus.FAILED,
         ):
-            return "INCONCLUSIVE"
+            return "INCONCLUSIVE", None, []
 
         # WAF block / transform: the payload may never
         # have reached the server unmodified. Only
@@ -479,35 +669,55 @@ class XSSVerifier:
             AttemptStatus.WAF_BLOCKED,
             AttemptStatus.WAF_TRANSFORMED,
         ):
-            return "INCONCLUSIVE"
+            return "INCONCLUSIVE", None, []
         for waf in evidence.waf_observations:
             if waf.kind in (
                 WAFObservationKind.BLOCK,
                 WAFObservationKind.TRANSFORM,
             ):
-                return "INCONCLUSIVE"
+                return "INCONCLUSIVE", None, []
 
         # From here the attempt must have succeeded.
         if evidence.attempt_status != AttemptStatus.SUCCEEDED:
-            return "INCONCLUSIVE"
+            return "INCONCLUSIVE", None, []
 
         # Rule 2: stored XSS requires a complete
         # SUBMIT/READ round trip with matching observed
         # correlation tokens equal to the attempt's
         # correlation_token. A single stored observation
-        # cannot produce CONFIRMED.
+        # cannot produce CONFIRMED. Stored-XSS SUBMIT ->
+        # READ is OUT OF SCOPE for oracle integration; this
+        # path is intentionally unchanged.
         if (attempt.phase or "").strip().lower() == "stored":
-            return self._classify_stored(
+            status = self._classify_stored(
                 attempt=attempt,
                 evidence=evidence,
                 case_xss_type=case_xss_type,
                 paired_http_evidence=paired_http_evidence,
                 paired_http_attempt=paired_http_attempt,
             )
+            return status, None, []
 
-        # Rule 3: DOM / mutation cases rely on the browser
+        # Rule 3: oracle attempts are classified by their own
+        # execution-proof path. Oracle evidence is the ONLY route to
+        # CONFIRMED.
+        if attempt.phase == ORACLE_ATTEMPT_PHASE:
+            return self._classify_oracle(
+                attempt=attempt,
+                evidence=evidence,
+                case_xss_type=case_xss_type,
+                paired_http_evidence=paired_http_evidence,
+                paired_http_attempt=paired_http_attempt,
+                candidate_attempt=candidate_attempt,
+            )
+
+        # Rule 4: DOM / mutation cases rely on the browser
         # path only. ``paired_http_evidence`` is None for
         # DOM cases (no HTTP attempt exists for the pair).
+        # Plain browser attempts are demoted to POTENTIAL:
+        # browser chain/token/data-stage evidence NEVER
+        # yields CONFIRMED. The only route to CONFIRMED is a
+        # valid oracle execution proof (Rule 3).
         if attempt.mode == VerificationMode.BROWSER_EXECUTION:
             return self._classify_browser(
                 attempt=attempt,
@@ -517,18 +727,18 @@ class XSSVerifier:
                 paired_http_attempt=paired_http_attempt,
             )
 
-        # Rule 4: HTTP reflection path. POTENTIAL only
+        # Rule 5: HTTP reflection path. POTENTIAL only
         # when reflection is meaningful AND the executor's
         # observed_correlation_token matches the attempt's
         # correlation_token. CONFIRMED is never produced
         # for an HTTP attempt; CONFIRMED requires the
-        # paired browser attempt to also independently
+        # paired browser oracle attempt to independently
         # confirm.
         if self._http_path_confirms(
             attempt=attempt, evidence=evidence
         ):
-            return "POTENTIAL"
-        return "INCONCLUSIVE"
+            return "POTENTIAL", _CONFIRMATION_STATE_REFLECTION, []
+        return "INCONCLUSIVE", None, []
 
     def _classify_browser(
         self,
@@ -538,9 +748,9 @@ class XSSVerifier:
         case_xss_type: str,
         paired_http_evidence: VerificationEvidence | None = None,
         paired_http_attempt: VerificationAttempt | None = None,
-    ) -> str:
+    ) -> tuple[str, str | None, list[str]]:
         """
-        Browser classification.
+        Plain browser classification (MANDATED DEMOTION).
 
         DOM and mutation XSS are browser-only: the case's
         ``xss_type`` is in ``{"dom", "mutation"}`` and the
@@ -554,6 +764,13 @@ class XSSVerifier:
         satisfy ``_http_path_confirms``. Without the
         pair, the browser evidence alone can never
         produce CONFIRMED.
+
+        This branch can produce at most POTENTIAL
+        (SINK_REACHED): browser chain/token/data-stage
+        evidence is NOT execution proof. The ONLY route to
+        CONFIRMED is a valid oracle execution proof on a
+        dedicated oracle attempt. This is the intentional
+        demotion of the old browser-only CONFIRMED path.
         """
 
         normalized_xss_type = (case_xss_type or "").strip().lower()
@@ -571,19 +788,209 @@ class XSSVerifier:
                 paired_http_attempt is None
                 or paired_http_evidence is None
             ):
-                return "INCONCLUSIVE"
+                return "INCONCLUSIVE", None, []
             if not self._http_path_confirms(
                 attempt=paired_http_attempt,
                 evidence=paired_http_evidence,
             ):
-                return "INCONCLUSIVE"
+                return "INCONCLUSIVE", None, []
 
         ok, _reason = self._browser_preconditions_met(
             attempt=attempt, evidence=evidence
         )
         if not ok:
-            return "INCONCLUSIVE"
-        return "CONFIRMED"
+            return "INCONCLUSIVE", None, []
+        # MANDATED DEMOTION: browser chain/token evidence caps at
+        # POTENTIAL (SINK_REACHED). Execution proof requires the
+        # execution oracle.
+        return "POTENTIAL", _CONFIRMATION_STATE_SINK_REACHED, []
+
+    def _classify_oracle(
+        self,
+        *,
+        attempt: VerificationAttempt,
+        evidence: VerificationEvidence,
+        case_xss_type: str,
+        paired_http_evidence: VerificationEvidence | None = None,
+        paired_http_attempt: VerificationAttempt | None = None,
+        candidate_attempt: VerificationAttempt | None = None,
+    ) -> tuple[str, str | None, list[str]]:
+        """
+        Oracle-attempt classification.
+
+        The oracle attempt can ONLY be CONFIRMED by valid E1/E2/E3
+        execution proof (binding + pair validity + run freshness +
+        candidate identity + same-origin + exact predicates +
+        anti-harvest). For reflected/unknown cases the paired HTTP
+        attempt must ALSO satisfy ``_http_path_confirms``
+        (meaningful reflection). DOM/mutation cases require no HTTP
+        pair; source/sink evidence is advisory attribution and is
+        never required for oracle confirmation.
+        """
+
+        ok, channels, state = self._oracle_execution_proof(
+            attempt=attempt,
+            evidence=evidence,
+            candidate_attempt=candidate_attempt,
+        )
+        if not ok:
+            return "INCONCLUSIVE", None, []
+
+        normalized_xss_type = (case_xss_type or "").strip().lower()
+        is_dom_flavour = normalized_xss_type in {"dom", "mutation"}
+        if not is_dom_flavour:
+            # Reflected/unknown: S1 (meaningful HTTP reflection) is
+            # REQUIRED in addition to execution proof. Reflection
+            # proves reflection only, never execution; the oracle
+            # proves execution only. Both halves are mandatory.
+            if (
+                paired_http_attempt is None
+                or paired_http_evidence is None
+            ):
+                return "INCONCLUSIVE", None, []
+            if not self._http_path_confirms(
+                attempt=paired_http_attempt,
+                evidence=paired_http_evidence,
+            ):
+                return "INCONCLUSIVE", None, []
+
+        return "CONFIRMED", state, channels
+
+    def _oracle_execution_proof(
+        self,
+        *,
+        attempt: VerificationAttempt,
+        evidence: VerificationEvidence,
+        candidate_attempt: VerificationAttempt | None,
+    ) -> tuple[bool, list[str], str]:
+        """
+        The single-source-of-truth oracle execution proof.
+
+        Enforces, in order (any failure => rejected):
+
+        1. Evidence identity binding (attempt_id / request_url /
+           request_method). ``_enforce_evidence_binding`` already
+           downgrades mismatched evidence to ERROR before
+           classification; this re-check is defence in depth.
+        2. Oracle pair validity: ``validate_oracle_pair`` (seed
+           shape, value shape, D == W(S), D != S).
+        3. Run freshness (anti-replay): the seed MUST re-derive
+           under the CURRENT run's salt:
+           ``oracle_seed(run_salt, oracle_identity, phase) ==
+           oracle_seed``. Stale or cross-run evidence fails here.
+        4. Candidate identity: ``attempt.oracle_identity`` MUST be
+           the paired plain-browser attempt's ``attempt_id``.
+           Cross-attempt evidence fails here.
+        5. Same-origin: the final URL the browser actually reached
+           MUST be on the endpoint origin (an oracle confirmed from
+           an unrelated redirect target is rejected).
+        6. Anti-harvest: D MUST NOT occur in any pre-execution
+           material (payload, bound input, intended/actual request
+           URLs). Only a ``PreExecutionInput`` is scanned — never
+           post-execution oracle evidence.
+        7. Exact E1/E2/E3 predicates over the executor-owned
+           channels. E3 is recomputed here (payload <= 240); the
+           planner's ``e3_enabled`` flag is never trusted.
+
+        Returns ``(ok, channels, state)`` where ``channels`` is the
+        deterministic sorted subset of {"E1","E2","E3"} that fired
+        and ``state`` is JAVASCRIPT_EXECUTION (E1/E3) or
+        OBSERVABLE_EFFECT (E2 present). Multiple channels never
+        increase severity; they only improve auditability.
+        """
+
+        if self.run_salt is None:
+            # Oracle integration disabled: fail closed.
+            return False, [], ""
+
+        # 1. Evidence identity binding (defence in depth).
+        if evidence.attempt_id != attempt.attempt_id:
+            return False, [], ""
+        if evidence.request_url != attempt.endpoint:
+            return False, [], ""
+        if evidence.request_method != attempt.method:
+            return False, [], ""
+
+        # 2. Oracle pair validity.
+        seed = attempt.oracle_seed or ""
+        value = attempt.oracle_value or ""
+        if not seed or not value:
+            return False, [], ""
+        try:
+            validate_oracle_pair(seed, value)
+        except ValueError:
+            return False, [], ""
+
+        # 3. Run freshness (anti-replay / run binding).
+        if (
+            oracle_seed(
+                self.run_salt,
+                attempt.oracle_identity or "",
+                attempt.phase,
+            )
+            != seed
+        ):
+            return False, [], ""
+
+        # 4. Candidate identity binding.
+        if (
+            candidate_attempt is None
+            or not attempt.oracle_identity
+            or attempt.oracle_identity
+            != candidate_attempt.attempt_id
+        ):
+            return False, [], ""
+
+        # 5. Same-origin final URL. The browser executor already
+        # enforces same-origin navigation; this is the verifier-side
+        # re-check that the oracle was not confirmed from an
+        # unrelated redirect target. ``intended_request_url`` is the
+        # pre-redirect URL and MAY differ; only the FINAL origin is
+        # enforced.
+        final_url = evidence.actual_request_url or ""
+        final_origin = _origin_of(final_url)
+        endpoint_origin = _origin_of(attempt.endpoint)
+        if final_origin is None or final_origin != endpoint_origin:
+            return False, [], ""
+
+        # 6. Anti-harvest over PRE-EXECUTION material only. The E2
+        # oracle request and the E1 dialog are post-execution
+        # executor-owned evidence and are NEVER passed to this
+        # scanner (structural boundary enforced by PreExecutionInput).
+        pre = PreExecutionInput(
+            payload=attempt.payload,
+            bound_input=(
+                f"{attempt.payload}~~{attempt.correlation_token}"
+            ),
+            intended_request_url=(
+                evidence.intended_request_url or ""
+            ),
+            actual_request_url=final_url,
+        )
+        if anti_harvest_violations(seed, value, pre):
+            return False, [], ""
+
+        # 7. Exact predicates over executor-owned channels.
+        channels: list[str] = []
+        if evaluate_e1_dialog(evidence.dialog_events, value):
+            channels.append("E1")
+        if evaluate_e2_network(
+            evidence.oracle_network_events, value, attempt.endpoint
+        ):
+            channels.append("E2")
+        if evaluate_e3_eval(
+            evidence.eval_invocations, attempt.payload
+        ):
+            channels.append("E3")
+        if not channels:
+            return False, [], ""
+        channels = sorted(channels)
+        state = (
+            _CONFIRMATION_STATE_OBSERVABLE_EFFECT
+            if "E2" in channels
+            else _CONFIRMATION_STATE_JAVASCRIPT_EXECUTION
+        )
+        return True, channels, state
 
     def _browser_preconditions_met(
         self,
@@ -852,6 +1259,8 @@ class XSSVerifier:
         attempt: VerificationAttempt,
         evidence: VerificationEvidence,
         status: str,
+        confirmation_state: str | None = None,
+        oracle_channels: list[str] | None = None,
     ) -> XSSFinding:
         confidence = _STATUS_TO_CONFIDENCE[status]
 
@@ -914,6 +1323,14 @@ class XSSVerifier:
                 "stored_phases="
                 f"{','.join(p.phase.value for p in evidence.stored_phases)}"
             )
+        if confirmation_state is not None:
+            verification_evidence.append(
+                f"confirmation_state={confirmation_state}"
+            )
+        if oracle_channels:
+            verification_evidence.append(
+                "oracle_channels=" + ",".join(oracle_channels)
+            )
 
         knowledge_refs: list[str] = []
         if attempt.payload_origin == "knowledge":
@@ -953,6 +1370,8 @@ class XSSVerifier:
             waf_observations=waf_obs,
             knowledge_references=knowledge_refs,
             remediation_notes=[],
+            confirmation_state=confirmation_state,
+            oracle_channels=list(oracle_channels or []),
         )
 
     @staticmethod

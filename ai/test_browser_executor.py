@@ -2652,9 +2652,19 @@ class BrowserEvidenceExecutorVerifierIntegrationTests(unittest.TestCase):
         confirmed = [
             f for f in result.findings if f.status == "CONFIRMED"
         ]
-        self.assertEqual(len(confirmed), 1)
+        # MANDATED DEMOTION: browser chain/token evidence without an
+        # oracle execution proof is POTENTIAL (SINK_REACHED), never
+        # CONFIRMED. The browser attempt's finding is POTENTIAL.
+        self.assertEqual(len(confirmed), 0)
+        browser_findings = [
+            f
+            for f in result.findings
+            if f.verification_mode == "browser_execution"
+        ]
+        self.assertEqual(len(browser_findings), 1)
+        self.assertEqual(browser_findings[0].status, "POTENTIAL")
         self.assertEqual(
-            confirmed[0].verification_mode, "browser_execution"
+            browser_findings[0].confirmation_state, "SINK_REACHED"
         )
 
     def test_browser_evidence_without_chain_inconclusive(self):

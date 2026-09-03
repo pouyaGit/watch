@@ -445,6 +445,33 @@ class PipelineCompositionTests(unittest.TestCase):
         )
         self.assertEqual(result.audit.succeeded_count, 2)
 
+    def test_run_salt_default_is_none_and_forwarded(self):
+        # Backward compatibility: omitting run_salt keeps the
+        # existing positional construction contract, and a
+        # provided run_salt is forwarded to the verifier without
+        # persisting it anywhere else.
+        verifier_no_salt = build_default_verifier(
+            http_executor=_ModeAwareFakeExecutor("http"),
+            browser_executor=_ModeAwareFakeExecutor("browser"),
+        )
+        self.assertIsInstance(verifier_no_salt, XSSVerifier)
+        self.assertIsNone(verifier_no_salt.run_salt)
+
+        verifier_salted = build_default_verifier(
+            http_executor=_ModeAwareFakeExecutor("http"),
+            browser_executor=_ModeAwareFakeExecutor("browser"),
+            run_salt="pipeline-salt",
+        )
+        self.assertIsInstance(verifier_salted, XSSVerifier)
+        self.assertEqual(verifier_salted.run_salt, "pipeline-salt")
+
+        # The oracle-attempt phase label is importable from the
+        # verifier module (used by tests/orchestrators that mirror
+        # plan construction).
+        from ai.verification.verifier import ORACLE_ATTEMPT_PHASE
+
+        self.assertEqual(ORACLE_ATTEMPT_PHASE, "oracle")
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

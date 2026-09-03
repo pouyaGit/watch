@@ -65,6 +65,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import secrets
 import sys
 import time
 from datetime import datetime
@@ -238,6 +239,11 @@ def build_production_pipeline(provider_name=None, knowledge_root=None):
         BrowserEvidenceExecutor-|           |
                                             v
         XSSOrchestrator --> XSSVerifier --> XSSVerificationPipeline
+
+    A single fresh execution-oracle ``run_salt`` is generated for
+    this verification run and injected into the verifier. It is
+    NEVER persisted on attempts/evidence/findings and NEVER exposed
+    to the LLM; it exists only for the lifetime of this pipeline.
     """
 
     orchestrator = build_orchestrator(
@@ -249,6 +255,7 @@ def build_production_pipeline(provider_name=None, knowledge_root=None):
     verifier = build_default_verifier(
         http_executor=http_executor,
         browser_executor=browser_executor,
+        run_salt=secrets.token_hex(32),
     )
     return XSSVerificationPipeline(
         orchestrator=orchestrator,

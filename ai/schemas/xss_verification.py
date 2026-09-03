@@ -420,6 +420,17 @@ class VerificationAttempt(BaseModel):
     # observed correlation token, NOT via phase.
     phase: str = "primary"
 
+    # Deterministic pre-oracle candidate identity the oracle seed was
+    # minted against (the paired plain-browser attempt's ``attempt_id``).
+    # Required because the oracle attempt's own ``attempt_id`` includes
+    # the seed-bearing payload, which would make seed derivation
+    # circular. The verifier re-derives run freshness from
+    # ``oracle_seed(run_salt, oracle_identity, phase)`` and rejects any
+    # attempt whose ``oracle_identity`` does not map to the same
+    # ``logical_pair_id`` candidate. Only oracle attempts carry it;
+    # ``None`` keeps every existing attempt unchanged.
+    oracle_identity: str | None = None
+
     @field_validator(
         "attempt_id", "logical_pair_id", "correlation_token"
     )

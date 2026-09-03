@@ -75,6 +75,16 @@ class XSSFinding(BaseModel):
         default_factory=list
     )
 
+    # Verifier-derived classification detail (authoritative, NEVER
+    # LLM-controlled). ``confirmation_state`` records the highest
+    # evidence stage reached: REFLECTION, SINK_REACHED,
+    # JAVASCRIPT_EXECUTION, or OBSERVABLE_EFFECT. ``oracle_channels``
+    # lists the executor-owned execution-oracle channels (subset of
+    # E1/E2/E3) that proved execution. Both default to safe values so
+    # existing finding producers remain unchanged.
+    confirmation_state: str | None = None
+    oracle_channels: list[str] = Field(default_factory=list)
+
     created_at: str = Field(
         default_factory=lambda:
         datetime.now(

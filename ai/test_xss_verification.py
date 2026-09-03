@@ -1,5 +1,6 @@
 import unittest
 from typing import Iterable
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
@@ -15,6 +16,9 @@ from ai.schemas.xss_finding import XSSFinding
 from ai.schemas.xss_verification import (
     AttemptStatus,
     BrowserExecutionObservation,
+    DialogEvent,
+    EvalInvocation,
+    NetworkOracleEvent,
     ReflectionLocation,
     ReflectionObservation,
     SourceToSinkStep,
@@ -32,7 +36,16 @@ from ai.schemas.xss_verification import (
     build_verification_attempt,
     correlation_token_from_attempt,
 )
-from ai.verification.verifier import XSSVerifier
+from ai.verification.verifier import (
+    XSSVerifier,
+    build_oracle_verification_attempt,
+)
+from ai.verification.oracle import (
+    ORACLE_PATH_PREFIX,
+    oracle_seed,
+    oracle_value_from_seed,
+    validate_oracle_pair,
+)
 from ai.researcher.xss_orchestrator import (
     XSSAnalysisAudit,
     XSSAnalysisResult,
@@ -382,6 +395,236 @@ class _FakeExecutor:
 
 
 # ============================================================================
+# Oracle fixtures
+# ============================================================================
+
+_TEST_RUN_SALT = "test-run-salt"
+
+
+def _oracle_attempt_for(
+    candidate: VerificationAttempt,
+    *,
+    case: XSSCase | None = None,
+    run_salt: str = _TEST_RUN_SALT,
+) -> VerificationAttempt:
+    """Build the oracle attempt exactly as the verifier does."""
+    case = case or _case()
+    built = build_oracle_verification_attempt(
+        case=case,
+        candidate=candidate,
+        run_salt=run_salt,
+    )
+    assert built is not None, (
+        "fixture context must be planner-supported"
+    )
+    return built
+
+
+def _short_oracle_attempt(
+    candidate: VerificationAttempt,
+    *,
+    case: XSSCase | None = None,
+    run_salt: str = _TEST_RUN_SALT,
+    payload: str | None = None,
+) -> VerificationAttempt:
+    """An oracle attempt with a SHORT (<=240 char) planner-shaped
+    payload so E3 (exact eval equality) can fire. The planner's real
+    payloads exceed 240 chars and disable E3; this mirrors the same
+    seed/value/identity contract with a short payload."""
+    case = case or _case()
+    seed = oracle_seed(run_salt, candidate.attempt_id, "oracle")
+    value = oracle_value_from_seed(seed)
+    if payload is None:
+        payload = f"<script>var s='{seed}';</script>"
+    assert len(payload) <= 240
+    assert payload.count(seed) == 1
+    assert value not in payload
+    base = build_verification_attempt(
+        case_id=case.case_id,
+        endpoint=case.endpoint,
+        method=case.method,
+        parameter=case.parameter,
+        parameter_location=case.parameter_location,
+        payload=payload,
+        payload_origin="model_generated",
+        knowledge_ids=[],
+        source_ids=[],
+        based_on_pattern=candidate.based_on_pattern,
+        mode=VerificationMode.BROWSER_EXECUTION,
+        phase="oracle",
+    )
+    return base.model_copy(
+        update={
+            "logical_pair_id": candidate.logical_pair_id,
+            "oracle_seed": seed,
+            "oracle_value": value,
+            "oracle_version": 1,
+            "oracle_identity": candidate.attempt_id,
+        }
+    )
+
+
+def _oracle_evidence(
+    *,
+    attempt: VerificationAttempt,
+    dialog: bool = False,
+    network: bool = False,
+    eval_invoke: bool = False,
+    wrong_value: str | None = None,
+    intended_request_url: str | None = None,
+    actual_request_url: str | None = None,
+    dialog_events: list | None = None,
+    oracle_network_events: list | None = None,
+    eval_invocations: list | None = None,
+    **kwargs,
+) -> VerificationEvidence:
+    """Well-bound browser evidence for an oracle attempt with
+    executor-owned oracle events. Defaults to the endpoint origin
+    so binding and same-origin checks pass. ``wrong_value`` injects
+    a mismatched oracle value into the dialog/network events. The
+    explicit ``*_events``/``*_invocations`` lists override the
+    boolean shortcuts for negative-matrix construction."""
+    value = wrong_value or attempt.oracle_value
+    endpoint = attempt.endpoint
+    if intended_request_url is None:
+        intended_request_url = endpoint + "?q=probe"
+    if actual_request_url is None:
+        actual_request_url = intended_request_url
+    base = _browser_evidence(
+        attempt=attempt,
+        executed_script=False,
+        correlation_token_in_runtime=False,
+        observed_correlation_token=None,
+        request_url=endpoint,
+        **kwargs,
+    )
+    parts = urlsplit(endpoint)
+    origin = f"{parts.scheme}://{parts.netloc}"
+    if dialog_events is None:
+        dialog_events = (
+            [DialogEvent(kind="alert", message=value)] if dialog else []
+        )
+    if oracle_network_events is None:
+        oracle_network_events = (
+            [
+                NetworkOracleEvent(
+                    url=origin + ORACLE_PATH_PREFIX + value,
+                    path=ORACLE_PATH_PREFIX + value,
+                )
+            ]
+            if network
+            else []
+        )
+    if eval_invocations is None:
+        eval_invocations = (
+            [EvalInvocation(operator="eval", value=attempt.payload)]
+            if eval_invoke
+            else []
+        )
+    return base.model_copy(
+        update={
+            "dialog_events": dialog_events,
+            "oracle_network_events": oracle_network_events,
+            "eval_invocations": eval_invocations,
+            "intended_request_url": intended_request_url,
+            "actual_request_url": actual_request_url,
+        }
+    )
+
+
+def _run_oracle_scenario(
+    analysis: XSSAnalysisResult,
+    plain_attempts: list[VerificationAttempt],
+    oracle_attempt: VerificationAttempt,
+    oracle_evidence: VerificationEvidence,
+    *,
+    http_evidence: VerificationEvidence | None = None,
+    run_salt: str | None = _TEST_RUN_SALT,
+    include_http: bool = True,
+) -> XSSVerificationResult:
+    """Drive a plan of [http?, browser, oracle] with canned
+    evidence and return the verification result."""
+    plan_attempts = list(plain_attempts)
+    responses: list[VerificationEvidence] = []
+    for attempt in plain_attempts:
+        if attempt.mode == VerificationMode.HTTP_REFLECTION:
+            if not include_http:
+                continue
+            responses.append(
+                http_evidence
+                if http_evidence is not None
+                else _http_evidence(attempt=attempt)
+            )
+        else:
+            responses.append(
+                _browser_evidence(
+                    attempt=attempt,
+                    executed_script=False,
+                    correlation_token_in_runtime=False,
+                    observed_correlation_token=None,
+                )
+            )
+    if not include_http:
+        plan_attempts = [
+            a
+            for a in plain_attempts
+            if a.mode != VerificationMode.HTTP_REFLECTION
+        ]
+    responses.append(oracle_evidence)
+    return _verify_with_plan(
+        analysis,
+        attempts=[*plan_attempts, oracle_attempt],
+        responses=responses,
+        run_salt=run_salt,
+    )
+
+
+def _plan_with_oracle(
+    analysis: XSSAnalysisResult,
+    *,
+    run_salt: str = _TEST_RUN_SALT,
+) -> tuple[list[VerificationAttempt], list[VerificationAttempt]]:
+    """Mirror of the verifier's plan construction with oracle
+    attempts. Returns (attempts, oracle_attempts)."""
+
+    attempts = _attempts_for_analysis(analysis)
+    case = analysis.case
+    oracle_attempts: list[VerificationAttempt] = []
+    xss_type = (case.xss_type or "").strip().lower()
+    if xss_type != "stored":
+        for attempt in attempts:
+            if (
+                attempt.mode == VerificationMode.BROWSER_EXECUTION
+                and attempt.phase != "stored"
+            ):
+                built = build_oracle_verification_attempt(
+                    case=case,
+                    candidate=attempt,
+                    run_salt=run_salt,
+                )
+                if built is not None:
+                    oracle_attempts.append(built)
+    return attempts, oracle_attempts
+
+
+def _verify_with_plan(
+    analysis: XSSAnalysisResult,
+    attempts: list[VerificationAttempt],
+    responses: list[VerificationEvidence],
+    *,
+    run_salt: str | None = _TEST_RUN_SALT,
+) -> XSSVerificationResult:
+    verifier = XSSVerifier(_FakeExecutor(responses))
+    if run_salt is not None:
+        verifier = XSSVerifier(
+            _FakeExecutor(responses), run_salt=run_salt
+        )
+    return verifier.verify(
+        analysis, plan=VerificationPlan(attempts=attempts)
+    )
+
+
+# ============================================================================
 # 1. Reflection only → POTENTIAL (only when meaningful
 #    reflection + token match)
 # ============================================================================
@@ -464,12 +707,16 @@ class XSSVerifierReflectionOnlyTests(unittest.TestCase):
 
 
 # ============================================================================
-# 2. Correlated browser execution → CONFIRMED
+# 2. Correlated browser execution → POTENTIAL (demoted); CONFIRMED
+#    requires oracle execution proof
 # ============================================================================
 class XSSVerifierConfirmedTests(unittest.TestCase):
-    def test_reflection_plus_correlated_browser_yields_confirmed(
+    def test_reflection_plus_correlated_browser_yields_potential(
         self,
     ):
+        # MANDATED DEMOTION: browser chain/token/data-stage evidence
+        # caps at POTENTIAL (SINK_REACHED). It is never execution
+        # proof and never yields CONFIRMED.
         analysis = _analysis()
         attempts = _attempts_for_analysis(analysis)
         http_token = attempts[0].correlation_token
@@ -506,14 +753,57 @@ class XSSVerifierConfirmedTests(unittest.TestCase):
         result = XSSVerifier(executor).verify(analysis)
 
         statuses = sorted(f.status for f in result.findings)
-        self.assertEqual(statuses, ["CONFIRMED", "POTENTIAL"])
-        confirmed = next(
-            f for f in result.findings if f.status == "CONFIRMED"
+        self.assertEqual(statuses, ["POTENTIAL", "POTENTIAL"])
+        self.assertNotIn(
+            "CONFIRMED", [f.status for f in result.findings]
         )
+        browser_potential = next(
+            f
+            for f in result.findings
+            if f.verification_mode == "browser_execution"
+        )
+        self.assertEqual(
+            browser_potential.confirmation_state, "SINK_REACHED"
+        )
+        self.assertEqual(browser_potential.oracle_channels, [])
+
+    def test_reflection_plus_oracle_e1_yields_confirmed(self):
+        # Reflected: meaningful HTTP reflection AND valid oracle E1
+        # execution proof => CONFIRMED (JAVASCRIPT_EXECUTION).
+        analysis = _analysis()
+        attempts, oracle_attempts = _plan_with_oracle(analysis)
+        self.assertEqual(len(oracle_attempts), 1)
+        oracle_attempt = oracle_attempts[0]
+        http_attempt = attempts[0]
+        browser_attempt = attempts[1]
+
+        responses = [
+            _http_evidence(attempt=http_attempt),
+            _browser_evidence(
+                attempt=browser_attempt,
+                executed_script=False,
+                correlation_token_in_runtime=False,
+                observed_correlation_token=None,
+            ),
+            _oracle_evidence(attempt=oracle_attempt, dialog=True),
+        ]
+        result = _verify_with_plan(
+            analysis,
+            attempts=attempts + oracle_attempts,
+            responses=responses,
+        )
+
+        confirmed = [
+            f for f in result.findings if f.status == "CONFIRMED"
+        ]
+        self.assertEqual(len(confirmed), 1)
+        confirmed = confirmed[0]
+        self.assertEqual(
+            confirmed.confirmation_state, "JAVASCRIPT_EXECUTION"
+        )
+        self.assertEqual(confirmed.oracle_channels, ["E1"])
+        self.assertEqual(confirmed.attempt_id, oracle_attempt.attempt_id)
         self.assertEqual(confirmed.verification_mode, "browser_execution")
-        self.assertEqual(confirmed.attempt_id, attempts[1].attempt_id)
-        self.assertEqual(confirmed.knowledge_references, [KNOWLEDGE_ID])
-        self.assertTrue(confirmed.browser_verified)
 
 
 # ============================================================================
@@ -686,32 +976,36 @@ class XSSVerifierWAFTests(unittest.TestCase):
     def test_waf_info_does_not_suppress(self):
         # H3: structured INFO WAF observations are
         # metadata only; they must NOT force
-        # INCONCLUSIVE on a clean attempt.
+        # INCONCLUSIVE on an oracle-confirmed attempt.
         analysis = _analysis()
-        attempts = _attempts_for_analysis(analysis)
+        attempts, oracle_attempts = _plan_with_oracle(analysis)
+        http_attempt = attempts[0]
+        browser_attempt = attempts[1]
+        oracle_attempt = oracle_attempts[0]
 
-        executor = _FakeExecutor(
-            [
-                _http_evidence(
-                    attempt=attempts[0],
-                    waf_observations=[
-                        WAFObservation(
-                            kind=WAFObservationKind.INFO,
-                            note="strict CSP detected",
-                        )
-                    ],
-                ),
-                _browser_evidence(
-                    attempt=attempts[1],
-                    executed_script=True,
-                    correlation_token_in_runtime=True,
-                    network_requests=[
-                        f"https://x.test/{attempts[1].correlation_token}"
-                    ],
-                ),
-            ]
+        responses = [
+            _http_evidence(
+                attempt=http_attempt,
+                waf_observations=[
+                    WAFObservation(
+                        kind=WAFObservationKind.INFO,
+                        note="strict CSP detected",
+                    )
+                ],
+            ),
+            _browser_evidence(
+                attempt=browser_attempt,
+                executed_script=False,
+                correlation_token_in_runtime=False,
+                observed_correlation_token=None,
+            ),
+            _oracle_evidence(attempt=oracle_attempt, dialog=True),
+        ]
+        result = _verify_with_plan(
+            analysis,
+            attempts=attempts + oracle_attempts,
+            responses=responses,
         )
-        result = XSSVerifier(executor).verify(analysis)
 
         statuses = sorted(f.status for f in result.findings)
         self.assertIn("CONFIRMED", statuses)
@@ -1118,7 +1412,10 @@ class XSSVerifierDOMXSSTests(unittest.TestCase):
 
         self.assertEqual(result.findings, [])
 
-    def test_dom_complete_source_to_sink_yields_confirmed(self):
+    def test_dom_complete_source_to_sink_yields_potential(self):
+        # MANDATED DEMOTION: DOM chain + token without an oracle
+        # execution proof is SINK_REACHED -> POTENTIAL, never
+        # CONFIRMED.
         case = _case(xss_type="dom")
         analysis = _analysis(case=case)
         attempts = _attempts_for_analysis(analysis)
@@ -1156,10 +1453,44 @@ class XSSVerifierDOMXSSTests(unittest.TestCase):
 
         self.assertEqual(len(result.findings), 1)
         finding = result.findings[0]
-        self.assertEqual(finding.status, "CONFIRMED")
-        self.assertEqual(finding.verification_mode, "browser_execution")
+        self.assertEqual(finding.status, "POTENTIAL")
+        self.assertEqual(
+            finding.confirmation_state, "SINK_REACHED"
+        )
         self.assertEqual(finding.xss_type, "dom")
-        self.assertTrue(finding.browser_verified)
+
+    def test_dom_oracle_e1_yields_confirmed(self):
+        # DOM confirmation requires ONLY a valid oracle execution
+        # proof (no HTTP pair). Source/sink evidence is advisory.
+        case = _case(xss_type="dom")
+        analysis = _analysis(case=case)
+        attempts, oracle_attempts = _plan_with_oracle(analysis)
+        self.assertEqual(len(oracle_attempts), 1)
+        oracle_attempt = oracle_attempts[0]
+
+        responses = [
+            _browser_evidence(
+                attempt=attempts[0],
+                executed_script=False,
+                correlation_token_in_runtime=False,
+                observed_correlation_token=None,
+            ),
+            _oracle_evidence(attempt=oracle_attempt, dialog=True),
+        ]
+        result = _verify_with_plan(
+            analysis,
+            attempts=attempts + oracle_attempts,
+            responses=responses,
+        )
+        confirmed = [
+            f for f in result.findings if f.status == "CONFIRMED"
+        ]
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(confirmed[0].xss_type, "dom")
+        self.assertEqual(
+            confirmed[0].confirmation_state, "JAVASCRIPT_EXECUTION"
+        )
+        self.assertEqual(confirmed[0].oracle_channels, ["E1"])
 
     def test_dom_chain_must_start_with_parameter(self):
         with self.assertRaises(ValidationError):
@@ -1413,7 +1744,9 @@ class XSSVerifierLLMNeutralityTests(unittest.TestCase):
         # M3: use the strongest valid-looking executor
         # evidence while varying the LLM rationale.
         # Verdict must be identical to the LLM-neutral
-        # baseline.
+        # baseline. The strongest evidence is now an
+        # oracle E1 proof; the aggressive rationale must
+        # not change the oracle-derived verdict.
         payloads = [
             {
                 "pattern": PAYLOAD,
@@ -1428,30 +1761,28 @@ class XSSVerifierLLMNeutralityTests(unittest.TestCase):
                 ),
             }
         ]
-        analysis_neutral = _analysis(
-            llm=_llm_result(payloads=payloads)
+        analysis = _analysis(llm=_llm_result(payloads=payloads))
+        attempts, oracle_attempts = _plan_with_oracle(analysis)
+        responses = [
+            _http_evidence(attempt=attempts[0]),
+            _browser_evidence(
+                attempt=attempts[1],
+                executed_script=False,
+                correlation_token_in_runtime=False,
+                observed_correlation_token=None,
+            ),
+            _oracle_evidence(attempt=oracle_attempts[0], dialog=True),
+        ]
+        result = _verify_with_plan(
+            analysis,
+            attempts=attempts + oracle_attempts,
+            responses=responses,
         )
-        attempts_neutral = _attempts_for_analysis(analysis_neutral)
-
-        executor_neutral = _FakeExecutor(
-            [
-                _http_evidence(
-                    attempt=attempts_neutral[0],
-                ),
-                _browser_evidence(
-                    attempt=attempts_neutral[1],
-                    executed_script=True,
-                    correlation_token_in_runtime=True,
-                    network_requests=[
-                        f"https://x.test/{attempts_neutral[1].correlation_token}"
-                    ],
-                ),
-            ]
-        )
-        result_neutral = XSSVerifier(executor_neutral).verify(
-            analysis_neutral
-        )
-        self.assertIn("CONFIRMED", [f.status for f in result_neutral.findings])
+        confirmed = [
+            f for f in result.findings if f.status == "CONFIRMED"
+        ]
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(confirmed[0].oracle_channels, ["E1"])
 
 
 # ============================================================================
@@ -1460,16 +1791,18 @@ class XSSVerifierLLMNeutralityTests(unittest.TestCase):
 class XSSVerifierExpectedBehaviorTests(unittest.TestCase):
     def test_expected_behavior_does_not_promote_status(self):
         # M3: pair aggressive expected_behavior with the
-        # strongest executor evidence. Verdict must be
-        # identical to the no-expected-behavior case.
+        # strongest (oracle-backed) evidence. Verdict must
+        # be identical to the no-expected-behavior case;
+        # expected_behavior never changes the oracle verdict.
         analysis = _analysis()
-        attempts = _attempts_for_analysis(analysis)
-        token = attempts[0].correlation_token
-        browser_token = attempts[1].correlation_token
+        attempts, oracle_attempts = _plan_with_oracle(analysis)
+        http_attempt = attempts[0]
+        browser_attempt = attempts[1]
+        oracle_attempt = oracle_attempts[0]
 
         evidence = _http_evidence(
-            attempt=attempts[0],
-            observed_correlation_token=token,
+            attempt=http_attempt,
+            observed_correlation_token=http_attempt.correlation_token,
         ).model_copy(
             update={
                 "expected_behavior": (
@@ -1477,22 +1810,26 @@ class XSSVerifierExpectedBehaviorTests(unittest.TestCase):
                 )
             }
         )
-        executor = _FakeExecutor(
-            [
-                evidence,
-                _browser_evidence(
-                    attempt=attempts[1],
-                    executed_script=True,
-                    correlation_token_in_runtime=True,
-                    network_requests=[
-                        f"https://x.test/{browser_token}"
-                    ],
-                ),
-            ]
+        responses = [
+            evidence,
+            _browser_evidence(
+                attempt=browser_attempt,
+                executed_script=False,
+                correlation_token_in_runtime=False,
+                observed_correlation_token=None,
+            ),
+            _oracle_evidence(attempt=oracle_attempt, dialog=True),
+        ]
+        result = _verify_with_plan(
+            analysis,
+            attempts=attempts + oracle_attempts,
+            responses=responses,
         )
-        result = XSSVerifier(executor).verify(analysis)
-        statuses = [f.status for f in result.findings]
-        self.assertIn("CONFIRMED", statuses)
+        confirmed = [
+            f for f in result.findings if f.status == "CONFIRMED"
+        ]
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(confirmed[0].oracle_channels, ["E1"])
 
     def test_expected_behavior_does_not_force_confirmed(self):
         # Even with expected_behavior="CONFIRMED expected",
@@ -2383,8 +2720,9 @@ class XSSVerifierPositiveCasesTests(unittest.TestCase):
 
     # 2. reflected/browser execution with valid binding
     #    + independent correlated runtime observation →
-    #    CONFIRMED.
-    def test_positive_2_reflected_browser_confirmed(self):
+    #    POTENTIAL (MANDATED DEMOTION). CONFIRMED requires
+    #    oracle execution proof.
+    def test_positive_2_reflected_browser_potential(self):
         analysis = _analysis()
         attempts = _attempts_for_analysis(analysis)
 
@@ -2407,14 +2745,54 @@ class XSSVerifierPositiveCasesTests(unittest.TestCase):
         confirmed = [
             f for f in result.findings if f.status == "CONFIRMED"
         ]
-        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(len(confirmed), 0)
+        browser_potential = [
+            f
+            for f in result.findings
+            if f.verification_mode == "browser_execution"
+        ]
+        self.assertEqual(len(browser_potential), 1)
+        self.assertEqual(browser_potential[0].status, "POTENTIAL")
         self.assertEqual(
-            confirmed[0].verification_mode, "browser_execution"
+            browser_potential[0].confirmation_state, "SINK_REACHED"
         )
 
+    def test_positive_2_oracle_reflected_e1_confirmed(self):
+        # The oracle-backed replacement for the old browser-only
+        # reflected CONFIRMED: HTTP reflection + paired oracle E1
+        # proof => CONFIRMED.
+        analysis = _analysis()
+        attempts, oracle_attempts = _plan_with_oracle(analysis)
+        responses = [
+            _http_evidence(attempt=attempts[0]),
+            _browser_evidence(
+                attempt=attempts[1],
+                executed_script=False,
+                correlation_token_in_runtime=False,
+                observed_correlation_token=None,
+            ),
+            _oracle_evidence(
+                attempt=oracle_attempts[0], dialog=True
+            ),
+        ]
+        result = _verify_with_plan(
+            analysis,
+            attempts=attempts + oracle_attempts,
+            responses=responses,
+        )
+        confirmed = [
+            f for f in result.findings if f.status == "CONFIRMED"
+        ]
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(
+            confirmed[0].confirmation_state, "JAVASCRIPT_EXECUTION"
+        )
+        self.assertEqual(confirmed[0].oracle_channels, ["E1"])
+
     # 3. DOM XSS with typed source→sink→observable chain
-    #    + independent correlation → CONFIRMED.
-    def test_positive_3_dom_chain_confirmed(self):
+    #    + independent correlation → POTENTIAL (demoted).
+    #    CONFIRMED requires an oracle execution proof.
+    def test_positive_3_dom_chain_potential(self):
         case = _case(xss_type="dom")
         analysis = _analysis(case=case)
         attempts = _attempts_for_analysis(analysis)
@@ -2451,8 +2829,48 @@ class XSSVerifierPositiveCasesTests(unittest.TestCase):
         confirmed = [
             f for f in result.findings if f.status == "CONFIRMED"
         ]
+        self.assertEqual(len(confirmed), 0)
+        potential = [
+            f for f in result.findings if f.status == "POTENTIAL"
+        ]
+        self.assertEqual(len(potential), 1)
+        self.assertEqual(potential[0].xss_type, "dom")
+        self.assertEqual(
+            potential[0].confirmation_state, "SINK_REACHED"
+        )
+
+    def test_positive_3_dom_oracle_e2_confirmed(self):
+        # Oracle-backed DOM confirmation: E2 proof alone (no
+        # source/sink chain) => CONFIRMED with OBSERVABLE_EFFECT.
+        case = _case(xss_type="dom")
+        analysis = _analysis(case=case)
+        attempts, oracle_attempts = _plan_with_oracle(analysis)
+        responses = [
+            _browser_evidence(
+                attempt=attempts[0],
+                executed_script=False,
+                correlation_token_in_runtime=False,
+                observed_correlation_token=None,
+            ),
+            _oracle_evidence(
+                attempt=oracle_attempts[0], network=True
+            ),
+        ]
+        result = _verify_with_plan(
+            analysis,
+            attempts=attempts + oracle_attempts,
+            responses=responses,
+        )
+        confirmed = [
+            f for f in result.findings if f.status == "CONFIRMED"
+        ]
         self.assertEqual(len(confirmed), 1)
-        self.assertEqual(confirmed[0].xss_type, "dom")
+        confirmed = confirmed[0]
+        self.assertEqual(confirmed.xss_type, "dom")
+        self.assertEqual(confirmed.oracle_channels, ["E2"])
+        self.assertEqual(
+            confirmed.confirmation_state, "OBSERVABLE_EFFECT"
+        )
 
     # 4. stored XSS with complete structured round trip
     #    + correlation → CONFIRMED.
@@ -2581,7 +2999,11 @@ class XSSVerifierCallerMutationTests(unittest.TestCase):
         analysis.case.endpoint = "https://attacker.example.test/evil"
         self.assertEqual(
             sorted(f.status for f in result.findings),
-            ["CONFIRMED", "POTENTIAL"],
+            ["POTENTIAL", "POTENTIAL"],
+        )
+        # The demoted browser finding is SINK_REACHED.
+        self.assertNotIn(
+            "CONFIRMED", [f.status for f in result.findings]
         )
 
 
@@ -2728,13 +3150,69 @@ class XSSVerifierLogicalPairingTests(unittest.TestCase):
             "CONFIRMED", [f.status for f in result.findings]
         )
 
-    def test_reflected_paired_http_and_browser_yield_confirmed(
+    def test_dom_browser_only_yields_no_confirmed(self):
+        # MANDATED DEMOTION: a DOM case with only the plain browser
+        # attempt (chain + token, no oracle) yields POTENTIAL, never
+        # CONFIRMED. CONFIRMED requires oracle execution proof.
+        case = _case(xss_type="dom")
+        analysis = _analysis(case=case)
+        attempts = _attempts_for_analysis(analysis)
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(
+            attempts[0].mode, VerificationMode.BROWSER_EXECUTION
+        )
+
+        plan = VerificationPlan(attempts=attempts)
+        executor = _FakeExecutor(
+            [self._strong_browser_evidence(attempts[0])]
+        )
+        result = XSSVerifier(executor).verify(analysis, plan=plan)
+
+        confirmed = [
+            f for f in result.findings if f.status == "CONFIRMED"
+        ]
+        self.assertEqual(len(confirmed), 0)
+        potential = [
+            f for f in result.findings if f.status == "POTENTIAL"
+        ]
+        self.assertEqual(len(potential), 1)
+        self.assertEqual(
+            potential[0].confirmation_state, "SINK_REACHED"
+        )
+
+    def test_mutation_browser_only_yields_no_confirmed(self):
+        # MANDATED DEMOTION (shared browser branch): mutation chain +
+        # token without an oracle proof yields POTENTIAL. No
+        # mutation-specific redesign is introduced.
+        case = _case(xss_type="mutation")
+        analysis = _analysis(case=case)
+        attempts = _attempts_for_analysis(analysis)
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(
+            attempts[0].mode, VerificationMode.BROWSER_EXECUTION
+        )
+
+        plan = VerificationPlan(attempts=attempts)
+        executor = _FakeExecutor(
+            [self._strong_browser_evidence(attempts[0])]
+        )
+        result = XSSVerifier(executor).verify(analysis, plan=plan)
+
+        confirmed = [
+            f for f in result.findings if f.status == "CONFIRMED"
+        ]
+        self.assertEqual(len(confirmed), 0)
+        potential = [
+            f for f in result.findings if f.status == "POTENTIAL"
+        ]
+        self.assertEqual(len(potential), 1)
+
+    def test_reflected_paired_http_and_browser_yield_no_confirmed(
         self,
     ):
-        # Reflected case, HTTP and browser attempts share
-        # ``logical_pair_id``, both evidence streams are
-        # strong, the browser evidence confirms. Must
-        # produce CONFIRMED.
+        # MANDATED DEMOTION: a correctly paired reflected pair with
+        # strong chain/token evidence yields POTENTIAL for both
+        # attempts, never CONFIRMED. CONFIRMED requires the oracle.
         case = _case(xss_type="reflected")
         analysis = _analysis(case=case)
         http_attempt = self._http_attempt_for(case=case)
@@ -2758,57 +3236,53 @@ class XSSVerifierLogicalPairingTests(unittest.TestCase):
         confirmed = [
             f for f in result.findings if f.status == "CONFIRMED"
         ]
-        self.assertEqual(len(confirmed), 1)
-        self.assertEqual(confirmed[0].attempt_id, browser_attempt.attempt_id)
+        self.assertEqual(len(confirmed), 0)
+        statuses = sorted(f.status for f in result.findings)
+        self.assertEqual(statuses, ["POTENTIAL", "POTENTIAL"])
 
-    def test_dom_browser_only_yields_confirmed(self):
-        # DOM case: the production plan builder does not
-        # create a paired HTTP attempt. The browser path
-        # must produce CONFIRMED without an HTTP pair.
-        case = _case(xss_type="dom")
+    def test_reflected_paired_http_and_oracle_e2_yield_confirmed(self):
+        # Reflected: HTTP reflection + paired oracle attempt with a
+        # valid E2 proof => CONFIRMED (OBSERVABLE_EFFECT). The
+        # plain-browser attempt is POTENTIAL.
+        case = _case(xss_type="reflected")
         analysis = _analysis(case=case)
-        attempts = _attempts_for_analysis(analysis)
-        self.assertEqual(len(attempts), 1)
+        http_attempt = self._http_attempt_for(case=case)
+        browser_attempt = self._browser_attempt_for(case=case)
+        oracle_attempt = _oracle_attempt_for(
+            browser_attempt, case=case
+        )
         self.assertEqual(
-            attempts[0].mode, VerificationMode.BROWSER_EXECUTION
+            oracle_attempt.logical_pair_id,
+            http_attempt.logical_pair_id,
         )
 
-        plan = VerificationPlan(attempts=attempts)
-        executor = _FakeExecutor(
-            [self._strong_browser_evidence(attempts[0])]
+        plan = VerificationPlan(
+            attempts=[http_attempt, browser_attempt, oracle_attempt]
         )
-        result = XSSVerifier(executor).verify(analysis, plan=plan)
+        responses = [
+            self._matching_http_evidence(http_attempt),
+            _browser_evidence(
+                attempt=browser_attempt,
+                executed_script=False,
+                correlation_token_in_runtime=False,
+                observed_correlation_token=None,
+            ),
+            _oracle_evidence(attempt=oracle_attempt, network=True),
+        ]
+        result = _verify_with_plan(
+            analysis, attempts=plan.attempts, responses=responses
+        )
 
         confirmed = [
             f for f in result.findings if f.status == "CONFIRMED"
         ]
         self.assertEqual(len(confirmed), 1)
+        confirmed = confirmed[0]
+        self.assertEqual(confirmed.attempt_id, oracle_attempt.attempt_id)
+        self.assertEqual(confirmed.oracle_channels, ["E2"])
         self.assertEqual(
-            confirmed[0].verification_mode, "browser_execution"
+            confirmed.confirmation_state, "OBSERVABLE_EFFECT"
         )
-
-    def test_mutation_browser_only_yields_confirmed(self):
-        # Mutation case: the production plan builder does
-        # not create a paired HTTP attempt. The browser
-        # path must produce CONFIRMED without an HTTP pair.
-        case = _case(xss_type="mutation")
-        analysis = _analysis(case=case)
-        attempts = _attempts_for_analysis(analysis)
-        self.assertEqual(len(attempts), 1)
-        self.assertEqual(
-            attempts[0].mode, VerificationMode.BROWSER_EXECUTION
-        )
-
-        plan = VerificationPlan(attempts=attempts)
-        executor = _FakeExecutor(
-            [self._strong_browser_evidence(attempts[0])]
-        )
-        result = XSSVerifier(executor).verify(analysis, plan=plan)
-
-        confirmed = [
-            f for f in result.findings if f.status == "CONFIRMED"
-        ]
-        self.assertEqual(len(confirmed), 1)
 
     def test_stored_complete_round_trip_yields_confirmed(self):
         # Stored case: HTTP attempt (phase="http") and a
@@ -2924,6 +3398,493 @@ class XSSVerifierLogicalPairingTests(unittest.TestCase):
             produced_stored.correlation_token,
             expected.correlation_token,
         )
+
+
+# ============================================================================
+# Oracle-integration matrix tests
+# ============================================================================
+
+
+class XSSVerifierOraclePlanTests(unittest.TestCase):
+    """The plan builder must add oracle attempts when run_salt is
+    configured and drop them (candidate stays POTENTIAL) when it is
+    not, or when the context is unsupported."""
+
+    def test_plan_builder_adds_oracle_attempt_when_salted(self):
+        analysis = _analysis()
+        # Executor returns ERROR evidence for every attempt so no
+        # finding is produced; we inspect the plan shape.
+        result = XSSVerifier(
+            _FakeExecutor(), run_salt=_TEST_RUN_SALT
+        ).verify(analysis)
+        phases = [a.phase for a in result.attempts]
+        self.assertEqual(phases, ["http", "browser", "oracle"])
+        oracle = result.attempts[2]
+        self.assertEqual(oracle.oracle_identity, result.attempts[1].attempt_id)
+        self.assertEqual(
+            oracle.logical_pair_id, result.attempts[1].logical_pair_id
+        )
+        self.assertEqual(
+            oracle.oracle_value,
+            oracle_value_from_seed(oracle.oracle_seed or ""),
+        )
+
+    def test_plan_builder_unsalted_has_no_oracle_attempt(self):
+        # run_salt None: backward-compatible two-attempt plan.
+        analysis = _analysis()
+        result = XSSVerifier(_FakeExecutor()).verify(analysis)
+        phases = [a.phase for a in result.attempts]
+        self.assertEqual(phases, ["http", "browser"])
+        self.assertTrue(
+            all(a.oracle_value is None for a in result.attempts)
+        )
+
+    def test_plan_builder_dom_adds_oracle_attempt_when_salted(self):
+        case = _case(xss_type="dom")
+        analysis = _analysis(case=case)
+        result = XSSVerifier(
+            _FakeExecutor(), run_salt=_TEST_RUN_SALT
+        ).verify(analysis)
+        phases = [a.phase for a in result.attempts]
+        self.assertEqual(phases, ["browser", "oracle"])
+
+    def test_plan_builder_unsupported_context_keeps_candidate_potential(
+        self,
+    ):
+        # unknown context => no oracle attempt; candidate remains in
+        # the plan (plain browser + http).
+        case = _case().model_copy(
+            update={
+                "context": XSSContext(type="unknown")
+            }
+        )
+        analysis = _analysis(case=case)
+        result = XSSVerifier(
+            _FakeExecutor(), run_salt=_TEST_RUN_SALT
+        ).verify(analysis)
+        phases = [a.phase for a in result.attempts]
+        self.assertEqual(phases, ["http", "browser"])
+
+
+class XSSVerifierOracleReflectedMatrixTests(unittest.TestCase):
+    """Reflected XSS oracle matrix (CONFIRMED requires S1 + S4)."""
+
+    def _reflected(self):
+        analysis = _analysis()
+        plain, oracles = _plan_with_oracle(analysis)
+        return analysis, plain, oracles[0]
+
+    def test_E1_confirmed(self):
+        analysis, plain, oracle = self._reflected()
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True))
+        confirmed = [f for f in result.findings if f.status == "CONFIRMED"]
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(confirmed[0].oracle_channels, ["E1"])
+        self.assertEqual(confirmed[0].confirmation_state, "JAVASCRIPT_EXECUTION")
+
+    def test_E2_confirmed(self):
+        analysis, plain, oracle = self._reflected()
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, network=True))
+        confirmed = [f for f in result.findings if f.status == "CONFIRMED"]
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(confirmed[0].oracle_channels, ["E2"])
+        self.assertEqual(confirmed[0].confirmation_state, "OBSERVABLE_EFFECT")
+
+    def test_E3_confirmed(self):
+        analysis, plain, _ = self._reflected()
+        oracle = _short_oracle_attempt(plain[1])
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, eval_invoke=True))
+        confirmed = [f for f in result.findings if f.status == "CONFIRMED"]
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(confirmed[0].oracle_channels, ["E3"])
+        self.assertEqual(confirmed[0].confirmation_state, "JAVASCRIPT_EXECUTION")
+
+    def test_E1_plus_E2_channels(self):
+        analysis, plain, oracle = self._reflected()
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True, network=True))
+        c = [f for f in result.findings if f.status == "CONFIRMED"][0]
+        self.assertEqual(c.oracle_channels, ["E1", "E2"])
+        self.assertEqual(c.confirmation_state, "OBSERVABLE_EFFECT")
+
+    def test_wrong_d_rejected(self):
+        analysis, plain, oracle = self._reflected()
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True, wrong_value="deadbeefdeadbeef"))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_d_in_intended_url_rejected(self):
+        analysis, plain, oracle = self._reflected()
+        intended = oracle.endpoint + "?" + (oracle.oracle_value or "")
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True, intended_request_url=intended))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_d_in_actual_url_rejected(self):
+        analysis, plain, oracle = self._reflected()
+        actual = oracle.endpoint + "?" + (oracle.oracle_value or "")
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True, actual_request_url=actual))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_stale_run_salt_rejected(self):
+        analysis, plain, _ = self._reflected()
+        oracle = _oracle_attempt_for(plain[1], run_salt="old-salt")
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True),
+            run_salt="new-salt")
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_wrong_logical_pair_rejected(self):
+        analysis, plain, oracle = self._reflected()
+        oracle = oracle.model_copy(
+            update={"logical_pair_id": "lp-other"})
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_wrong_oracle_identity_rejected(self):
+        analysis, plain, oracle = self._reflected()
+        oracle = oracle.model_copy(
+            update={"oracle_identity": "va-wrong"})
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_cross_origin_final_url_rejected(self):
+        analysis, plain, oracle = self._reflected()
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(
+                attempt=oracle, dialog=True,
+                actual_request_url="https://evil.example.test/x"))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_missing_http_pair_not_confirmed(self):
+        analysis, plain, oracle = self._reflected()
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True),
+            include_http=False)
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_duplicate_oracle_attempt_per_pair_fails_closed(self):
+        # Two oracle attempts for the SAME logical_pair_id is
+        # ambiguous pairing. Only the registered oracle attempt is
+        # eligible; the duplicate must fail closed, never confirm
+        # via the other candidate's identity.
+        analysis, plain, _ = self._reflected()
+        candidate = plain[1]
+
+        # Both oracle attempts share the same candidate/seed/pair
+        # but have DIFFERENT payloads => distinct attempt_ids.
+        seed = oracle_seed(_TEST_RUN_SALT, candidate.attempt_id, "oracle")
+        value = oracle_value_from_seed(seed)
+        first_payload = f"<script>var s='{seed}';x</script>"
+        second_payload = f"<script>var s='{seed}';y</script>"
+        first = _short_oracle_attempt(candidate, payload=first_payload)
+        second = _short_oracle_attempt(candidate, payload=second_payload)
+        self.assertNotEqual(first.attempt_id, second.attempt_id)
+        self.assertEqual(first.logical_pair_id, second.logical_pair_id)
+        # Both are valid oracle pairs (verified: seed/value match).
+        validate_oracle_pair(first.oracle_seed or "", first.oracle_value or "")
+        validate_oracle_pair(second.oracle_seed or "", second.oracle_value or "")
+
+        plan_attempts = [plain[0], candidate, first, second]
+        responses = [
+            _http_evidence(attempt=plain[0]),
+            _browser_evidence(attempt=candidate),
+            _oracle_evidence(attempt=first, dialog=True),
+            _oracle_evidence(attempt=second, dialog=True),
+        ]
+        result = _verify_with_plan(
+            analysis, attempts=plan_attempts, responses=responses
+        )
+        # Only the FIRST registered oracle attempt may confirm; the
+        # duplicate cannot produce a second CONFIRMED.
+        confirmed = [
+            f for f in result.findings if f.status == "CONFIRMED"
+        ]
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(confirmed[0].attempt_id, first.attempt_id)
+
+
+class XSSVerifierOracleDOMatrixTests(unittest.TestCase):
+    """DOM XSS oracle matrix (CONFIRMED = S4 only; no HTTP pair)."""
+
+    def _dom(self):
+        case = _case(xss_type="dom")
+        analysis = _analysis(case=case)
+        plain, oracles = _plan_with_oracle(analysis)
+        return analysis, plain, oracles[0]
+
+    def test_E1_confirmed(self):
+        analysis, plain, oracle = self._dom()
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True))
+        c = [f for f in result.findings if f.status == "CONFIRMED"]
+        self.assertEqual(len(c), 1)
+        self.assertEqual(c[0].oracle_channels, ["E1"])
+
+    def test_E2_confirmed(self):
+        analysis, plain, oracle = self._dom()
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, network=True))
+        c = [f for f in result.findings if f.status == "CONFIRMED"]
+        self.assertEqual(len(c), 1)
+        self.assertEqual(c[0].oracle_channels, ["E2"])
+
+    def test_E3_confirmed(self):
+        case = _case(xss_type="dom")
+        analysis = _analysis(case=case)
+        plain, _ = _plan_with_oracle(analysis)
+        oracle = _short_oracle_attempt(plain[0])
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, eval_invoke=True))
+        c = [f for f in result.findings if f.status == "CONFIRMED"]
+        self.assertEqual(len(c), 1)
+        self.assertEqual(c[0].oracle_channels, ["E3"])
+
+    def test_E2_without_chain_confirmed(self):
+        analysis, plain, oracle = self._dom()
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, network=True, source_to_sink=[]))
+        c = [f for f in result.findings if f.status == "CONFIRMED"]
+        self.assertEqual(len(c), 1)
+        self.assertEqual(c[0].oracle_channels, ["E2"])
+        self.assertEqual(c[0].xss_type, "dom")
+
+    def test_browser_only_potential(self):
+        case = _case(xss_type="dom")
+        analysis = _analysis(case=case)
+        attempts = _attempts_for_analysis(analysis)
+        token = attempts[0].correlation_token
+        executor = _FakeExecutor([
+            _browser_evidence(
+                attempt=attempts[0],
+                executed_script=True,
+                correlation_token_in_runtime=True,
+                observed_correlation_token=token,
+                network_requests=[f"https://x.test/{token}"],
+                source_to_sink=_default_valid_chain(),
+            )])
+        result = XSSVerifier(executor).verify(analysis)
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+        potential = [f for f in result.findings if f.status == "POTENTIAL"]
+        self.assertEqual(len(potential), 1)
+        self.assertEqual(potential[0].confirmation_state, "SINK_REACHED")
+
+    def test_benign_echo_page_not_confirmed(self):
+        # DOM with full token-in-every-channel but no oracle => POTENTIAL
+        analysis, plain, oracle = self._dom()
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=False, network=False, eval_invoke=False,
+                             dom_changes=["token: ct-abc"],
+                             console_messages=["token: ct-abc"],
+                             network_requests=["https://x.test/ct-abc"],
+                             storage_writes=["key=ct-abc"]))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_stale_run_rejected(self):
+        analysis, plain, _ = self._dom()
+        oracle = _oracle_attempt_for(plain[0], run_salt="old-salt")
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True),
+            run_salt="new-salt")
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_d_preharvest_rejected(self):
+        analysis, plain, oracle = self._dom()
+        intended = oracle.endpoint + "?" + (oracle.oracle_value or "")
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True,
+                             intended_request_url=intended))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+
+class XSSVerifierOracleSecurityTests(unittest.TestCase):
+    """Negative security matrix — verifier-level rejection checks."""
+
+    def _reflected(self):
+        analysis = _analysis()
+        plain, oracles = _plan_with_oracle(analysis)
+        return analysis, plain, oracles[0]
+
+    def _dom(self):
+        case = _case(xss_type="dom")
+        analysis = _analysis(case=case)
+        plain, oracles = _plan_with_oracle(analysis)
+        return analysis, plain, oracles[0]
+
+    def test_seed_copied_not_e1(self):
+        # alert(seed) => message is 32-char hex (seed), not 16-char D
+        analysis, plain, oracle = self._reflected()
+        seed_dialog = [DialogEvent(kind="alert", message=oracle.oracle_seed or "")]
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog_events=seed_dialog))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_d_in_generic_network_not_e2(self):
+        # D in browser.network_requests but NOT in oracle_network_events
+        analysis, plain, oracle = self._reflected()
+        value = oracle.oracle_value or ""
+        generic_url = oracle.endpoint + "/.watch-oracle/" + value
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=False, network=False,
+                             network_requests=[generic_url]))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_E2_navigation_rejected(self):
+        analysis, plain, oracle = self._reflected()
+        parts = urlsplit(oracle.endpoint)
+        origin = f"{parts.scheme}://{parts.netloc}"
+        value = oracle.oracle_value or ""
+        bad = [NetworkOracleEvent(
+            url=origin + ORACLE_PATH_PREFIX + value,
+            path=ORACLE_PATH_PREFIX + value,
+            is_navigation=True)]
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, oracle_network_events=bad))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_E2_cross_origin_rejected(self):
+        analysis, plain, oracle = self._reflected()
+        value = oracle.oracle_value or ""
+        bad = [NetworkOracleEvent(
+            url="https://evil.example.test" + ORACLE_PATH_PREFIX + value,
+            path=ORACLE_PATH_PREFIX + value)]
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, oracle_network_events=bad))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_E2_path_suffix_rejected(self):
+        analysis, plain, oracle = self._reflected()
+        parts = urlsplit(oracle.endpoint)
+        origin = f"{parts.scheme}://{parts.netloc}"
+        value = oracle.oracle_value or ""
+        bad = [NetworkOracleEvent(
+            url=origin + ORACLE_PATH_PREFIX + value + "/x",
+            path=ORACLE_PATH_PREFIX + value + "/x")]
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, oracle_network_events=bad))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_E2_double_encoded_rejected(self):
+        # Double-encoded: %25DD => single decode gives %DD, not D
+        analysis, plain, oracle = self._reflected()
+        parts = urlsplit(oracle.endpoint)
+        origin = f"{parts.scheme}://{parts.netloc}"
+        value = oracle.oracle_value or ""
+        import urllib.parse
+        double_encoded = origin + ORACLE_PATH_PREFIX + urllib.parse.quote("%" + format(ord(value[0]), "02x")) + value[1:]
+        bad = [NetworkOracleEvent(url=double_encoded, path="/.watch-oracle/" + "%" + format(ord(value[0]), "02x") + value[1:])]
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, oracle_network_events=bad))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_E3_payload_over_240_disabled(self):
+        # Real planner payload (405 chars) with an eval record => E3 disabled
+        analysis, plain, oracle = self._reflected()
+        self.assertGreater(len(oracle.payload), 240)
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, eval_invoke=True))
+        # Without E1/E2, no oracle channel fires
+        c = [f for f in result.findings if f.status == "CONFIRMED"]
+        # E1/E2 not fired; E3 disabled => no confirmation
+        self.assertEqual(len(c), 0)
+
+    def test_E3_prefix_match_rejected(self):
+        analysis, plain, _ = self._reflected()
+        oracle = _short_oracle_attempt(plain[1])
+        # A truncated PREFIX of the payload must NEVER satisfy the
+        # exact-equality E3 predicate.
+        prefix = oracle.payload[: len(oracle.payload) // 2]
+        assert prefix != oracle.payload
+        bad = [EvalInvocation(operator="eval", value=prefix)]
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, eval_invocations=bad))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_duplicate_events_do_not_change_classification(self):
+        analysis, plain, oracle = self._reflected()
+        dup_dialog = [
+            DialogEvent(kind="alert", message=oracle.oracle_value or ""),
+            DialogEvent(kind="alert", message=oracle.oracle_value or ""),
+        ]
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog_events=dup_dialog))
+        c = [f for f in result.findings if f.status == "CONFIRMED"]
+        self.assertEqual(len(c), 1)
+        self.assertEqual(c[0].oracle_channels, ["E1"])
+
+    def test_d_in_payload_rejected(self):
+        # Hand-craft an oracle attempt whose payload contains D
+        analysis, plain, _ = self._reflected()
+        candidate = plain[1]
+        run_salt = _TEST_RUN_SALT
+        seed = oracle_seed(run_salt, candidate.attempt_id, "oracle")
+        value = oracle_value_from_seed(seed)
+        payload = f"<script>var s='{seed}';var d='{value}';</script>"
+        base = build_verification_attempt(
+            case_id=candidate.case_id,
+            endpoint=candidate.endpoint,
+            method=candidate.method,
+            parameter=candidate.parameter,
+            parameter_location=candidate.parameter_location,
+            payload=payload,
+            payload_origin="model_generated",
+            knowledge_ids=[], source_ids=[],
+            based_on_pattern=None,
+            mode=VerificationMode.BROWSER_EXECUTION,
+            phase="oracle",
+        )
+        oracle = base.model_copy(update={
+            "logical_pair_id": candidate.logical_pair_id,
+            "oracle_seed": seed, "oracle_value": value,
+            "oracle_version": 1, "oracle_identity": candidate.attempt_id,
+        })
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=True))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
+
+    def test_d_in_console_not_oracle(self):
+        # D in console_messages but no dialog_events => not E1
+        analysis, plain, oracle = self._reflected()
+        result = _run_oracle_scenario(
+            analysis, plain, oracle,
+            _oracle_evidence(attempt=oracle, dialog=False, network=False,
+                             console_messages=[f"dialog:alert:{oracle.oracle_value or 'x'}"]))
+        self.assertNotIn("CONFIRMED", [f.status for f in result.findings])
 
 
 if __name__ == "__main__":
