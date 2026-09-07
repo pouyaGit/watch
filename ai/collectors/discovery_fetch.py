@@ -32,6 +32,15 @@ def fetch_discovered_sources(
                     ),
                     "priority": source.priority,
                     "tags": source.tags,
+                    # Ephemeral discovery provenance (in-memory only;
+                    # never persisted, never added to schemas or
+                    # telemetry). Distinct from
+                    # ``ReferenceDocument.tags``: these describe how
+                    # THIS CVE's discovery layer produced the URL, so
+                    # downstream ranking can tell a directly-discovered
+                    # reference from an incidental one.
+                    "discovery_tags": list(source.tags),
+                    "discovery_query": source.query,
                     "content": document.content,
                 }
             )

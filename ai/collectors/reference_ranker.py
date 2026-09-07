@@ -14,6 +14,16 @@ class ReferenceRanker:
 
     GitHub/security research:
         extract the issue/article body and keep one focused chunk.
+
+    Provenance-gated technical GitHub fallback:
+        GitHub blob/commit/issues/pull references that were directly
+        discovered for the current CVE keep one bounded VERBATIM source
+        slice even when the page contains no CVE identifier (source
+        files and diffs rarely name their CVE). ``exact_record`` stays
+        ``None``; no CVE id, severity, exploit, remediation, or trust
+        claim is ever injected. Repository roots and non-technical
+        GitHub pages still yield no context. See
+        ``_technical_github_fallback``.
     """
 
     MAX_CONTEXT_CHUNKS = 1
@@ -40,6 +50,39 @@ class ReferenceRanker:
         "writeup",
         "research",
     }
+
+    # GitHub narrative types eligible for the technical fallback.
+    # Other narrative types (blogs, writeups, ...) are unchanged.
+    TECHNICAL_GITHUB_SOURCE_TYPES = frozenset(
+        {
+            "github",
+            "github_issue",
+            "github_research",
+        }
+    )
+
+    # Full path segments that mark a pinpointed technical GitHub page
+    # (source file, commit diff, issue, pull request). Matched on
+    # segment boundaries, never as a naive substring, so a repository
+    # named e.g. "my-blob-store" does not qualify.
+    TECHNICAL_GITHUB_PATH_SEGMENTS = frozenset(
+        {
+            "blob",
+            "commit",
+            "issues",
+            "pull",
+        }
+    )
+
+    # Discovery tags that prove the GitHub search that found the URL
+    # was correlated with the current CVE identifier.
+    CVE_CORRELATED_DISCOVERY_TAGS = frozenset(
+        {
+            "cve_in_title",
+            "cve_in_body",
+            "cve_in_repo_name",
+        }
+    )
 
     def _normalize(self, text: str) -> str:
         return re.sub(
@@ -224,6 +267,129 @@ class ReferenceRanker:
         return []
 
     # --------------------------------------------------
+    # Provenance-gated technical GitHub fallback
+    # --------------------------------------------------
+
+    def _technical_github_fallback(
+        self,
+        *,
+        url,
+        source_type: str,
+        discovery_tags,
+        discovery_query,
+        text: str,
+        cve_id: str,
+        keywords: list[str],
+    ) -> list[str]:
+        """Return at most one verbatim slice for technical GitHub evidence.
+
+        Invoked ONLY when the narrative branch produced no chunks (the
+        page contains no CVE identifier). Keeps directly-discovered
+        blob/commit/issues/pull material from being discarded as empty
+        while repository roots and boilerplate still yield ``[]``.
+
+        All predicates are deterministic and fail closed (any ambiguity
+        returns ``[]``):
+
+        - ``source_type`` must be a GitHub narrative type.
+        - The URL host must be exactly ``github.com`` (stdlib
+          ``urlsplit``; ``www.github.com``, enterprise hosts, raw/gist
+          hosts, and malformed URLs are denied).
+        - The URL path must contain a technical segment (``blob``,
+          ``commit``, ``issues``, ``pull``) on segment boundaries, at
+          ``/<owner>/<repo>/<kind>/...`` depth, so repository roots
+          never qualify.
+        - Discovery provenance must tie the URL to THIS CVE: either an
+          ``nvd_reference`` tag with ``discovery_query == cve_id``, or
+          the CVE id appearing in ``discovery_query`` together with a
+          CVE-correlated discovery tag. Priority, confidence, and
+          ``security_research_signal`` alone confer nothing.
+
+        On success the chunk is source text only: first the existing
+        keyword-anchored fallback, else the head slice of the
+        normalized text bounded by ``FALLBACK_CONTEXT_SIZE``.
+        ``exact_record`` is never fabricated here (callers keep it
+        ``None``); no CVE id, severity, exploit, remediation, or trust
+        marker is injected.
+        """
+        if (source_type or "").lower() not in (
+            self.TECHNICAL_GITHUB_SOURCE_TYPES
+        ):
+            return []
+
+        cve_norm = (cve_id or "").strip().lower()
+        if not cve_norm:
+            return []
+
+        if not isinstance(url, str) or not url.strip():
+            return []
+
+        try:
+            from urllib.parse import urlsplit
+
+            parts = urlsplit(url.strip())
+        except Exception:
+            return []
+
+        host = parts.hostname or ""
+        if host != "github.com":
+            return []
+
+        try:
+            segments = [
+                segment
+                for segment in parts.path.lower().split("/")
+                if segment
+            ]
+        except Exception:
+            return []
+
+        # /<owner>/<repo>/<kind>/... : the technical kind marker sits
+        # at index 2 with at least one trailing segment.
+        if len(segments) < 4:
+            return []
+        if segments[2] not in self.TECHNICAL_GITHUB_PATH_SEGMENTS:
+            return []
+
+        tags = discovery_tags if isinstance(discovery_tags, list) else []
+        tag_set = {
+            str(tag).strip().lower()
+            for tag in tags
+            if isinstance(tag, str) and str(tag).strip()
+        }
+        query_norm = (
+            str(discovery_query).strip().lower()
+            if isinstance(discovery_query, str)
+            else ""
+        )
+
+        nvd_direct = (
+            "nvd_reference" in tag_set and query_norm == cve_norm
+        )
+        search_correlated = (
+            cve_norm in query_norm
+            and bool(tag_set & self.CVE_CORRELATED_DISCOVERY_TAGS)
+        )
+        if not (nvd_direct or search_correlated):
+            return []
+
+        if not isinstance(text, str):
+            return []
+
+        contexts = self._fallback_context(
+            text=text,
+            keywords=keywords,
+        )
+        if contexts:
+            return contexts[: self.MAX_CONTEXT_CHUNKS]
+
+        normalized = self._normalize(text)
+        if not normalized:
+            return []
+
+        return [normalized[: self.FALLBACK_CONTEXT_SIZE]]
+
+    # --------------------------------------------------
     # Main
     # --------------------------------------------------
 
@@ -290,6 +456,26 @@ class ReferenceRanker:
                 cve_id=cve_id,
                 keywords=keywords,
             )
+
+            if not contexts:
+                # CVE-less technical GitHub evidence (source file,
+                # commit, issue, pull) that was directly discovered
+                # for this CVE keeps one bounded verbatim slice
+                # instead of being dropped as empty downstream.
+                # Roots/boilerplate still yield [] here.
+                contexts = self._technical_github_fallback(
+                    url=document.url,
+                    source_type=source_type,
+                    discovery_tags=getattr(
+                        document, "discovery_tags", None
+                    ),
+                    discovery_query=getattr(
+                        document, "discovery_query", None
+                    ),
+                    text=text,
+                    cve_id=cve_id,
+                    keywords=keywords,
+                )
 
             return ReferenceContext(
                 source_url=document.url,

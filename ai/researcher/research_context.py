@@ -8,6 +8,15 @@ def build_research_contexts(
     cve_id: str,
     keywords: list[str],
 ) -> list[dict]:
+    """Build one raw reference-context dict per fetched document.
+
+    Ephemeral discovery provenance (``discovery_tags`` /
+    ``discovery_query``) is forwarded to the ranker when present so it
+    can tell a directly-discovered reference from an incidental one.
+    These keys are in-memory only: they are stripped from the emitted
+    dicts and never reach ``ReferenceContext``, persisted artifacts, or
+    telemetry. Documents without them behave exactly as before.
+    """
 
     ranker = ReferenceRanker()
     contexts = []
@@ -22,6 +31,9 @@ def build_research_contexts(
         reference.source_type = document["source_type"]
         reference.title = document["title"]
         reference.content = document["content"]
+        # Ephemeral only; absent => legacy behavior in the ranker.
+        reference.discovery_tags = document.get("discovery_tags")
+        reference.discovery_query = document.get("discovery_query")
 
         context = ranker.build(
             document=reference,
