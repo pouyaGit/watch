@@ -28,7 +28,7 @@ from utils.common import detect_cdn, normalize_ips
 from wildcard_detector import WildcardDetector
 from dns_brute_common import (
     log, send_telegram, run_puredns, run_httpx_quick, WORKDIR,
-    estimate_minutes, count_lines
+    estimate_minutes, count_lines, require_tools, tool_env, ToolError,
 )
 
 START_TIME = time.time()
@@ -73,6 +73,11 @@ def ensure_static_wordlist():
             "staticBF: wordlist build FAILED (file empty after download+merge). "
             "Check disk space on the server."
         )
+        # Fail fast: an empty wordlist would make every domain resolve 0
+        # names and be misreported as a clean run with no findings.
+        raise ToolError(
+            f"static wordlist build failed, {MERGED_WORDLIST} is empty"
+        )
     else:
         log(f"Static wordlist ready: {MERGED_WORDLIST} "
             f"({MERGED_WORDLIST.stat().st_size / 1024 / 1024:.1f} MB)")
@@ -93,8 +98,16 @@ def resolve_ip_and_store(program_name, domain, new_names):
         f'dnsx -l "{tmp}" -silent -a -resp -json -t 10 -rl 30 '
         "-r 8.8.8.8,1.1.1.1,9.9.9.9,208.67.222.222"
     )
-    proc = subprocess.run(["zsh", "-c", cmd], capture_output=True, text=True)
+    # dnsx confirmation is required: a failed dnsx run must fail the domain,
+    # never silently confirm 0 live hosts.
+    proc = subprocess.run(["zsh", "-c", cmd], capture_output=True, text=True, env=tool_env())
     tmp.unlink(missing_ok=True)
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()
+        tail = tail[-1][:300] if tail else "no stderr"
+        raise ToolError(
+            f"dnsx resolve failed for {domain} (exit {proc.returncode}): {tail}"
+        )
 
     confirmed = []
     for line in proc.stdout.splitlines():
@@ -215,6 +228,11 @@ def main():
         send_telegram("staticBF run: no feasible domains queued (run watch_dns_precheck.py first)")
         return
 
+    # Preflight BEFORE expensive work: puredns and dnsx are both required for
+    # this job. A missing binary aborts the whole run (non-zero exit) instead
+    # of misreporting every domain as "0 resolved names".
+    require_tools(["puredns", "dnsx"])
+
     total_new = 0
     processed = 0
     for program_name, domain in domains:
@@ -243,6 +261,10 @@ if __name__ == "__main__":
     try:
         main()
         mark_finished("success", 0)
-    except Exception:
+    except Exception as exc:
+        try:
+            send_telegram(f"staticBF run FAILED: {exc}")
+        except Exception:
+            pass
         mark_finished("failed", 1)
         raise

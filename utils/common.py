@@ -7,15 +7,85 @@ import string
 from datetime import datetime
 import ipaddress
 
-# Module-level PATH for Watch subprocesses (non-interactive zsh does not source ~/.zshrc).
-WATCH_TOOL_PATH = ":".join([
-    "/opt/watch/venv/bin",
-    "/home/pouya_behnia/go/bin",
-    "/usr/local/bin",
-    "/usr/local/go/bin",
-    "/usr/bin",
-    "/bin",
-])
+# Module-level PATH for Watch subprocesses (non-interactive shells under
+# systemd do not source ~/.zshrc, so tool directories must be explicit).
+#
+# systemd compatibility: the production units run as User=root with
+#   PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin
+# so this list must work with exactly that PATH. In particular it must NOT
+# depend on any interactive user's home directory (e.g. /home/pouya_behnia/go/bin
+# is NOT on the systemd PATH); the current user's ~/go/bin is picked up
+# dynamically via $HOME so developer shells keep working without hardcoding
+# any username into the codebase.
+def _build_watch_tool_path():
+    parts = ["/opt/watch/venv/bin"]
+    home = os.environ.get("HOME")
+    if home:
+        parts.append(os.path.join(home, "go", "bin"))
+    parts += [
+        "/root/go/bin",
+        "/usr/local/go/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+    ]
+    seen = set()
+    ordered = []
+    for p in parts:
+        if p and p not in seen:
+            seen.add(p)
+            ordered.append(p)
+    return ":".join(ordered)
+
+
+WATCH_TOOL_PATH = _build_watch_tool_path()
+
+
+class ToolError(RuntimeError):
+    """Raised when a required external tool is missing or fails.
+
+    Fail-fast signal for the scheduled pipeline: a missing/failing required
+    binary must abort the affected job with a non-zero exit status, never be
+    interpreted as an empty ("0 results") outcome.
+    """
+
+
+def tool_env(extra=None):
+    """Environment for Watch subprocesses with the canonical tool PATH first."""
+    env = dict(os.environ)
+    if extra:
+        env.update(extra)
+    base_path = env.get("PATH")
+    env["PATH"] = WATCH_TOOL_PATH + ":" + base_path if base_path else WATCH_TOOL_PATH
+    return env
+
+
+def find_tool(name):
+    """Resolve a required binary via the canonical tool PATH (or None)."""
+    import shutil
+    env_path = os.environ.get("PATH")
+    search_path = WATCH_TOOL_PATH + ":" + env_path if env_path else WATCH_TOOL_PATH
+    return shutil.which(name, path=search_path)
+
+
+def require_tool(name):
+    """Return the resolved path of a required binary or raise ToolError.
+
+    The error names the exact missing command so systemd logs and Telegram
+    failure notifications identify the broken tooling immediately.
+    """
+    resolved = find_tool(name)
+    if not resolved:
+        raise ToolError(
+            f"required tool not found: {name} "
+            f"(searched PATH={WATCH_TOOL_PATH})"
+        )
+    return resolved
+
+
+def require_tools(names):
+    """Preflight: fail fast when any required binary is unavailable."""
+    return [require_tool(name) for name in names]
 
 # Shared color codes
 class colors:

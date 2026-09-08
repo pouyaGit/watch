@@ -33,6 +33,7 @@ import requests
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import config
 from database.db import Programs, DnsBruteStatus, upsert_dns_brute_status
+from utils.common import require_tools
 from wildcard_detector import get_wildcard_ips
 
 START_TIME = time.time()
@@ -86,6 +87,10 @@ def main():
     log(f"=== DNS Bruteforce Feasibility Check | {len(pairs)} domains | "
         f"max_minutes={args.max_minutes or 'unlimited'} ===")
 
+    # Preflight: the whole check is dnsx-based. Without dnsx every domain
+    # would look "feasible" (empty wildcard set), so fail fast instead.
+    require_tools(["dnsx"])
+
     checked, feasible_list, infeasible_list = [], [], []
     skipped = []
 
@@ -129,6 +134,10 @@ if __name__ == "__main__":
     try:
         main()
         mark_finished("success", 0)
-    except Exception:
+    except Exception as exc:
+        try:
+            send_telegram(f"DNS precheck run FAILED: {exc}")
+        except Exception:
+            pass
         mark_finished("failed", 1)
         raise

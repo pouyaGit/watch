@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import config
+from utils.common import ToolError, require_tool, require_tools, tool_env
 
 RESOLVERS = "/opt/watch/resolvers.txt"
 WORKDIR = Path("/opt/watch/dns-bruteforce/work")
@@ -66,25 +67,64 @@ def run_puredns(candidates_file, out_file, threads=100, wildcard_tests=1, rate_l
     Resolve a candidate list with puredns. Returns the list of names that
     survived puredns' own internal wildcard filtering.
     Flags match the ones already benchmarked in static.sh for large lists.
+
+    Fail-fast contract (a missing/failing puredns must NEVER look like
+    "0 resolved names"):
+      - resolvers file missing  -> ToolError
+      - puredns binary missing  -> ToolError naming the exact command
+      - execution failure       -> ToolError
+      - timeout                 -> ToolError (partial output is untrustworthy)
+      - non-zero exit           -> ToolError (even exit 127 / "not found")
+    Only a zero-exit run whose output file contains no names is a legitimate
+    empty result (returns []).
     """
     if not os.path.exists(RESOLVERS):
-        log(f"Resolvers file not found: {RESOLVERS}")
-        return []
+        raise ToolError(
+            f"puredns resolvers file not found: {RESOLVERS} "
+            f"(cannot bruteforce without resolvers)"
+        )
 
-    cmd = (
-        f'puredns resolve "{candidates_file}" -r "{RESOLVERS}" '
-        f'-t {threads} --wildcard-tests {wildcard_tests} '
-        f'--rate-limit-trusted {rate_limit_trusted} --wildcard-batch {wildcard_batch} '
-        f'> "{out_file}"'
-    )
-    log(f"$ {cmd}")
+    puredns_bin = require_tool("puredns")
+
+    argv = [
+        puredns_bin, "resolve", str(candidates_file),
+        "-r", RESOLVERS,
+        "-t", str(threads),
+        "--wildcard-tests", str(wildcard_tests),
+        "--rate-limit-trusted", str(rate_limit_trusted),
+        "--wildcard-batch", str(wildcard_batch),
+    ]
+    log(f"$ {' '.join(argv)} > {out_file}")
     try:
-        subprocess.run(cmd, shell=True, timeout=21600)  # 6h safety ceiling
-    except subprocess.TimeoutExpired:
-        log(f"puredns timeout on {candidates_file}")
+        with open(out_file, "w", errors="ignore") as fh:
+            proc = subprocess.run(
+                argv,
+                stdout=fh,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=21600,  # 6h safety ceiling
+                env=tool_env(),
+            )
+    except subprocess.TimeoutExpired as exc:
+        raise ToolError(
+            f"puredns resolve timed out on {candidates_file} "
+            f"(partial output discarded, not treated as 0 names)"
+        ) from exc
+    except OSError as exc:
+        raise ToolError(f"puredns execution failed: {exc}") from exc
+
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()
+        tail = tail[-1][:300] if tail else "no stderr"
+        raise ToolError(
+            f"puredns resolve failed on {candidates_file} "
+            f"(exit {proc.returncode}): {tail}"
+        )
 
     if not os.path.exists(out_file):
-        return []
+        raise ToolError(
+            f"puredns exited 0 on {candidates_file} but produced no output file: {out_file}"
+        )
     return [l.strip() for l in Path(out_file).read_text(errors="ignore").splitlines() if l.strip()]
 
 
@@ -112,7 +152,10 @@ def run_httpx_quick(subdomains):
             "-timeout 4 -retries 1 -threads 15 -rate-limit 15 "
             "-ports 443 -random-agent"
         )
-        proc = subprocess.run(["zsh", "-c", cmd], capture_output=True, text=True, timeout=300)
+        # Best-effort enrichment (a failed httpx pass must not invalidate the
+        # DNS discovery already stored); the canonical tool PATH is still
+        # passed so httpx resolves under the systemd environment.
+        proc = subprocess.run(["zsh", "-c", cmd], capture_output=True, text=True, timeout=300, env=tool_env())
         for line in proc.stdout.splitlines():
             line = line.strip()
             if not line:

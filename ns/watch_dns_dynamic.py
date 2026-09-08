@@ -40,7 +40,8 @@ from utils.common import detect_cdn, normalize_ips
 from wildcard_detector import WildcardDetector
 from dns_brute_common import (
     log, send_telegram, run_puredns, run_httpx_quick, WORKDIR,
-    estimate_minutes, count_lines
+    estimate_minutes, count_lines, require_tool, require_tools, tool_env,
+    ToolError,
 )
 
 START_TIME = time.time()
@@ -51,15 +52,22 @@ def elapsed_minutes():
 
 
 def run_alterx(known_subs_file, out_file):
-    if subprocess.call(["which", "alterx"], stdout=subprocess.DEVNULL) != 0:
-        log("alterx not found")
-        return []
-    cmd = f'alterx -l "{known_subs_file}" -o "{out_file}"'
+    alterx_bin = require_tool("alterx")
+    cmd = f'"{alterx_bin}" -l "{known_subs_file}" -o "{out_file}"'
     log(f"$ {cmd}")
     try:
-        subprocess.run(cmd, shell=True, timeout=1800)
-    except subprocess.TimeoutExpired:
-        log(f"alterx timeout on {known_subs_file}")
+        proc = subprocess.run(cmd, shell=True, timeout=1800, env=tool_env())
+    except subprocess.TimeoutExpired as exc:
+        raise ToolError(
+            f"alterx timed out on {known_subs_file} "
+            f"(partial output discarded, not treated as 0 candidates)"
+        ) from exc
+    except OSError as exc:
+        raise ToolError(f"alterx execution failed: {exc}") from exc
+    if proc.returncode != 0:
+        raise ToolError(
+            f"alterx failed on {known_subs_file} (exit {proc.returncode})"
+        )
     if not out_file.exists():
         return []
     return [l.strip() for l in out_file.read_text(errors="ignore").splitlines() if l.strip()]
@@ -81,8 +89,16 @@ def resolve_ip_and_store(program_name, domain, new_names):
         f'dnsx -l "{tmp}" -silent -a -resp -json -t 10 -rl 30 '
         "-r 8.8.8.8,1.1.1.1,9.9.9.9,208.67.222.222"
     )
-    proc = subprocess.run(["zsh", "-c", cmd], capture_output=True, text=True)
+    # dnsx confirmation is required: a failed dnsx run must fail the domain,
+    # never silently confirm 0 live hosts.
+    proc = subprocess.run(["zsh", "-c", cmd], capture_output=True, text=True, env=tool_env())
     tmp.unlink(missing_ok=True)
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()
+        tail = tail[-1][:300] if tail else "no stderr"
+        raise ToolError(
+            f"dnsx resolve failed for {domain} (exit {proc.returncode}): {tail}"
+        )
 
     confirmed = []
     for line in proc.stdout.splitlines():
@@ -221,6 +237,11 @@ def main():
         send_telegram("dynamicBF run: no feasible domains queued (run watch_dns_precheck.py first)")
         return
 
+    # Preflight BEFORE expensive work: alterx, puredns and dnsx are all
+    # required for this job. A missing binary aborts the whole run
+    # (non-zero exit) instead of misreporting domains as processed.
+    require_tools(["alterx", "puredns", "dnsx"])
+
     total_new = 0
     processed = 0
     for program_name, domain in domains:
@@ -249,6 +270,10 @@ if __name__ == "__main__":
     try:
         main()
         mark_finished("success", 0)
-    except Exception:
+    except Exception as exc:
+        try:
+            send_telegram(f"dynamicBF run FAILED: {exc}")
+        except Exception:
+            pass
         mark_finished("failed", 1)
         raise

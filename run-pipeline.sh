@@ -19,15 +19,11 @@ LOG_FILE="$LOG_DIR/pipeline_$TIMESTAMP.log"
 # Show in terminal AND write to file
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-send_telegram() {
-    local text="$1"
-    [ -z "$TELEGRAM_BOT_TOKEN" ] && return
-    [ -z "$TELEGRAM_CHAT_ID" ] && return
-    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-        -d "chat_id=${TELEGRAM_CHAT_ID}" \
-        --data-urlencode "text=${text}" \
-        > /dev/null
-}
+# Shared step runner + failure accumulator (defines send_telegram, step,
+# PIPELINE_FAILED, pipeline_exit_code). Sourcing keeps a single
+# implementation so failure propagation stays testable.
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$LIB_DIR/pipeline_lib.sh"
 
 echo "=================================================="
 echo "Watch Pipeline Started - $(date)"
@@ -35,27 +31,6 @@ echo "Server Time : $(date)"
 echo "Tehran Time : $(TZ=Asia/Tehran date)"
 echo "Log File    : $LOG_FILE"
 echo "=================================================="
-
-step() {
-    local NAME="$1"
-    shift
-    echo
-    echo "===== $NAME ====="
-    send_telegram "Pipeline: starting $NAME"
-    local START=$(date +%s)
-    "$@"
-    local EXIT_CODE=$?
-    local END=$(date +%s)
-    local DURATION=$((END - START))
-    echo "===== $NAME Finished in ${DURATION} sec (exit: $EXIT_CODE) ====="
-    echo
-    if [ $EXIT_CODE -eq 0 ]; then
-        send_telegram "Pipeline: $NAME finished in ${DURATION}s"
-    else
-        send_telegram "Pipeline: $NAME FAILED (exit $EXIT_CODE) after ${DURATION}s -- check logs"
-    fi
-    return $EXIT_CODE
-}
 
 TOTAL_START=$(date +%s)
 send_telegram "Pipeline run started -- $(TZ=Asia/Tehran date)"
@@ -69,9 +44,20 @@ step "Crawl Fresh"     python3 /opt/watch/crawl/watch_crawl_fresh.py
 TOTAL_DURATION=$(( $(date +%s) - TOTAL_START ))
 
 echo "=================================================="
-echo "Pipeline Finished in ${TOTAL_DURATION} seconds"
-echo "Tehran Time : $(TZ=Asia/Tehran date)"
-echo "Log saved to: $LOG_FILE"
-echo "=================================================="
+if pipeline_exit_code; then
+    echo "Pipeline Finished in ${TOTAL_DURATION} seconds"
+    echo "Tehran Time : $(TZ=Asia/Tehran date)"
+    echo "Log saved to: $LOG_FILE"
+    echo "=================================================="
 
-send_telegram "Pipeline run finished in ${TOTAL_DURATION}s total -- $(TZ=Asia/Tehran date)"
+    send_telegram "Pipeline run finished in ${TOTAL_DURATION}s total -- $(TZ=Asia/Tehran date)"
+    exit 0
+else
+    echo "Pipeline Finished WITH FAILURES in ${TOTAL_DURATION} seconds"
+    echo "Tehran Time : $(TZ=Asia/Tehran date)"
+    echo "Log saved to: $LOG_FILE"
+    echo "=================================================="
+
+    send_telegram "Pipeline run finished WITH FAILURES in ${TOTAL_DURATION}s total -- $(TZ=Asia/Tehran date) -- check logs"
+    exit 1
+fi
