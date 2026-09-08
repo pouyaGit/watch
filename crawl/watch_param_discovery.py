@@ -141,6 +141,11 @@ def run_x8(url, wordlist_path):
 
     cmd = [
         "x8",
+        # Explicit curl UA: some targets (e.g. investors.delltechnologies.com)
+        # time out when x8 sends its default browser-like User-Agent but answer
+        # immediately to curl's UA (verified live: curl/8.5.0 -> HTTP 200,
+        # x8 default UA -> timeout). --mimic-browser is deliberately NOT used.
+        "-H", "User-Agent: curl/8.5.0",
         "-u", url,
         "-w", wordlist_path,
         "-O", "json",
@@ -151,10 +156,9 @@ def run_x8(url, wordlist_path):
                              # next scheduled run and drop back to 1 if the 4GB box struggles
         "--timeout", "10",
         "--verify",           # re-verifies found params, fewer false positives
-        # Discover hidden parameters across GET, POST and PUT.
-        # x8 sends parameters in the body only for POST/PUT and in
+        # Discover hidden parameters across GET
         # the query for GET (verified against x8 4.3.1-main's CLI).
-        "-X", "GET", "POST", "PUT", "PATCH",
+        "-X", "GET",
     ]
     try:
         subprocess.run(cmd, capture_output=True, text=True, timeout=X8_TIMEOUT)
@@ -284,7 +288,17 @@ def normalize_param_record(name, method, location, source):
 
 
 def get_pending_endpoints(filter_arg=None, limit=None):
-    query = Endpoints.objects(x8_checked=False)
+    # Only rows with a usable x8 target. An endpoint without an
+    # example_url can never be discovered and used to be re-fetched
+    # (then skipped) on every run -- stuck in the pending queue
+    # forever. It stays x8_checked=False (truthfully never-run) but is
+    # excluded here; once a later crawl fills example_url it becomes
+    # eligible again.
+    query = Endpoints.objects(
+        x8_checked=False,
+        example_url__exists=True,
+        example_url__nin=["", None],
+    )
     if filter_arg:
         f = filter_arg.lower()
         query = query.filter(subdomain__icontains=f)
@@ -295,13 +309,20 @@ def get_pending_endpoints(filter_arg=None, limit=None):
 
 
 def export_wordlists():
-    """Write one wordlist file per program from discovered params."""
+    """Write one wordlist file per program from discovered aggregate
+    params (unique names). Malformed entries (non-strings, empty
+    names) are filtered so they cannot pollute the wordlist; the
+    aggregate never depends on param_records, so malformed provenance
+    cannot leak in either."""
     programs = Endpoints.objects.distinct("program_name")
     saved = []
     for prog in programs:
         params = set()
         for ep in Endpoints.objects(program_name=prog).only("params"):
-            params.update(ep.params or [])
+            params.update(
+                p for p in (ep.params or [])
+                if isinstance(p, str) and p
+            )
         if not params:
             continue
         out_file = WORDLIST_DIR / f"{prog}_params.txt"
@@ -311,12 +332,98 @@ def export_wordlists():
     return saved
 
 
+def is_legacy_x8_endpoint(endpoint):
+    """
+    True when an endpoint was marked ``x8_checked=True`` BEFORE the
+    provenance schema existed: it has no ``param_records`` and no
+    ``params_from_x8``. The new discovery pass selects only
+    ``x8_checked=False`` rows, so such endpoints would otherwise be
+    skipped forever even though x8 may never have actually completed
+    (the old code marked checked even on failure).
+
+    An endpoint that already carries provenance (any ``param_records``
+    or any ``params_from_x8`` name) is NOT legacy and is left alone.
+    A not-yet-checked endpoint is already pending and is NOT legacy.
+    """
+    if not getattr(endpoint, "x8_checked", False):
+        return False
+    records = getattr(endpoint, "param_records", None) or []
+    x8_names = getattr(endpoint, "params_from_x8", None) or []
+    return not records and not x8_names
+
+
+def requeue_legacy_x8(dry_run=False, filter_arg=None):
+    """
+    Requeue legacy x8 endpoints (see :func:`is_legacy_x8_endpoint`) so
+    the new provenance-aware discovery pass runs on them again.
+
+    The ONLY field mutated is ``x8_checked`` (flipped to ``False``);
+    ``params``, ``params_from_crawl``, ``params_from_x8``,
+    ``param_records``, ``example_url`` and every other field are left
+    untouched. In dry-run mode nothing is written and the function just
+    reports how many endpoints WOULD be requeued.
+
+    Returns the number of matching endpoints (requeued, or -- in
+    dry-run -- that would be requeued). ``filter_arg`` optionally
+    narrows the scan by subdomain, mirroring the discovery run.
+
+    Idempotent for the historical backlog: once an endpoint is
+    requeued it is ``x8_checked=False`` and no longer matches. Note
+    that an endpoint the NEW pipeline later checks with genuinely zero
+    findings will match again (empty provenance); re-running x8 on it
+    is harmless, just redundant.
+    """
+    query = Endpoints.objects(x8_checked=True)
+    if filter_arg:
+        f = filter_arg.lower()
+        query = query.filter(subdomain__icontains=f)
+
+    count = 0
+    for ep in query:
+        if not is_legacy_x8_endpoint(ep):
+            continue
+        count += 1
+        if not dry_run:
+            ep.x8_checked = False
+            ep.save()
+    return count
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--filter", default=None, help="only this subdomain/keyword")
     parser.add_argument("--max-minutes", type=float, default=None)
     parser.add_argument("--limit", type=int, default=None, help="max endpoints this run")
+    parser.add_argument(
+        "--recheck-legacy-x8",
+        action="store_true",
+        help="requeue legacy endpoints (x8_checked=True but no "
+             "param_records/params_from_x8) for the new x8 pass; "
+             "only x8_checked is changed",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="with --recheck-legacy-x8: report the count without "
+             "modifying MongoDB",
+    )
     args = parser.parse_args()
+
+    if args.recheck_legacy_x8:
+        count = requeue_legacy_x8(dry_run=args.dry_run, filter_arg=args.filter)
+        mode = "DRY-RUN (no changes)" if args.dry_run else "APPLIED"
+        log(
+            f"=== Legacy x8 requeue | {mode} | "
+            f"filter={args.filter or 'NONE'} | "
+            f"endpoints={'would be' if args.dry_run else 'were'} "
+            f"requeued: {count} ==="
+        )
+        send_telegram(
+            f"paramDiscovery legacy-x8 requeue [{mode}]\n"
+            f"Filter: {args.filter or 'NONE'}\n"
+            f"Endpoints {'to requeue' if args.dry_run else 'requeued'}: {count}"
+        )
+        return
 
     if not os.path.exists(WORDLIST):
         log(f"Wordlist not found: {WORDLIST} -- set a valid one before continuing (env: X8_WORDLIST)")

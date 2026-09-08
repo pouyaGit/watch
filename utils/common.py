@@ -1,10 +1,21 @@
 # utils/common.py
+import os
 import subprocess
 import tempfile
 import random
 import string
 from datetime import datetime
 import ipaddress
+
+# Module-level PATH for Watch subprocesses (non-interactive zsh does not source ~/.zshrc).
+WATCH_TOOL_PATH = ":".join([
+    "/opt/watch/venv/bin",
+    "/home/pouya_behnia/go/bin",
+    "/usr/local/bin",
+    "/usr/local/go/bin",
+    "/usr/bin",
+    "/bin",
+])
 
 # Shared color codes
 class colors:
@@ -21,7 +32,9 @@ def current_time():
 # Common zsh runner (non-shell)
 def run_command_in_zsh_common(command):
     try:
-        result = subprocess.run(["zsh", "-c", command], capture_output=True, text=True)
+        env = os.environ.copy()
+        env["PATH"] = WATCH_TOOL_PATH + ":" + env["PATH"] if env.get("PATH") else WATCH_TOOL_PATH
+        result = subprocess.run(["zsh", "-c", command], capture_output=True, text=True, env=env)
         if result.returncode != 0:
             print(f"{colors.YELLOW}[{current_time()}] Error: {result.stderr.strip()}{colors.RESET}")
             return []
@@ -32,7 +45,9 @@ def run_command_in_zsh_common(command):
 
 def run_command_in_zsh_http(command):
     try:
-        result = subprocess.run(["zsh", "-c", command], capture_output=True, text=True)
+        env = os.environ.copy()
+        env["PATH"] = WATCH_TOOL_PATH + ":" + env["PATH"] if env.get("PATH") else WATCH_TOOL_PATH
+        result = subprocess.run(["zsh", "-c", command], capture_output=True, text=True, env=env)
         if result.returncode != 0:
             print(f"[{current_time()}] Error executing command: {result.stderr}")
             return False
@@ -43,12 +58,15 @@ def run_command_in_zsh_http(command):
     
 # NS zsh runner (shell=True)
 def run_command_in_zsh_ns(command):
+    env = os.environ.copy()
+    env["PATH"] = WATCH_TOOL_PATH + ":" + env["PATH"] if env.get("PATH") else WATCH_TOOL_PATH
     proc = subprocess.run(
         command,
         shell=True,
         executable="/bin/zsh",
         capture_output=True,
-        text=True
+        text=True,
+        env=env
     )
     if proc.stderr:
         print(f"{colors.YELLOW}[{current_time()}] stderr: {proc.stderr.strip()}{colors.RESET}")

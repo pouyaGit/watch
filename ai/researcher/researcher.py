@@ -188,7 +188,11 @@ IMPORTANT OUTPUT FORMAT RULES:
 
 - evidence MUST be an array of strings.
 - affected_versions MUST be an array of strings.
+- affected_products MUST be an array of strings.
 - Do not use objects inside these arrays.
+  For example, affected_products MUST look like
+  ["WP Responsive Images (WordPress Plugin)"],
+  NEVER like [{{"name": "WP Responsive Images", "type": "WordPress Plugin"}}].
 - Do not write any explanation before or after the JSON object.
 - The response must end immediately after the closing .
 - Treat independently discovered sources as secondary evidence.

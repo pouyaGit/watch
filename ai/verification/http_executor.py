@@ -1,4 +1,19 @@
+"""Legacy World A HTTP evidence executor — NON-PRODUCTION (Phase P1).
+
+Unconditional live-traffic executor (requests, no authorization/scope
+gates, no 5B→5J binding). NOT part of the frozen 5B→5J authority chain
+and MUST NOT be reached from any production path: the sole production
+caller was watch_xss_verify (entrypoint permanently disabled in Phase
+5K) and the task registry contains no entry that can reach it.
+Importable for offline unit tests only. There is no flag or
+environment variable that re-enables legacy production execution.
+"""
+
 from __future__ import annotations
+
+#: Explicit non-production marker (Phase P1). Offline tests may import
+#: this module; production code must never execute through it.
+LEGACY_NON_PRODUCTION = True
 
 import hashlib
 import html as _html

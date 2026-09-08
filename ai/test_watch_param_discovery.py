@@ -19,9 +19,12 @@ from unittest import mock
 
 from crawl.watch_param_discovery import (
     build_x8_target_url,
+    get_pending_endpoints,
+    is_legacy_x8_endpoint,
     main,
     map_x8_location,
     normalize_param_record,
+    requeue_legacy_x8,
     run_x8,
 )
 
@@ -36,10 +39,20 @@ class X8LocationMappingTests(unittest.TestCase):
     def test_body_maps_to_body_for_put(self):
         self.assertEqual(map_x8_location("Body", "PUT"), "body")
 
+    def test_body_maps_to_body_for_patch(self):
+        self.assertEqual(map_x8_location("Body", "PATCH"), "body")
+
     def test_get_path_maps_to_query(self):
         # x8 4.3.1 labels the default GET query-string injection
         # "Path"; with our -u URL template that means query.
         self.assertEqual(map_x8_location("Path", "GET"), "query")
+
+    def test_non_get_path_never_maps(self):
+        # A POST/PUT "Path" injection is not a supported location
+        # and must not be converted.
+        self.assertIsNone(map_x8_location("Path", "POST"))
+        self.assertIsNone(map_x8_location("Path", "PUT"))
+        self.assertIsNone(map_x8_location("Path", "PATCH"))
 
     def test_headers_never_map(self):
         self.assertIsNone(map_x8_location("Headers", "GET"))
@@ -47,12 +60,6 @@ class X8LocationMappingTests(unittest.TestCase):
 
     def test_headervalue_never_maps(self):
         self.assertIsNone(map_x8_location("HeaderValue", "GET"))
-
-    def test_non_get_path_never_maps(self):
-        # A POST/PUT "Path" injection is not a supported location
-        # and must not be converted.
-        self.assertIsNone(map_x8_location("Path", "POST"))
-        self.assertIsNone(map_x8_location("Path", "PUT"))
 
     def test_unknown_and_empty_never_map(self):
         self.assertIsNone(map_x8_location("Cookie", "GET"))
@@ -206,6 +213,56 @@ class X8RunParserTests(unittest.TestCase):
         records = self._run_payload(mock_subprocess, [])
         self.assertEqual(records, [])
         self.assertIsNotNone(records)
+
+    @mock.patch("crawl.watch_param_discovery.subprocess")
+    def test_run_x8_sends_explicit_curl_user_agent(self, mock_subprocess):
+        # Regression: some targets time out on x8's default browser-like
+        # User-Agent but answer to curl's UA (live-verified). The command
+        # must carry an explicit -H 'User-Agent: curl/8.5.0'.
+        self._run_payload(mock_subprocess, SYNTHETIC_X8_JSON)
+        cmd = mock_subprocess.run.call_args[0][0]
+        self.assertIn("-H", cmd)
+        header_index = cmd.index("-H")
+        self.assertEqual(cmd[header_index + 1], "User-Agent: curl/8.5.0")
+
+    @mock.patch("crawl.watch_param_discovery.subprocess")
+    def test_run_x8_user_agent_does_not_conflict_with_other_flags(self, mock_subprocess):
+        # The UA addition must not displace or alter any existing
+        # argument: the full prior flag set stays intact.
+        self._run_payload(mock_subprocess, SYNTHETIC_X8_JSON)
+        cmd = mock_subprocess.run.call_args[0][0]
+        self.assertEqual(cmd[0], "x8")
+        self.assertIn("-u", cmd)
+        self.assertIn("-w", cmd)
+        self.assertIn("-O", cmd)
+        self.assertIn("-o", cmd)
+        self.assertIn("--timeout", cmd)
+        self.assertIn("--verify", cmd)
+        self.assertIn("-c", cmd)
+        self.assertIn("-W", cmd)
+        # --mimic-browser must stay OFF: the curl UA alone is the fix.
+        self.assertNotIn("--mimic-browser", cmd)
+        # Methods are preserved exactly (list tail, order-sensitive).
+        methods = cmd[cmd.index("-X") + 1:]
+        self.assertEqual(methods, ["GET", "POST", "PUT", "PATCH"])
+
+    @mock.patch("crawl.watch_param_discovery.subprocess")
+    def test_run_x8_exact_command_shape(self, mock_subprocess):
+        # Full-shape snapshot: flag ORDER may evolve, but every current
+        # argument must be present exactly once (plus the UA header).
+        self._run_payload(mock_subprocess, SYNTHETIC_X8_JSON)
+        cmd = mock_subprocess.run.call_args[0][0]
+        self.assertEqual(cmd.count("-H"), 1)
+        self.assertEqual(cmd.count("-u"), 1)
+        self.assertEqual(cmd.count("-w"), 1)
+        self.assertEqual(cmd.count("-O"), 1)
+        self.assertEqual(cmd.count("-o"), 1)
+        self.assertEqual(cmd.count("-c"), 1)
+        self.assertEqual(cmd.count("-W"), 1)
+        self.assertEqual(cmd.count("--timeout"), 1)
+        self.assertEqual(cmd.count("--verify"), 1)
+        self.assertEqual(cmd.count("-X"), 1)
+        self.assertEqual(cmd.count("User-Agent: curl/8.5.0"), 1)
 
 
 class X8TargetConstructionTests(unittest.TestCase):
@@ -387,6 +444,7 @@ class X8MainPersistenceTests(unittest.TestCase):
         ep = self._FakeEndpoint()
         self._run_main(ep, [])
         self.assertTrue(ep.x8_checked)
+        self.assertIsNotNone(ep.x8_last_checked)
         self.assertGreaterEqual(ep.saved, 1)
 
     def test_x8_failure_does_not_mark_checked(self):
@@ -395,7 +453,33 @@ class X8MainPersistenceTests(unittest.TestCase):
         ep = self._FakeEndpoint(x8_checked=False)
         self._run_main(ep, None)
         self.assertFalse(ep.x8_checked)
+        self.assertIsNone(ep.x8_last_checked)
         self.assertEqual(ep.saved, 0)
+
+    def test_x8_failure_does_not_modify_provenance_fields(self):
+        # A failed x8 attempt must leave every discovery field exactly
+        # as it was: no params_from_x8 / param_records / params churn,
+        # no successful-check timestamp, no save.
+        existing_record = {
+            "name": "oldx8",
+            "method": "GET",
+            "location": "query",
+            "source": "x8",
+        }
+        ep = self._FakeEndpoint(
+            params=["crawl", "oldx8"],
+            params_from_crawl=["crawl"],
+            params_from_x8=["oldx8"],
+            param_records=[dict(existing_record)],
+        )
+        self._run_main(ep, None)
+        self.assertFalse(ep.x8_checked)
+        self.assertIsNone(ep.x8_last_checked)
+        self.assertEqual(ep.saved, 0)
+        self.assertEqual(ep.params_from_x8, ["oldx8"])
+        self.assertEqual(ep.params_from_crawl, ["crawl"])
+        self.assertEqual(ep.params, ["crawl", "oldx8"])
+        self.assertEqual(ep.param_records, [existing_record])
 
     def test_x8_records_persisted_normalized_and_deduped(self):
         ep = self._FakeEndpoint(
@@ -480,6 +564,216 @@ class X8MainPersistenceTests(unittest.TestCase):
 
             ms.run.side_effect = _garbage
             self.assertIsNone(run_x8("https://example.test/api", "/tmp/wl.txt"))
+
+
+class X8PendingSelectionTests(unittest.TestCase):
+    """get_pending_endpoints() must never hand back rows that cannot be
+    discovered (no usable example_url): they would be re-fetched and
+    skipped on every run, stuck in the pending queue forever."""
+
+    def _capture(self, filter_arg=None, limit=None):
+        captured = {}
+
+        class _QS:
+            def __init__(self, filters):
+                self.filters = filters
+
+            def filter(self, **kw):
+                self.filters.update(kw)
+                return self
+
+            def order_by(self, *fields):
+                return self
+
+            def __getitem__(self, item):
+                return self
+
+            def __iter__(self):
+                return iter([])
+
+        class _Endpoints:
+            @staticmethod
+            def objects(**filters):
+                captured["filters"] = filters
+                return _QS(filters)
+
+        with mock.patch("crawl.watch_param_discovery.Endpoints", _Endpoints):
+            rows = get_pending_endpoints(filter_arg, limit)
+        return captured.get("filters", {}), rows
+
+    def test_selects_only_unchecked_rows(self):
+        filters, rows = self._capture()
+        self.assertEqual(rows, [])
+        self.assertIs(filters["x8_checked"], False)
+
+    def test_excludes_rows_without_usable_example_url(self):
+        filters, _ = self._capture()
+        self.assertTrue(filters["example_url__exists"])
+        self.assertEqual(filters["example_url__nin"], ["", None])
+
+    def test_filter_arg_narrows_subdomain_case_insensitively(self):
+        filters, _ = self._capture(filter_arg="DELL.com")
+        self.assertEqual(filters["subdomain__icontains"], "dell.com")
+
+
+class LegacyX8RequeueTests(unittest.TestCase):
+    """The historical backlog has x8_checked=True rows with empty
+    param_records/params_from_x8 that the new pipeline would skip
+    forever. requeue_legacy_x8() must flip ONLY x8_checked for those
+    rows, leave already-provenanced rows alone, and support dry-run."""
+
+    class _EP:
+        def __init__(self, **kw):
+            self.x8_checked = kw.get("x8_checked", True)
+            self.param_records = kw.get("param_records", [])
+            self.params_from_x8 = kw.get("params_from_x8", [])
+            self.params = kw.get("params", [])
+            self.params_from_crawl = kw.get("params_from_crawl", [])
+            self.example_url = kw.get("example_url", "https://x.test/p")
+            self.saved = 0
+
+        def save(self):
+            self.saved += 1
+
+    def _patch(self, eps, capture=None):
+        class _Q:
+            def __init__(self, items):
+                self._items = items
+                self.filter_kwargs = {}
+
+            def filter(self, **kw):
+                self.filter_kwargs.update(kw)
+                return self
+
+            def __iter__(self):
+                return iter(self._items)
+
+        class _Endpoints:
+            @staticmethod
+            def objects(**filters):
+                q = _Q(eps)
+                if capture is not None:
+                    capture["objects"] = filters
+                    capture["query"] = q
+                return q
+
+        return mock.patch("crawl.watch_param_discovery.Endpoints", _Endpoints)
+
+    def test_legacy_endpoint_is_detected(self):
+        ep = self._EP(x8_checked=True, param_records=[], params_from_x8=[])
+        self.assertTrue(is_legacy_x8_endpoint(ep))
+        # Missing/None provenance is also legacy.
+        self.assertTrue(
+            is_legacy_x8_endpoint(
+                self._EP(x8_checked=True, param_records=None, params_from_x8=None)
+            )
+        )
+
+    def test_provenanced_endpoint_is_not_detected(self):
+        self.assertFalse(
+            is_legacy_x8_endpoint(
+                self._EP(
+                    param_records=[
+                        {"name": "q", "method": "GET", "location": "query", "source": "x8"}
+                    ]
+                )
+            )
+        )
+        self.assertFalse(
+            is_legacy_x8_endpoint(self._EP(params_from_x8=["q"]))
+        )
+        # Not-yet-checked rows are already pending, not "legacy".
+        self.assertFalse(is_legacy_x8_endpoint(self._EP(x8_checked=False)))
+
+    def test_dry_run_reports_without_modifying(self):
+        eps = [self._EP(x8_checked=True)]
+        with self._patch(eps):
+            count = requeue_legacy_x8(dry_run=True)
+        self.assertEqual(count, 1)
+        self.assertTrue(eps[0].x8_checked)
+        self.assertEqual(eps[0].saved, 0)
+
+    def test_requeue_changes_only_x8_checked(self):
+        ep = self._EP(
+            x8_checked=True,
+            param_records=[],
+            params_from_x8=[],
+            params=["_nks", "c"],
+            params_from_crawl=["_nks"],
+        )
+        with self._patch([ep]):
+            count = requeue_legacy_x8()
+        self.assertEqual(count, 1)
+        self.assertFalse(ep.x8_checked)
+        self.assertEqual(ep.saved, 1)
+        # Every other field is untouched.
+        self.assertEqual(ep.params, ["_nks", "c"])
+        self.assertEqual(ep.params_from_crawl, ["_nks"])
+        self.assertEqual(ep.param_records, [])
+        self.assertEqual(ep.params_from_x8, [])
+        self.assertEqual(ep.example_url, "https://x.test/p")
+
+    def test_requeue_skips_non_legacy_rows(self):
+        eps = [
+            self._EP(x8_checked=True),  # legacy -> requeued
+            self._EP(
+                x8_checked=True,
+                param_records=[
+                    {"name": "q", "method": "GET", "location": "query", "source": "x8"}
+                ],
+            ),  # provenanced -> skipped
+            self._EP(x8_checked=True, params_from_x8=["q"]),  # provenanced -> skipped
+            self._EP(x8_checked=False),  # already pending -> skipped
+        ]
+        with self._patch(eps):
+            count = requeue_legacy_x8()
+        self.assertEqual(count, 1)
+        self.assertFalse(eps[0].x8_checked)
+        self.assertTrue(eps[1].x8_checked)
+        self.assertTrue(eps[2].x8_checked)
+        self.assertFalse(eps[3].x8_checked)
+        self.assertEqual(eps[0].saved, 1)
+        self.assertEqual(eps[1].saved, 0)
+        self.assertEqual(eps[2].saved, 0)
+        self.assertEqual(eps[3].saved, 0)
+
+    def test_requeue_scans_checked_rows_and_honors_filter(self):
+        capture = {}
+        with self._patch([self._EP(x8_checked=True)], capture):
+            requeue_legacy_x8(filter_arg="DELL.com")
+        self.assertEqual(capture["objects"], {"x8_checked": True})
+        self.assertEqual(
+            capture["query"].filter_kwargs, {"subdomain__icontains": "dell.com"}
+        )
+
+    def test_main_recheck_mode_does_not_run_discovery(self):
+        eps = [self._EP(x8_checked=True)]
+        with self._patch(eps), mock.patch(
+            "crawl.watch_param_discovery.send_telegram"
+        ), mock.patch("crawl.watch_param_discovery.run_x8") as run_x8_mock, mock.patch(
+            "crawl.watch_param_discovery.get_pending_endpoints"
+        ) as get_pending_mock, mock.patch(
+            "crawl.watch_param_discovery.os.path.exists"
+        ), mock.patch.object(
+            sys, "argv", ["watch_param_discovery.py", "--recheck-legacy-x8", "--dry-run"]
+        ):
+            main()
+        run_x8_mock.assert_not_called()
+        get_pending_mock.assert_not_called()
+        self.assertTrue(eps[0].x8_checked)  # dry-run: unchanged
+        self.assertEqual(eps[0].saved, 0)
+
+    def test_main_recheck_applied_flips_x8_checked(self):
+        eps = [self._EP(x8_checked=True)]
+        with self._patch(eps), mock.patch(
+            "crawl.watch_param_discovery.send_telegram"
+        ), mock.patch("crawl.watch_param_discovery.run_x8") as run_x8_mock, mock.patch.object(
+            sys, "argv", ["watch_param_discovery.py", "--recheck-legacy-x8"]
+        ):
+            main()
+        run_x8_mock.assert_not_called()
+        self.assertFalse(eps[0].x8_checked)
+        self.assertEqual(eps[0].saved, 1)
 
 
 if __name__ == "__main__":  # pragma: no cover

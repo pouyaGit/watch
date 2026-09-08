@@ -21,9 +21,13 @@ Usage::
     python -m ai.research_cli batch --days 7 --limit 5
     python -m ai.research_cli batch --cves CVE-2026-1557,CVE-2026-0001
     python -m ai.research_cli batch --file cves.txt
+    python -m ai.research_cli validate-live --cve CVE-2026-1557 --target https://example.com
 
 ``check`` is fully offline except for a localhost MongoDB ping and
-performs no LLM or NVD calls.
+performs no LLM or NVD calls. ``validate-live`` is an offline dry-run
+by default (zero network); ``--live`` additionally requires
+``WATCH_AI_LIVE_VALIDATION=true`` or the lane blocks at the config
+gate before any execution.
 """
 
 from __future__ import annotations
@@ -135,6 +139,50 @@ def run_check() -> int:
         print("RESULT: NOT RUNNABLE")
         return 1
     print("RESULT: RUNNABLE (research-only, dry-run)")
+    return 0
+
+
+def run_validate_live(args: argparse.Namespace) -> int:
+    """Run the CVE-2026-1557 controlled live-validation lane.
+
+    Default is an offline dry-run: every pre-execution gate runs
+    (config/target/candidate/template/authorization/scope) but network
+    execution is NOT_PERFORMED -- zero traffic. Live execution
+    additionally requires BOTH WATCH_AI_LIVE_VALIDATION=true AND
+    --live; otherwise the lane blocks before any request.
+    """
+    from ai.live_validation.lane import ControlledLiveValidationLane
+
+    mode = "live" if getattr(args, "live", False) else "dry_run"
+    lane = ControlledLiveValidationLane()
+    result = lane.run(args.cve, args.target, mode=mode)
+
+    print("CONTROLLED LIVE VALIDATION REPORT")
+    print("=" * 60)
+    print(f"MODE: {'LIVE' if mode == 'live' else 'DRY_RUN'}")
+    print(f"CVE: {result.cve_id}")
+    print(f"TARGET: {result.target or '(none)'}")
+    print(f"STATUS: {result.status}")
+    for gate in result.gates:
+        print(f"  {gate.gate.upper()}: {gate.decision} {gate.reason}")
+    if result.blocked_reason:
+        print(f"BLOCKED: {result.blocked_reason}")
+    if result.execution is not None:
+        print(f"EXECUTION_ID: {result.execution.execution_id}")
+        print(f"EVIDENCE_ID: {result.execution.evidence_id}")
+        print(f"TEMPLATE_HASH: {result.execution.template_hash}")
+    if result.verification is not None:
+        print(
+            f"VERIFIER: {result.verification.verifier_version} "
+            f"{result.verification.reason_code}"
+        )
+    print("=" * 60)
+    print(
+        "NETWORK_EXECUTION: NOT_PERFORMED"
+        if mode == "dry_run"
+        else f"NETWORK_EXECUTION: {result.status}"
+    )
+    print("MODE: research-only (authoritative=False, dry-run default)")
     return 0
 
 
@@ -525,6 +573,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="collect/correlate only, skip the LLM call (batch CVE-list mode)",
     )
+
+    validate = sub.add_parser(
+        "validate-live",
+        help="controlled live validation lane for CVE-2026-1557 "
+        "(offline dry-run by default)",
+    )
+    validate.add_argument(
+        "--cve", required=True, help="CVE id (hard-scoped to CVE-2026-1557)"
+    )
+    validate.add_argument(
+        "--target",
+        default=None,
+        help="explicit target (required for execution; dry-run reports "
+        "the gate chain without network)",
+    )
+    validate.add_argument(
+        "--live",
+        action="store_true",
+        help="attempt live execution; also requires "
+        "WATCH_AI_LIVE_VALIDATION=true or the lane blocks at config",
+    )
     return parser
 
 
@@ -536,6 +605,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_research(args)
     if args.command == "batch":
         return run_batch(args)
+    if args.command == "validate-live":
+        return run_validate_live(args)
     return 2
 
 

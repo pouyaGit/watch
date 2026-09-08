@@ -29,9 +29,37 @@ from datetime import datetime
 from typing import Optional
 
 from backend.models import TaskRun
-from backend.tasks_registry import get_task, VENV_PYTHON
+from backend.tasks_registry import (
+    ALLOWED_SCRIPT_DIRS,
+    PROJECT_ROOT,
+    get_task,
+    VENV_PYTHON,
+)
 
 LOG_DIR = "/opt/watch/logs/tasks"
+
+
+def _assert_script_confined(script_path: str, task_id: str) -> None:
+    """Fail closed unless script_path is an allowlisted registry script.
+
+    The path must be normalized + absolute, resolve inside
+    PROJECT_ROOT, and live directly under one of ALLOWED_SCRIPT_DIRS
+    (mirrors the import-time registry validation). Pure path check
+    (no filesystem access): symlink games at the target are out of
+    scope for this phase, but registry data — the only source of this
+    path — is statically validated at import and never derived from
+    caller input.
+    """
+    if not isinstance(script_path, str) or not script_path:
+        raise ValueError(f"Unsafe script for task {task_id!r}")
+    normalized = os.path.normpath(script_path)
+    if not os.path.isabs(normalized) or normalized != script_path:
+        raise ValueError(f"Unsafe script for task {task_id!r}")
+    if os.path.commonpath([normalized, PROJECT_ROOT]) != PROJECT_ROOT:
+        raise ValueError(f"Unsafe script for task {task_id!r}")
+    rel_dir = os.path.dirname(os.path.relpath(normalized, PROJECT_ROOT))
+    if rel_dir not in ALLOWED_SCRIPT_DIRS:
+        raise ValueError(f"Unsafe script for task {task_id!r}")
 
 
 def _pid_alive(pid: Optional[int]) -> bool:
@@ -121,6 +149,13 @@ def run_task(task_id: str, triggered_by: str = "manual") -> TaskRun:
         raise ValueError(f"Unknown task_id: {task_id!r}")
 
     script_path = entry["script"]
+    # Phase P1 confinement (defense in depth behind the import-time
+    # registry validation): the script MUST resolve inside
+    # PROJECT_ROOT even if the in-memory registry was mutated after
+    # import. Checked BEFORE any TaskRun document or filesystem side
+    # effect. Spawn below uses an argv list with shell=False, so
+    # registry arguments can never become shell commands.
+    _assert_script_confined(script_path, task_id)
     if not os.path.isfile(script_path):
         raise FileNotFoundError(f"Script not found: {script_path}")
 

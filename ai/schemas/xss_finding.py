@@ -11,6 +11,11 @@ class XSSFinding(BaseModel):
 
     This represents the final assessment, not merely
     a reflected-input observation.
+
+    NON-AUTHORITATIVE at the pipeline level (Phase P1): legacy World A
+    output that cannot enter 5J materialization, 5J persistence, or the
+    5J notification seam. The authoritative finding is the 5J
+    ``SealedFinding`` (``sealed-finding/v1``) only.
     """
 
     finding_id: str

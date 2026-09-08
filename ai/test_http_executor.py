@@ -623,6 +623,140 @@ class HTTPEvidenceExecutorRedirectTests(unittest.TestCase):
             evidence.attempt_status, AttemptStatus.SUCCEEDED
         )
 
+    def test_same_registrable_domain_cross_host_redirect_is_followed(self):
+        attempt = _attempt(
+            endpoint="https://accessories.dell.com/sna/category.aspx",
+            parameter="k",
+        )
+        executor, session = _executor(
+            [
+                FakeResponse(
+                    302,
+                    body="hop",
+                    headers={"Location": "https://www.dell.com/en-us/x"},
+                ),
+                FakeResponse(200, body="<p>final clean page</p>"),
+            ]
+        )
+        evidence = executor.execute(attempt)
+
+        self.assertEqual(evidence.attempt_status, AttemptStatus.SUCCEEDED)
+        self.assertEqual(len(session.calls), 2)
+        self.assertTrue(
+            session.calls[1]["url"].startswith("https://www.dell.com")
+        )
+        self.assertIsNone(evidence.error_reason)
+
+    def test_cross_registrable_domain_redirect_rejected(self):
+        # A sibling-looking host on a different registrable
+        # domain must still be rejected.
+        attempt = _attempt()
+        executor, session = _executor(
+            [
+                FakeResponse(
+                    302,
+                    body="hop",
+                    headers={"Location": "https://evil.com/x"},
+                ),
+                FakeResponse(200, body="should not be reached"),
+            ]
+        )
+        evidence = executor.execute(attempt)
+
+        self.assertEqual(evidence.attempt_status, AttemptStatus.ERROR)
+        self.assertIn("cross_host_redirect_rejected", evidence.error_reason)
+        self.assertEqual(len(session.calls), 1)
+
+    def test_cross_port_redirect_rejected(self):
+        attempt = _attempt()
+        executor, _session = _executor(
+            [
+                FakeResponse(
+                    302,
+                    body="hop",
+                    headers={
+                        "Location": (
+                            "https://target.example.test:8443/final"
+                        )
+                    },
+                ),
+            ]
+        )
+        evidence = executor.execute(attempt)
+        self.assertEqual(evidence.attempt_status, AttemptStatus.ERROR)
+        self.assertIn("cross_port_redirect_rejected", evidence.error_reason)
+
+    def test_dell_cross_host_redirect_regression(self):
+        # Real end-to-end case:
+        #   accessories.la.dell.com -> www.dell.com
+        # must be followed to the final response instead of
+        # producing cross_host_redirect_rejected.
+        attempt = _attempt(
+            endpoint=(
+                "https://accessories.la.dell.com/sna/category.aspx"
+                "?k=Cr%C3%A9dito"
+            ),
+            parameter="k",
+        )
+        executor, session = _executor(
+            [
+                FakeResponse(
+                    302,
+                    body="hop",
+                    headers={
+                        "Location": (
+                            "https://www.dell.com/en-us/shop/accessories"
+                        )
+                    },
+                ),
+                FakeResponse(200, body="<p>final dell page</p>"),
+            ]
+        )
+        evidence = executor.execute(attempt)
+
+        self.assertEqual(evidence.attempt_status, AttemptStatus.SUCCEEDED)
+        self.assertNotIn("cross_host_redirect_rejected", evidence.error_reason or "")
+        self.assertEqual(evidence.response_status, 200)
+        self.assertEqual(len(session.calls), 2)
+        self.assertTrue(
+            session.calls[1]["url"].startswith("https://www.dell.com")
+        )
+
+    def test_dell_cross_host_redirect_final_403_is_waf_blocked(self):
+        # Following the redirect must not weaken WAF handling:
+        # a final 403 becomes WAF_BLOCKED evidence, not ERROR.
+        attempt = _attempt(
+            endpoint=(
+                "https://accessories.la.dell.com/sna/category.aspx"
+                "?k=Cr%C3%A9dito"
+            ),
+            parameter="k",
+        )
+        executor, session = _executor(
+            [
+                FakeResponse(
+                    302,
+                    body="hop",
+                    headers={
+                        "Location": (
+                            "https://www.dell.com/en-us/shop/accessories"
+                        )
+                    },
+                ),
+                FakeResponse(403, body="forbidden"),
+            ]
+        )
+        evidence = executor.execute(attempt)
+
+        self.assertEqual(
+            evidence.attempt_status, AttemptStatus.WAF_BLOCKED
+        )
+        self.assertEqual(evidence.response_status, 403)
+        self.assertEqual(
+            evidence.waf_observations[0].kind.value, "block"
+        )
+        self.assertEqual(len(session.calls), 2)
+
     def test_reflection_only_from_final_response(self):
         attempt = _attempt()
         executor, _session = _executor(
@@ -643,13 +777,15 @@ class HTTPEvidenceExecutorRedirectTests(unittest.TestCase):
         )
 
     def test_cross_host_redirect_rejected(self):
+        # evil.example.org has a different registrable domain
+        # (example.org) than the target (example.test).
         attempt = _attempt()
         executor, session = _executor(
             [
                 FakeResponse(
                     302,
                     body="hop",
-                    headers={"Location": "https://evil.example.test/x"},
+                    headers={"Location": "https://evil.example.org/x"},
                 ),
                 FakeResponse(200, body="should not be reached"),
             ]
@@ -791,7 +927,7 @@ class HTTPEvidenceExecutorBindingTests(unittest.TestCase):
                 FakeResponse(
                     302,
                     body="hop",
-                    headers={"Location": "https://evil.example.test/x"},
+                    headers={"Location": "https://evil.example.org/x"},
                 ),
             ]
         )

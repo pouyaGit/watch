@@ -1,5 +1,15 @@
-"""Production integration layer for the XSS analysis +
-verification pipeline.
+"""Legacy World A verification pipeline — NON-PRODUCTION (Phase P1).
+
+Small legacy use-case connector that chains orchestrator analysis to
+``XSSVerifier.verify`` (execute-and-judge, no 5B→5J authorization).
+NOT part of the frozen 5B→5J authority chain and MUST NOT be reached
+from any production path: the only production driver was
+watch_xss_verify (entrypoint permanently disabled in Phase 5K) and
+the task registry contains no entry that can reach it. Importable
+for offline unit tests only. There is no flag or environment
+variable that re-enables legacy production execution.
+
+Original design notes (kept for historical context):
 
 This module is the small, production-facing use-case that
 connects two fully tested stages without redesigning either:
@@ -48,9 +58,14 @@ from ai.verification.composite_executor import (
 from ai.verification.verifier import XSSVerifier
 
 __all__ = [
+    "LEGACY_NON_PRODUCTION",
     "XSSVerificationPipeline",
     "build_default_verifier",
 ]
+
+#: Explicit non-production marker (Phase P1). Offline tests may import
+#: this module; production code must never execute through it.
+LEGACY_NON_PRODUCTION = True
 
 
 class XSSVerificationPipeline:

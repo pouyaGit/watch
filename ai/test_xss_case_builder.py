@@ -520,6 +520,23 @@ class BuilderMethodLocationTests(unittest.TestCase):
         self.assertEqual(cases[0].method, "PUT")
         self.assertEqual(cases[0].parameter_location, "body")
 
+    def test_x8_patch_body_record(self):
+        # PATCH/body provenance must survive into its own case with
+        # the exact method/location (never downgraded to GET/query).
+        cases = _builder().build(
+            self._endpoint(
+                [{"name": "q", "method": "PATCH", "location": "body",
+                  "source": "x8"}]
+            )
+        )
+        self.assertEqual(len(cases), 1)
+        self.assertEqual(cases[0].method, "PATCH")
+        self.assertEqual(cases[0].parameter_location, "body")
+        self.assertEqual(cases[0].parameter, "q")
+        joined = "\n".join(cases[0].discovery_evidence)
+        self.assertIn("method:PATCH", joined)
+        self.assertIn("parameter_location:body", joined)
+
     def test_same_parameter_different_method_location_creates_two_cases(self):
         cases = _builder().build(
             self._endpoint(

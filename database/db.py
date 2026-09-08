@@ -14,6 +14,14 @@ from database.notifications import (
     notify_status_change,
     notify_new_http
 )
+# Change tracking for the dashboard "Recent Changes" timeline. Best-effort:
+# database/change_events.record_change()/record_changes() never raise, so the
+# crawler write path is unaffected even if event persistence fails.
+from database.change_events import (
+    build_recon_events,
+    record_change,
+    record_changes,
+)
 
 def current_time():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -24,14 +32,14 @@ def get_domain_name(url):
 
 # Connect to MongoDB
 # connect(db='watch', host='mongodb://127.0.0.1:27017/watch')
-# connect(
-#     db='watch',
-#     host='mongodb://pouya:YourStrongPassword123@127.0.0.1:27017/watch?authSource=admin'
-# )
 connect(
     db='watch',
-    host='mongodb://pouya:YourStrongPassword123@178.83.45.76:27017/?authSource=admin'
+    host='mongodb://pouya:YourStrongPassword123@127.0.0.1:27017/watch?authSource=admin'
 )
+# connect(
+#     db='watch',
+#     host='mongodb://pouya:YourStrongPassword123@178.83.45.76:27017/?authSource=admin'
+# )
 
 # Define the Programs model
 class Programs(Document):
@@ -152,6 +160,20 @@ class Endpoints(Document):
 # case was already verified: duplicate prevention is "skip when the
 # case_id already exists" (idempotent re-runs).
 class XssFindings(Document):
+    """LEGACY / NON-AUTHORITATIVE (Phase P1).
+
+    Historical World A persistence for the disabled watch_xss_verify
+    job. Rows may carry POTENTIAL/INCONCLUSIVE statuses, free
+    confidence values, and raw payload/evidence strings with no
+    version pins. This collection is NEVER an authoritative security
+    finding source: 5J findings are never written here, never read
+    from here, and never upgraded/downgraded through here. The sole
+    historical writer (watch_xss_verify.mongo_persist) belongs to a
+    permanently disabled entrypoint. Do not add new writers; do not
+    build dashboard/alert/store reads that treat these rows as
+    findings. Historical data is preserved as-is; no production Mongo
+    migration is introduced in this phase.
+    """
     case_id            = StringField(required=True, unique=True)
     finding_id         = StringField()      # primary (first) finding; None when no finding was produced
     finding_ids        = ListField(StringField(), default=[])
@@ -271,9 +293,13 @@ def upsert_lives(obj):
         existing.save()
 
         if changed_ip:
+            record_change(program_name, obj.get('subdomain'), "ip_changed",
+                          ", ".join(old_ips_sorted), ", ".join(new_ips_sorted))
             # notify_updated_live_subdomain_ip(obj.get('subdomain'), program_name)
             print(f"[{current_time()}] Updated Live subdomain: {obj.get('subdomain')} (ips changed)")
         if changed_cdn:
+            record_change(program_name, obj.get('subdomain'), "cdn_changed",
+                          old_cdn, new_cdn)
             # notify_updated_live_subdomain_cdn(obj.get('subdomain'), program_name, new_cdn)
             print(f"[{current_time()}] Updated Live subdomain: {obj.get('subdomain')} (cdn changed)")
         else:
@@ -290,6 +316,7 @@ def upsert_lives(obj):
             last_update=datetime.now()
         )
         new_live_subdomain.save()
+        record_change(program_name, obj.get('subdomain'), "new_live", "", new_cdn)
         # notify_new_live_subdomain(obj.get('subdomain'), program_name)
         print(f"[{current_time()}] Inserted new live subdomain: {obj.get('subdomain')}")
 
@@ -297,19 +324,33 @@ def upsert_lives(obj):
 
 def upsert_http(obj):
     program = Programs.objects(scopes=obj.get('scope')).first()
-    # program.program_name
-
     existing = Http.objects(subdomain=obj.get('subdomain')).first()
+    program_name = (
+        (existing.program_name if existing else None)
+        or (program.program_name if program else "Unknown")
+    )
+
     if existing:
         if obj.get('title') != existing.title:
             notify_title_change(obj.get('subdomain'), existing.title, obj.get('title'))
+            record_change(program_name, obj.get('subdomain'),
+                          "title_changed", existing.title, obj.get('title'))
             print(f"[{current_time()}] Title changed for {obj.get('subdomain')}: {existing.title} -> {obj.get('title')}")
             existing.title = obj.get('title')
 
         if obj.get('status_code') != existing.status_code:
             notify_status_change(obj.get('subdomain'), existing.status_code, obj.get('status_code'))
+            record_change(program_name, obj.get('subdomain'),
+                          "status_changed", existing.status_code, obj.get('status_code'))
             print(f"[{current_time()}] Status code changed for {obj.get('subdomain')}: {existing.status_code} -> {obj.get('status_code')}")
             existing.status_code = obj.get('status_code')
+
+        old_tech = sorted(set(existing.tech or []))
+        new_tech = sorted(set(obj.get('tech') or []))
+        if old_tech != new_tech:
+            record_change(program_name, obj.get('subdomain'),
+                          "technology_changed", ", ".join(old_tech), ", ".join(new_tech))
+            print(f"[{current_time()}] Tech changed for {obj.get('subdomain')}: {old_tech} -> {new_tech}")
 
         existing.ips = obj.get('ips')
         existing.tech = obj.get('tech')
@@ -321,7 +362,7 @@ def upsert_http(obj):
         existing.save()
     else:
         new_http = Http(
-            program_name = program.program_name,
+            program_name = program_name,
             subdomain    = obj.get('subdomain'),
             scope        = obj.get('scope'),
             ips          = obj.get('ips'),
@@ -336,7 +377,8 @@ def upsert_http(obj):
             last_update  = datetime.now()
         )
         new_http.save()
-        notify_new_http(obj.get('subdomain'), program.program_name)
+        record_change(program_name, obj.get('subdomain'), "new_http", "", obj.get('status_code'))
+        notify_new_http(obj.get('subdomain'), program_name)
         print(f"[{current_time()}] Inserted new http: {obj.get('subdomain')}")
     
     return True
@@ -450,6 +492,9 @@ def upsert_endpoint(program_name, subdomain, path, url, params):
             existing.params = sorted(set((existing.params or []) + params))
             _append_param_records(existing, new_params, method="GET", location="query", source="crawl")
             changed = True
+            # Genuinely-new params only (never fired for routine updates).
+            for p in sorted(new_params):
+                record_change(program_name, subdomain, "new_parameter", "", p)
         existing.hit_count = (existing.hit_count or 0) + 1
         if changed:
             existing.last_update = datetime.now()
@@ -474,6 +519,9 @@ def upsert_endpoint(program_name, subdomain, path, url, params):
         ],
         hit_count=1,
     ).save()
+    record_change(program_name, subdomain, "new_endpoint", "", path)
+    for p in sorted(set(params)):
+        record_change(program_name, subdomain, "new_parameter", "", p)
     return True
 
 
@@ -661,6 +709,12 @@ def bulk_store_crawl_results(entries):
     BATCH = 2000
     new_urls = 0
 
+    # Snapshot the existing endpoint state for the keys in this run BEFORE
+    # writing, so new_endpoint / new_parameter events can be recorded for
+    # genuinely new items only (never for routine hit-count updates).
+    ep_keys = list(ep_agg.keys())
+    ep_snapshot = _snapshot_endpoint_params(ep_keys)
+
     for i in range(0, len(url_ops), BATCH):
         try:
             result = urls_coll.bulk_write(url_ops[i:i + BATCH], ordered=False)
@@ -684,4 +738,47 @@ def bulk_store_crawl_results(entries):
                   f"in batch {i}-{i+BATCH} (continuing): "
                   f"{[we.get('errmsg', '')[:150] for we in write_errors[:3]]}")
 
+    # Record change events for genuinely new endpoints / parameters.
+    # ep_snapshot was taken before the write; if it failed (None) we skip
+    # event recording to avoid spurious events.
+    if ep_snapshot is not None:
+        events = build_recon_events(ep_agg, ep_snapshot)
+        if events:
+            record_changes(events)
+
     return new_urls
+
+
+def _snapshot_endpoint_params(keys):
+    """Best-effort pre-read of existing endpoint params for the given
+    (program, subdomain, path) keys. Returns a dict:
+        {(program, subdomain, path): set(param_names)}
+    for existing endpoints. A key absent from the dict means the endpoint
+    did not exist (```$setOnInsert``` will create it).
+
+    Chunked ($or of 300 clauses) so large crawl runs don't overload the
+    query parser. Returns ``None`` on any exception (caller skips event
+    recording for that run -- best-effort).
+    """
+    if not keys:
+        return {}
+    out = {}
+    coll = Endpoints._get_collection()
+    try:
+        CHUNK = 300
+        for i in range(0, len(keys), CHUNK):
+            chunk = keys[i:i + CHUNK]
+            clauses = [
+                {"program_name": p, "subdomain": s, "path": pth}
+                for (p, s, pth) in chunk
+            ]
+            for doc in coll.find(
+                {"$or": clauses},
+                {"program_name": 1, "subdomain": 1, "path": 1, "params": 1},
+            ):
+                key = (doc["program_name"], doc["subdomain"], doc["path"])
+                out[key] = set(doc.get("params") or [])
+    except Exception:
+        print(f"[_snapshot_endpoint_params] snapshot failed -- skipping event recording")
+        return None
+    return out

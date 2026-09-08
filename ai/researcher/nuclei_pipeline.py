@@ -8,7 +8,10 @@ from ai.collectors.nuclei_template import NucleiTemplateParser
 from ai.correlator.nuclei_decision import NucleiDecisionEngine
 from ai.correlator.nuclei_generator import NucleiTemplateGenerator
 from ai.correlator.nuclei_validator import NucleiSemanticValidator
-from ai.correlator.watch_targets import WatchAssetSelector
+from ai.correlator.watch_targets import (
+    WatchAssetSelector,
+    WatchTargetSelection,
+)
 from ai.researcher.nuclei_runner import NucleiRunner
 from ai.schemas.finding import NucleiFinding
 from ai.schemas.research import ResearchResult
@@ -39,6 +42,17 @@ class NucleiPipeline:
     Finding normalization
 
     Live scanning is not performed by this class.
+
+    Two preparation lanes exist:
+
+    - ``prepare_for_watch``: full preparation including
+      ``nuclei -validate`` (subprocess) and Watch target selection
+      (which may perform live HTTP fingerprinting for ecosystem
+      matches). Not network-free.
+    - ``prepare_offline``: research-only preparation over a
+      caller-provided ``WatchTargetSelection``. Performs no HTTP,
+      no DNS, no sockets, no subprocesses, no Nuclei execution,
+      and no asset fingerprinting.
     """
 
     def __init__(
@@ -365,6 +379,275 @@ class NucleiPipeline:
             findings_path
         )
         
+        return result
+
+    def prepare_offline(
+        self,
+        *,
+        cve,
+        research: ResearchResult,
+        source_template: str | Path,
+        selection: WatchTargetSelection,
+        name: str,
+        severity: str = "high",
+        description: str = "",
+        tags: list[str] | None = None,
+    ) -> dict:
+        """
+        Research-only offline Nuclei preparation.
+
+        DetectionSpec
+            ↓
+        Decision
+            ↓
+        Generate
+            ↓
+        Semantic validation
+            ↓
+        Dry-run (caller-provided selection)
+            ↓
+        Finding normalization
+
+        Guarantees (by construction, not by flag):
+
+        - No HTTP requests, no DNS, no sockets.
+        - No subprocesses: ``nuclei -validate`` is skipped.
+        - No Nuclei execution: only ``NucleiRunner.dry_run`` is used.
+        - No asset fingerprinting: the caller provides an
+          already-known ``WatchTargetSelection``; this method never
+          touches ``WatchAssetSelector`` / ``HTTPFingerprintRunner``.
+
+        Findings are informational only (``matched`` stays false) and
+        never authoritative.
+        """
+
+        cve_id = cve.title
+        source_path = Path(source_template)
+
+        if not source_path.exists():
+            raise FileNotFoundError(
+                f"Source template not found: {source_path}"
+            )
+
+        if selection.cve_id != cve_id:
+            raise ValueError(
+                "Selection CVE mismatch: "
+                f"selection={selection.cve_id!r} "
+                f"cve={cve_id!r}"
+            )
+
+        result = {
+            "cve_id": cve_id,
+            "mode": "research-only-offline",
+            "offline": True,
+            "fingerprint_performed": False,
+            "nuclei_binary_validated": False,
+            "decision": None,
+            "decision_confidence": 0.0,
+            "generated": False,
+            "semantic_valid": False,
+            "nuclei_valid": False,
+            "template_path": None,
+            "candidate_count": selection.candidate_count,
+            "target_count": len(selection.targets),
+            "targets": [],
+            "run_results": [],
+            "findings": [],
+            "errors": [],
+            "warnings": [
+                "nuclei -validate skipped: offline preparation "
+                "performs no subprocesses.",
+                "Target fingerprinting not performed: offline "
+                "preparation performs no network access; scope "
+                "states reflect the caller-provided selection.",
+            ],
+        }
+
+        # --------------------------------------------------
+        # DetectionSpec
+        # --------------------------------------------------
+
+        try:
+            source_content = source_path.read_text(
+                encoding="utf-8"
+            )
+
+            detection = self.parser.parse(
+                content=source_content,
+                cve_id=cve_id,
+            )
+        except Exception as exc:
+            result["errors"].append(
+                f"DetectionSpec error: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return result
+
+        # --------------------------------------------------
+        # Decision
+        # --------------------------------------------------
+
+        try:
+            decision = self.decision_engine.decide(
+                cve=cve,
+                research=research,
+                detection=detection,
+            )
+        except Exception as exc:
+            result["errors"].append(
+                f"Decision error: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return result
+
+        result["decision"] = decision.decision
+        result["decision_confidence"] = decision.confidence
+
+        if decision.decision != "GOOD_CANDIDATE":
+            result["warnings"].append(
+                "Pipeline stopped before generation: "
+                f"decision={decision.decision}"
+            )
+            return result
+
+        # --------------------------------------------------
+        # Generate
+        # --------------------------------------------------
+
+        template_path = (
+            self.output_dir
+            / f"{cve_id}.yaml"
+        )
+
+        try:
+            generated_content = self.generator.generate(
+                detection,
+                name=name,
+                author="watch-ai",
+                severity=severity,
+                description=description,
+                tags=tags,
+            )
+
+            template_path.write_text(
+                generated_content,
+                encoding="utf-8",
+            )
+
+            result["generated"] = True
+            result["template_path"] = str(
+                template_path
+            )
+        except Exception as exc:
+            result["errors"].append(
+                f"Generation error: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return result
+
+        # --------------------------------------------------
+        # Semantic validation
+        # --------------------------------------------------
+
+        try:
+            semantic = self.validator.validate(
+                detection,
+                generated_content,
+            )
+        except Exception as exc:
+            result["errors"].append(
+                f"Semantic validation error: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return result
+
+        result["semantic_valid"] = semantic.valid
+        result["errors"].extend(semantic.errors)
+        result["warnings"].extend(semantic.warnings)
+
+        if not semantic.valid:
+            return result
+
+        # --------------------------------------------------
+        # Dry-run (offline: command construction only)
+        # --------------------------------------------------
+
+        try:
+            run_results = self.runner.dry_run(
+                selection=selection,
+                template_path=template_path,
+            )
+
+            result["run_results"] = [
+                {
+                    "target": item.target,
+                    "program": item.program,
+                    "status": item.status,
+                    "command": item.command,
+                    "output": item.output,
+                    "error": item.error,
+                }
+                for item in run_results
+            ]
+
+            result["targets"] = [
+                {
+                    "target": target.target,
+                    "program": target.program,
+                    "technology": target.technology,
+                    "product_match": target.product_match,
+                    "version_status": (
+                        target.version_status
+                    ),
+                    "presence_status": (
+                        target.presence_status
+                    ),
+                    "scope_status": (
+                        target.scope_status
+                    ),
+                    "scope_reason": (
+                        target.scope_reason
+                    ),
+                }
+                for target in selection.targets
+            ]
+
+        except Exception as exc:
+            result["errors"].append(
+                f"Nuclei dry-run error: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return result
+
+        # --------------------------------------------------
+        # Finding normalization
+        #
+        # Dry-run findings are informational only.
+        # matched remains false because Nuclei was not run.
+        # --------------------------------------------------
+
+        findings = self.runner.to_findings(
+            cve_id=cve_id,
+            template_id=cve_id,
+            severity=severity,
+            selection=selection,
+            results=run_results,
+        )
+
+        result["findings"] = [
+            finding.model_dump()
+            for finding in findings
+        ]
+
+        findings_path = self.save_findings(
+            findings=findings,
+            cve_id=cve_id,
+        )
+
+        result["findings_path"] = str(
+            findings_path
+        )
+
         return result
 
     def save_result(

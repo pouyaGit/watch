@@ -322,14 +322,17 @@ class FakePage:
     ) -> None:
         if "response" in self._listeners:
             class Req:
-                from_main_frame = from_main_frame
+                def __init__(self, f):
+                    self.from_main_frame = f
 
             class Resp:
                 def __init__(self, u, r):
                     self.url = u
                     self.request = r
 
-            self._listeners["response"](Resp(url, Req()))
+            self._listeners["response"](
+                Resp(url, Req(from_main_frame))
+            )
 
     def emit_crash(self) -> None:
         if "crash" in self._listeners:

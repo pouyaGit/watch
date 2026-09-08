@@ -104,6 +104,61 @@ def stringify_affected_version(value: Any) -> str:
     return str(value)
 
 
+def stringify_affected_product(value: Any) -> str | None:
+    """
+    Normalize an affected-product entry to a canonical string.
+
+    The LLM occasionally emits objects such as::
+
+        {"name": "WP Responsive Images", "type": "WordPress Plugin"}
+
+    instead of the schema-required plain string. This normalizer runs
+    at the LLM-output boundary (``mode="before"`` validation), keeping
+    the public schema strictly ``list[str]``:
+
+    - string -> unchanged (existing behavior preserved verbatim)
+    - dict with ``name`` -> the name
+    - dict with ``name`` + ``type`` -> ``"name (type)"``
+    - malformed/empty dict (no usable ``name``) -> ``None`` so the
+      caller drops the item instead of inventing a product name
+    - ``None`` -> ``None`` (dropped)
+    - other scalars -> ``str(value)`` (dropped when empty)
+    - other containers (list/tuple/set) -> ``None`` (dropped)
+    """
+
+    if value is None:
+        return None
+
+    if isinstance(value, str):
+        return value
+
+    if isinstance(value, dict):
+        name = value.get("name")
+        product_type = value.get("type")
+
+        name_text = str(name).strip() if name is not None else ""
+        type_text = (
+            str(product_type).strip()
+            if product_type is not None
+            else ""
+        )
+
+        if name_text and type_text:
+            return f"{name_text} ({type_text})"
+
+        if name_text:
+            return name_text
+
+        return None
+
+    if isinstance(value, (list, tuple, set)):
+        return None
+
+    text = str(value)
+
+    return text if text.strip() else None
+
+
 class ResearchResult(BaseModel):
     title: str
     summary: str
@@ -156,6 +211,33 @@ class ResearchResult(BaseModel):
     evidence: list[str] = Field(
         default_factory=list
     )
+
+    @field_validator(
+        "affected_products",
+        mode="before",
+    )
+    @classmethod
+    def normalize_products(
+        cls,
+        value,
+    ):
+        if value is None:
+            return []
+
+        if not isinstance(value, list):
+            value = [value]
+
+        normalized: list[str] = []
+
+        for item in value:
+            text = stringify_affected_product(item)
+
+            if text is None:
+                continue
+
+            normalized.append(text)
+
+        return normalized
 
     @field_validator(
         "evidence",

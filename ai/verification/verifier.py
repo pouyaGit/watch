@@ -1,4 +1,22 @@
+"""Legacy World A execute-and-judge verifier — NON-PRODUCTION (Phase P1).
+
+Collapses execution + classification + finding construction into one
+call graph with no 5B authorization, no 5C/5D gating, and no 5H
+sealing. NOT part of the frozen 5B→5J authority chain and MUST NOT be
+reached from any production path: the only production driver was
+watch_xss_verify (entrypoint permanently disabled in Phase 5K) and
+the task registry contains no entry that can reach it. The oracle
+predicates in ``ai.verification.oracle`` remain pure and untouched;
+only this BINDING around them is legacy. Importable for offline unit
+tests only. There is no flag or environment variable that re-enables
+legacy production execution.
+"""
+
 from __future__ import annotations
+
+#: Explicit non-production marker (Phase P1). Offline tests may import
+#: this module; production code must never execute through it.
+LEGACY_NON_PRODUCTION = True
 
 import hashlib
 import re

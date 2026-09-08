@@ -6,6 +6,13 @@ from pydantic import BaseModel, Field
 
 
 class NucleiFinding(BaseModel):
+    """NON-AUTHORITATIVE research record (Phase P1).
+
+    Carries caller-supplied severity, a stdout-derived ``matched``
+    flag, and unbounded ``raw_output``. NEVER an authoritative
+    security finding: it cannot enter 5J materialization, 5J
+    persistence, or the 5J notification seam. History/research only.
+    """
     cve_id: str
     target: str
     program: str

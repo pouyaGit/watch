@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """
+LEGACY DISABLED (Phase 5K, P0-1): the production entrypoint in this
+module is permanently disabled. World A live execution + direct
+XssFindings persistence bypasses 5B–5J authorization and MUST NOT run.
+The 5B→5J pipeline is required. No bypass flag exists and none will
+be added. Remaining symbols stay importable for offline unit tests
+only; they are non-authoritative and non-runnable in production.
+
 watch_xss_verify.py -- Production XSS verification job (Watch layer).
 
 Production position (scheduler wiring happens later; this file does
@@ -92,6 +99,19 @@ DEFAULT_MAX_CASES = 50
 FINDING_DOCUMENT_LIMIT = 20
 DISCOVERY_EVIDENCE_LIMIT = 32
 RUNNER_NAME = "watch_xss_verify"
+
+#: Phase 5K (P0-1): the legacy World A production path is permanently
+#: disabled. There is intentionally NO flag / environment variable to
+#: re-enable it — a runtime flag would leave the bypass alive.
+LEGACY_PRODUCTION_DISABLED = True
+
+LEGACY_DISABLED_MESSAGE = (
+    "watch_xss_verify legacy verifier pipeline is disabled (Phase 5K): "
+    "World A live execution (HTTP/browser) plus direct XssFindings "
+    "persistence bypasses 5B authorization, 5C/5D gating, sealed "
+    "5E/5F/5G executors, 5H evidence, 5I classification, and 5J finding "
+    "materialization. The 5B->5J pipeline is required."
+)
 
 START_TIME = time.monotonic()
 
@@ -299,6 +319,7 @@ def iter_pending_endpoints(filter_arg=None):
 
 
 def mongo_already_verified(case_id: str) -> bool:
+    """LEGACY writer-side read (Phase P1): only the disabled job calls this."""
     from database.db import XssFindings
 
     return (
@@ -309,6 +330,10 @@ def mongo_already_verified(case_id: str) -> bool:
 
 def mongo_persist(case, result) -> bool:
     """
+    LEGACY writer (Phase P1): historical XssFindings persistence for the
+    permanently disabled entrypoint. Non-authoritative; 5J findings are
+    never written here. Importable for offline unit tests only.
+
     Persist one case result. Idempotent: the unique case_id index
     turns a concurrent/repeated write into a benign skip.
     """
@@ -449,69 +474,19 @@ def run_job(
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Verify pending XSS cases against the Watch "
-        "endpoint inventory and persist findings."
-    )
-    parser.add_argument(
-        "--filter",
-        default=None,
-        help="only endpoints whose subdomain contains this keyword",
-    )
-    parser.add_argument(
-        "--max-cases",
-        type=int,
-        default=DEFAULT_MAX_CASES,
-        help="stop after N newly verified cases "
-        f"(default: {DEFAULT_MAX_CASES})",
-    )
-    parser.add_argument(
-        "--max-minutes",
-        type=float,
-        default=None,
-        help="stop when this wall-clock budget is exhausted",
-    )
-    parser.add_argument(
-        "--provider",
-        default=None,
-        help="LLM provider override (openrouter | avalai); "
-        "defaults to AI_PROVIDER from the environment",
-    )
-    args = parser.parse_args(argv)
+    """Legacy production entrypoint — PERMANENTLY DISABLED (5K, P0-1).
 
-    if args.max_cases <= 0:
-        parser.error("--max-cases must be a positive integer")
-    if args.max_minutes is not None and args.max_minutes <= 0:
-        parser.error("--max-minutes must be a positive number")
-
-    log(
-        f"=== XSS Verification Started | filter={args.filter or 'NONE'} | "
-        f"max_cases={args.max_cases} | "
-        f"max_minutes={args.max_minutes or 'unlimited'} ==="
-    )
-
-    try:
-        pipeline = build_production_pipeline(
-            provider_name=args.provider
-        )
-    except Exception as exc:  # noqa: BLE001
-        # Provider construction errors are configuration errors
-        # (e.g. missing credentials in the environment). They never
-        # include the credential value itself.
-        log(
-            f"Pipeline construction failed: "
-            f"{type(exc).__name__}: {exc}"
-        )
-        return 1
-
-    run_job(
-        pipeline=pipeline,
-        max_cases=args.max_cases,
-        max_minutes=args.max_minutes,
-        filter_arg=args.filter,
-    )
-    return 0
+    Fails closed BEFORE any execution begins: no pipeline construction,
+    no MongoDB, no LLM, no network, no browser. Returns 2 with a
+    clear message directing operators to the 5B→5J pipeline.
+    Offline unit-test helpers with injected fakes remain importable
+    for tests; they are non-authoritative and have no production
+    execution entrypoint.
+    """
+    print(LEGACY_DISABLED_MESSAGE, file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":
+    # Permanently disabled: fails closed via main(), never executes.
     sys.exit(main())

@@ -115,3 +115,96 @@ Before completion:
 
 ```bash
 git diff --check
+```
+
+## Agent Reports
+
+Every task that requires a report, audit, review, implementation report,
+design review, investigation report, or similar deliverable MUST follow
+this mandatory workflow:
+
+1. Create the report inside `agent-reports/`.
+2. Never create task reports in the project root.
+3. If `agent-reports/` does not exist, create it.
+4. Report filenames must be descriptive and task-specific.
+
+   Examples:
+
+   - `agent-reports/xss-oracle-implementation-report.md`
+   - `agent-reports/xss-oracle-review-report.md`
+   - `agent-reports/xss-confirmation-state-machine-review.md`
+
+5. Before creating a report, if a report with the exact same filename
+   already exists, delete it and create the new report FROM SCRATCH.
+6. Never append to an old report when the task explicitly requires a fresh
+   report.
+7. The report must contain only the results of the current task/review
+   unless the task explicitly asks for historical information.
+8. At the end of every task that produces a report, tell the user the exact
+   relative path of the generated report.
+
+   Example:
+
+   ```
+   Report:
+   agent-reports/xss-oracle-review-report.md
+   ```
+
+9. The user will retrieve/upload that report to the supervising ChatGPT
+   instance for review. Therefore, do NOT merely summarize the report in
+   the final response when the report itself is requested.
+10. Verify that the report exists before finishing.
+
+    Example:
+
+    ```bash
+    ls -la agent-reports/<report-name>.md
+    wc -l agent-reports/<report-name>.md
+    ```
+
+11. Keep the project root clean. Temporary reports, audit reports,
+    implementation reports, design reviews, investigation reports, and
+    similar agent-generated documentation belong under `agent-reports/`
+    unless the task explicitly requires another location.
+12. Do not move existing canonical project documentation into
+    `agent-reports/`. Files such as README.md, architecture documentation,
+    or other project documentation remain where the project architecture
+    requires them.
+13. When a task prompt explicitly specifies a report path outside
+    `agent-reports/`, follow the latest explicit user instruction for that
+    task, but otherwise `agent-reports/` is mandatory.
+
+### Report Naming
+
+Prefer the form:
+
+```
+<area>-<task>-<type>.md
+```
+
+Examples:
+
+- `xss-oracle-implementation-report.md`
+- `xss-oracle-review-report.md`
+- `xss-confirmation-design-review.md`
+- `cve-pipeline-audit-report.md`
+
+Avoid generic names such as:
+
+- `report.md`
+- `final.md`
+- `notes.md`
+- `output.md`
+
+The filename should make the report's purpose obvious without opening it.
+
+### Final Response
+
+Whenever a report is generated, the final response must include:
+
+```
+Report generated:
+agent-reports/<exact-filename>.md
+```
+
+If relevant, also include the line count.

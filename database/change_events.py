@@ -13,10 +13,13 @@ the real work.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Iterable
 
 from mongoengine import DateTimeField, Document, StringField
+
+_log = logging.getLogger("watch.change_events")
 
 # event_type vocabulary (used by the UI to group/colour events)
 EVENT_TYPES = {
@@ -105,16 +108,34 @@ def _safe(value) -> str:
     return s[:4000]
 
 
+def _log_persist_failure(op, program_name, event_type, exc):
+    """Log a change-event persistence failure without leaking secrets.
+
+    Only the exception class and the first 200 chars of the message are
+    emitted. ``old_value`` / ``new_value`` are deliberately NOT logged --
+    they can carry user-controlled input (titles, paths, IPs, ...).
+    """
+    try:
+        msg = str(exc)[:200]
+    except Exception:
+        msg = "<unprintable>"
+    _log.warning(
+        "change_events %s failed: program=%s event_type=%s exc=%s msg=%s",
+        op, program_name, event_type, type(exc).__name__, msg,
+    )
+
+
 def record_change(program_name, subdomain, event_type, old_value="", new_value=""):
     """Persist one change event (best-effort).
 
     Missing/unknown event types and empty program names are ignored. Any
     Mongo/validation error is swallowed so the caller (a crawler upsert)
-    is never interrupted by change tracking.
+    is never interrupted by change tracking, but a structured warning is
+    logged so silent breakage is observable in the next pipeline log.
     """
+    if not program_name or event_type not in EVENT_TYPES:
+        return
     try:
-        if not program_name or event_type not in EVENT_TYPES:
-            return
         ChangeEvent(
             program_name=program_name,
             subdomain=subdomain or "",
@@ -123,8 +144,8 @@ def record_change(program_name, subdomain, event_type, old_value="", new_value="
             new_value=_safe(new_value),
             created_date=datetime.now(),
         ).save()
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_persist_failure("record_change", program_name, event_type, exc)
 
 
 def record_changes(events: Iterable[tuple]) -> int:
@@ -132,10 +153,17 @@ def record_changes(events: Iterable[tuple]) -> int:
 
     ``events`` items: (program_name, subdomain, event_type, old, new).
     Invalid entries are skipped silently. Returns the number of valid
-    events submitted. Never raises.
+    events submitted. Never raises, but logs a structured warning on
+    Mongo/validation failure so silent breakage is observable.
     """
-    try:
-        docs = [
+    docs = []
+    last_program = None
+    last_event_type = None
+    for (p, s, t, o, n) in events:
+        last_program, last_event_type = p, t
+        if not p or t not in EVENT_TYPES:
+            continue
+        docs.append(
             ChangeEvent(
                 program_name=p,
                 subdomain=s or "",
@@ -144,14 +172,19 @@ def record_changes(events: Iterable[tuple]) -> int:
                 new_value=_safe(n),
                 created_date=datetime.now(),
             )
-            for (p, s, t, o, n) in events
-            if p and t in EVENT_TYPES
-        ]
-        if not docs:
-            return 0
+        )
+    if not docs:
+        return 0
+    try:
         ChangeEvent.objects.insert(docs, load_bulk=False)
         return len(docs)
-    except Exception:
+    except Exception as exc:
+        _log_persist_failure(
+            "record_changes",
+            last_program or "<unknown>",
+            last_event_type or "<unknown>",
+            exc,
+        )
         return 0
 
 

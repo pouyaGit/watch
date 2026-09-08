@@ -9,16 +9,15 @@ from ai.collectors.cve import CVECollector
 from ai.collectors.http import HTTPCollector
 from ai.collectors.reference import ReferenceCollector
 from ai.collectors.reference_ranker import ReferenceRanker
+from ai.config import require_mongo_uri
 from ai.correlator.assessment import assess_asset
 from ai.correlator.candidates import candidate_assets
 from ai.correlator.index import TechnologyIndex
 from ai.researcher.researcher import SecurityResearcher
 
 
-URI = (
-    "mongodb://pouya:YourStrongPassword123@"
-    "178.83.45.76:27017/?authSource=admin"
-)
+def _mongo_uri() -> str:
+    return require_mongo_uri()
 
 RESEARCH_DIR = Path("ai_data/research")
 
@@ -96,7 +95,7 @@ def main():
 
     print("Loading Watch assets...")
 
-    http = HTTPCollector(URI)
+    http = HTTPCollector(_mongo_uri())
     assets = http.all()
     http.close()
 
