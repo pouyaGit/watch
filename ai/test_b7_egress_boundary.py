@@ -44,6 +44,10 @@ Covers the B7-G/B7-H boundary contract:
 from __future__ import annotations
 
 import ipaddress
+import os
+import shutil
+import subprocess
+import tempfile
 import unittest
 from dataclasses import replace
 from unittest import mock
@@ -56,13 +60,19 @@ from ai.execution.b3_boundary import (
     check_egress_dial,
 )
 from ai.execution.netns_sandbox import (
+    EgressRule,
     NetnsCapabilities,
     NetnsRuleSet,
     SandboxError,
     SandboxedRunResult,
+    check_iptables_state,
+    check_nft_ruleset,
     check_nuclei_egress_dial,
     netns_rules_for_policy,
     probe_netns_capabilities,
+    render_iptables_plan,
+    render_nft_script,
+    render_nft_statements,
     require_default_deny,
     require_no_default_route,
     run_nuclei_in_sandbox,
@@ -735,6 +745,498 @@ class LiveEgressDisabledTests(unittest.TestCase):
                     version_reader=lambda: "[INF] Nuclei Engine Version: v3.10.0",
                 )
         self.assertEqual(ctx.exception.code, "VERSION_MISMATCH")
+
+
+# ------------------------------------------------------------------
+# B8.1 sandbox fixes (offline; kernel-compile test skips without nft).
+#
+# 31. nft renderer emits kernel-valid structure (two chains, one hook
+#     each, family-correct matches, default DROP)
+# 32. generated nft script is accepted by real `nft -c -f` when runnable
+# 33. verify() handles bytes output (B8.1-B regression: no TypeError)
+# 34. verify() enforces the full contract (policies, exact allowlist,
+#     no unexpected ACCEPT, established return, empty NAT)
+# 35. approved TCP return path exists; wrong IP/port/UDP stay blocked
+# ------------------------------------------------------------------
+
+
+def _b81_policy() -> object:
+    authz, resolution, evaluation = _nuclei_bindings()
+    return _nuclei_policy(authz, resolution, evaluation)
+
+
+def _b81_ruleset() -> NetnsRuleSet:
+    return netns_rules_for_policy(_b81_policy())
+
+
+_B81_IPTABLES_OUTPUT = """\
+-P OUTPUT DROP
+-A OUTPUT -d 8.8.8.8/32 -p tcp -m tcp --dport 443 -j ACCEPT
+-A OUTPUT -d 169.254.169.254/32 -p tcp -j DROP
+-A OUTPUT -d 169.254.169.254/32 -p udp -j DROP
+-A OUTPUT -p udp -m udp --dport 53 -j DROP
+-A OUTPUT -p udp -j DROP
+"""
+
+_B81_IPTABLES_INPUT = """\
+-P INPUT DROP
+-A INPUT -p tcp -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+"""
+
+_B81_IPTABLES_NAT = """\
+-P PREROUTING ACCEPT
+-P INPUT ACCEPT
+-P OUTPUT ACCEPT
+-P POSTROUTING ACCEPT
+"""
+
+_B81_IP6TABLES_OUTPUT = """\
+-P OUTPUT DROP
+-A OUTPUT -p udp -m udp --dport 53 -j DROP
+-A OUTPUT -p udp -j DROP
+"""
+
+_B81_NFT_DUMP = """\
+table inet watch {
+\tchain output {
+\t\ttype filter hook output priority filter; policy drop;
+\t\tip daddr 8.8.8.8 ip protocol tcp tcp dport 443 accept
+\t\tip daddr 169.254.169.254 ip protocol tcp drop
+\t\tip daddr 169.254.169.254 ip protocol udp drop
+\t\tudp dport 53 drop
+\t\tip protocol udp drop
+\t\tip6 nexthdr udp drop
+\t}
+\tchain input {
+\t\ttype filter hook input priority filter; policy drop;
+\t\tct state established,related ip protocol tcp accept
+\t\tct state established,related ip6 nexthdr tcp accept
+\t}
+}
+"""
+
+
+def _b81_dispatch(dumps: dict[tuple[str, ...], object]):
+    """Build a fake ``_run_checked`` serving canned BYTES dumps."""
+
+    def _fake(
+        cmd: object,
+        code: str,
+        detail: str,
+        timeout: float = 30.0,
+        input_text: object = None,
+    ) -> object:
+        assert isinstance(cmd, (list, tuple))
+        # The tool element may be an absolute path in production
+        # (``shutil.which``); compare basenames element-wise.
+        full = tuple(os.path.basename(part) for part in cmd)
+        for suffix, payload in dumps.items():
+            want = tuple(os.path.basename(part) for part in suffix)
+            if full[-len(want):] == want:
+                if isinstance(payload, Exception):
+                    raise payload
+                return payload
+        raise AssertionError(f"unexpected command: {cmd!r}")
+
+    return _fake
+
+
+def _b81_handle() -> object:
+    from ai.execution.netns_sandbox import _NamespaceHandle
+
+    return _NamespaceHandle(
+        name="watch-ex-b8100000000000000000000000000001",
+        execution_id="ex-b8100000000000000000000000000001",
+    )
+
+
+class NftRenderB81Tests(unittest.TestCase):
+    def test_approved_tuple_accept_statement(self) -> None:
+        script = render_nft_script(_b81_ruleset())
+        self.assertIn(
+            "ip daddr 8.8.8.8 ip protocol tcp tcp dport 443 accept", script
+        )
+
+    def test_two_chains_single_hook_each(self) -> None:
+        script = render_nft_script(_b81_ruleset())
+        self.assertEqual(script.count("chain output"), 1)
+        self.assertEqual(script.count("chain input"), 1)
+        self.assertEqual(script.count("type filter hook"), 2)
+        self.assertEqual(script.count("policy drop"), 2)
+
+    def test_explicit_drops_and_no_broad_accept(self) -> None:
+        script = render_nft_script(_b81_ruleset())
+        self.assertIn("ip daddr 169.254.169.254 ip protocol tcp drop", script)
+        self.assertIn("ip daddr 169.254.169.254 ip protocol udp drop", script)
+        self.assertIn("udp dport 53 drop", script)
+        self.assertIn("ip protocol udp drop", script)
+        self.assertIn("ip6 nexthdr udp drop", script)
+        self.assertNotIn("udp accept", script)
+        self.assertNotIn("ACCEPT", script)
+
+    def test_established_return_statements(self) -> None:
+        script = render_nft_script(_b81_ruleset())
+        self.assertIn(
+            "ct state established,related ip protocol tcp accept", script
+        )
+        self.assertIn(
+            "ct state established,related ip6 nexthdr tcp accept", script
+        )
+
+    def test_ipv6_tuple_renders_family_correct(self) -> None:
+        ruleset = NetnsRuleSet(
+            rules=(
+                EgressRule(
+                    "ACCEPT", "OUTPUT", "tcp", "2001:4860:4860::8888", 443
+                ),
+            )
+        )
+        script = render_nft_script(ruleset)
+        self.assertIn(
+            "ip6 daddr 2001:4860:4860::8888 ip6 nexthdr tcp tcp dport 443 accept",
+            script,
+        )
+        self.assertNotIn("ip daddr 2001", script)
+
+    def test_broad_accept_refused(self) -> None:
+        for bad in (
+            EgressRule("ACCEPT", "OUTPUT", "tcp"),
+            EgressRule("ACCEPT", "OUTPUT", "udp", "8.8.8.8", 443),
+            EgressRule("ACCEPT", "OUTPUT", "tcp", "8.8.8.8", None),
+            EgressRule("ACCEPT", "INPUT", "tcp", "8.8.8.8", 443),
+        ):
+            with self.assertRaises(SandboxError):
+                render_nft_statements(bad)
+
+    def test_iptables_plan_exact_lines(self) -> None:
+        lines: dict[str, list[str]] = {}
+        for rule in _b81_ruleset().rules:
+            for front, args in render_iptables_plan(rule):
+                lines.setdefault(front, []).append("-A OUTPUT " + " ".join(args))
+        self.assertEqual(
+            lines["iptables"],
+            [line for line in _B81_IPTABLES_OUTPUT.splitlines() if line.startswith("-A")],
+        )
+        self.assertEqual(
+            lines["ip6tables"],
+            [line for line in _B81_IP6TABLES_OUTPUT.splitlines() if line.startswith("-A")],
+        )
+
+
+class NftCompileB81Tests(unittest.TestCase):
+    def test_generated_script_compiles_with_real_nft(self) -> None:
+        script = render_nft_script(_b81_ruleset())
+        # Structural proof that always runs (no tooling needed).
+        self.assertTrue(script.startswith("table inet watch {"))
+        self.assertIn("chain output", script)
+        self.assertIn("chain input", script)
+        nft = shutil.which("nft")
+        if nft is None:
+            self.skipTest("nft tooling absent")
+        fd, path = tempfile.mkstemp(suffix=".nft")
+        try:
+            with os.fdopen(fd, "w") as handle:
+                handle.write(script)
+            proc = subprocess.run(
+                [nft, "-c", "-f", path], capture_output=True, timeout=30
+            )
+        finally:
+            os.unlink(path)
+        err = proc.stderr.decode("utf-8", "replace")
+        if proc.returncode != 0 and (
+            "Operation not permitted" in err or "Permission denied" in err
+        ):
+            self.skipTest("nft check needs privilege on this host")
+        self.assertEqual(proc.returncode, 0, msg=err[:500])
+
+
+class VerifyRegressionB81Tests(unittest.TestCase):
+    """B8.1-B: ``verify()`` must never crash on tool output."""
+
+    def _run_verify(self, dumps: dict[tuple[str, ...], object]) -> bool:
+        from ai.execution import netns_sandbox as sandbox_mod
+
+        backend = sandbox_mod.SystemNetnsBackend()
+        with mock.patch(
+            "ai.execution.netns_sandbox.shutil"
+        ) as mock_shutil, mock.patch(
+            "ai.execution.netns_sandbox._run_checked",
+            side_effect=_b81_dispatch(dumps),
+        ):
+            mock_shutil.which.side_effect = (
+                lambda prog: {
+                    "iptables": "/sbin/iptables",
+                    "ip6tables": "/sbin/ip6tables",
+                }.get(prog)
+            )
+            return backend.verify(_b81_handle(), _b81_ruleset())
+
+    def _dumps_with(
+        self,
+        output: bytes,
+        input_text: bytes,
+        nat: bytes,
+    ) -> dict[tuple[str, ...], object]:
+        return {
+            ("iptables", "-S", "OUTPUT"): output,
+            ("iptables", "-S", "INPUT"): input_text,
+            ("iptables", "-t", "nat", "-S"): nat,
+            ("ip6tables", "-S", "OUTPUT"): _B81_IP6TABLES_OUTPUT.encode(),
+            ("ip6tables", "-S", "INPUT"): _B81_IPTABLES_INPUT.encode(),
+            ("ip6tables", "-t", "nat", "-S"): _B81_IPTABLES_NAT.encode(),
+        }
+
+    def test_bytes_dumps_verify_true(self) -> None:
+        dumps = self._dumps_with(
+            _B81_IPTABLES_OUTPUT.encode(),
+            _B81_IPTABLES_INPUT.encode(),
+            _B81_IPTABLES_NAT.encode(),
+        )
+        # Old code raised ``TypeError: a bytes-like object is required``.
+        self.assertTrue(self._run_verify(dumps))
+
+    def test_tool_failure_fails_closed(self) -> None:
+        err = SandboxError("SANDBOX_VERIFY_FAILED", "readback: boom")
+        dumps = self._dumps_with(
+            err,
+            _B81_IPTABLES_INPUT.encode(),
+            _B81_IPTABLES_NAT.encode(),
+        )
+        self.assertFalse(self._run_verify(dumps))
+
+    def test_garbage_output_fails_closed(self) -> None:
+        dumps = self._dumps_with(
+            b"\x00\xff-binary-garbage",
+            _B81_IPTABLES_INPUT.encode(),
+            _B81_IPTABLES_NAT.encode(),
+        )
+        self.assertFalse(self._run_verify(dumps))
+
+    def test_non_handle_is_false(self) -> None:
+        from ai.execution import netns_sandbox as sandbox_mod
+
+        self.assertFalse(
+            sandbox_mod.SystemNetnsBackend().verify(object(), _b81_ruleset())
+        )
+
+
+class VerifyContractB81Tests(unittest.TestCase):
+    """B8.1-C: the full kernel contract, not one substring."""
+
+    def _run_iptables_verify(
+        self, output: str, input_text: str, nat: str
+    ) -> bool:
+        from ai.execution import netns_sandbox as sandbox_mod
+
+        backend = sandbox_mod.SystemNetnsBackend()
+        dumps = {
+            ("iptables", "-S", "OUTPUT"): output.encode(),
+            ("iptables", "-S", "INPUT"): input_text.encode(),
+            ("iptables", "-t", "nat", "-S"): nat.encode(),
+            ("ip6tables", "-S", "OUTPUT"): _B81_IP6TABLES_OUTPUT.encode(),
+            ("ip6tables", "-S", "INPUT"): _B81_IPTABLES_INPUT.encode(),
+            ("ip6tables", "-t", "nat", "-S"): _B81_IPTABLES_NAT.encode(),
+        }
+        with mock.patch(
+            "ai.execution.netns_sandbox.shutil"
+        ) as mock_shutil, mock.patch(
+            "ai.execution.netns_sandbox._run_checked",
+            side_effect=_b81_dispatch(dumps),
+        ):
+            mock_shutil.which.side_effect = (
+                lambda prog: {
+                    "iptables": "/sbin/iptables",
+                    "ip6tables": "/sbin/ip6tables",
+                }.get(prog)
+            )
+            return backend.verify(_b81_handle(), _b81_ruleset())
+
+    def test_exact_state_verifies(self) -> None:
+        self.assertTrue(
+            self._run_iptables_verify(
+                _B81_IPTABLES_OUTPUT, _B81_IPTABLES_INPUT, _B81_IPTABLES_NAT
+            )
+        )
+
+    def test_extra_accept_rejected(self) -> None:
+        tampered = _B81_IPTABLES_OUTPUT + "-A OUTPUT -d 1.2.3.4/32 -p tcp -m tcp --dport 443 -j ACCEPT\n"
+        self.assertFalse(
+            self._run_iptables_verify(
+                tampered, _B81_IPTABLES_INPUT, _B81_IPTABLES_NAT
+            )
+        )
+
+    def test_missing_allowlist_rejected(self) -> None:
+        lines = [
+            line
+            for line in _B81_IPTABLES_OUTPUT.splitlines()
+            if "8.8.8.8" not in line
+        ]
+        self.assertFalse(
+            self._run_iptables_verify(
+                "\n".join(lines) + "\n", _B81_IPTABLES_INPUT, _B81_IPTABLES_NAT
+            )
+        )
+
+    def test_output_policy_accept_rejected(self) -> None:
+        tampered = _B81_IPTABLES_OUTPUT.replace("-P OUTPUT DROP", "-P OUTPUT ACCEPT", 1)
+        self.assertFalse(
+            self._run_iptables_verify(
+                tampered, _B81_IPTABLES_INPUT, _B81_IPTABLES_NAT
+            )
+        )
+
+    def test_input_policy_accept_rejected(self) -> None:
+        tampered = _B81_IPTABLES_INPUT.replace("-P INPUT DROP", "-P INPUT ACCEPT", 1)
+        self.assertFalse(
+            self._run_iptables_verify(
+                _B81_IPTABLES_OUTPUT, tampered, _B81_IPTABLES_NAT
+            )
+        )
+
+    def test_missing_established_rejected(self) -> None:
+        self.assertFalse(
+            self._run_iptables_verify(
+                _B81_IPTABLES_OUTPUT, "-P INPUT DROP\n", _B81_IPTABLES_NAT
+            )
+        )
+
+    def test_nat_rule_rejected(self) -> None:
+        nat = _B81_IPTABLES_NAT + "-A POSTROUTING -o eth0 -j MASQUERADE\n"
+        self.assertFalse(
+            self._run_iptables_verify(
+                _B81_IPTABLES_OUTPUT, _B81_IPTABLES_INPUT, nat
+            )
+        )
+
+    def test_nft_exact_state_verifies(self) -> None:
+        self.assertTrue(check_nft_ruleset(_B81_NFT_DUMP, _b81_ruleset()))
+        # The generated script text itself (semicolons included) parses.
+        self.assertTrue(
+            check_nft_ruleset(render_nft_script(_b81_ruleset()), _b81_ruleset())
+        )
+
+    def test_nft_extra_accept_rejected(self) -> None:
+        tampered = _B81_NFT_DUMP.replace(
+            "udp dport 53 drop",
+            "udp dport 53 drop\n\t\tip daddr 1.2.3.4 ip protocol tcp tcp dport 443 accept",
+        )
+        self.assertFalse(check_nft_ruleset(tampered, _b81_ruleset()))
+
+    def test_nft_missing_established_rejected(self) -> None:
+        tampered = "\n".join(
+            line
+            for line in _B81_NFT_DUMP.splitlines()
+            if "established" not in line
+        )
+        self.assertFalse(check_nft_ruleset(tampered, _b81_ruleset()))
+
+    def test_nft_extra_table_rejected(self) -> None:
+        tampered = _B81_NFT_DUMP + "table ip evil {\n}\n"
+        self.assertFalse(check_nft_ruleset(tampered, _b81_ruleset()))
+
+    def test_nft_nat_rejected(self) -> None:
+        tampered = _B81_NFT_DUMP.replace(
+            "chain input",
+            "chain pre {\n\t\ttype nat hook prerouting priority 0;\n\t}\n\tchain input",
+        )
+        self.assertFalse(check_nft_ruleset(tampered, _b81_ruleset()))
+
+    def test_nft_unparseable_rejected(self) -> None:
+        self.assertFalse(check_nft_ruleset("not a ruleset", _b81_ruleset()))
+        self.assertFalse(check_nft_ruleset(b"bytes-input", _b81_ruleset()))
+        self.assertFalse(check_nft_ruleset(None, _b81_ruleset()))
+
+
+class EstablishedReturnB81Tests(unittest.TestCase):
+    """B8.1-D: approved TCP completes; everything else stays blocked."""
+
+    def test_approved_tuple_allowed(self) -> None:
+        policy = _b81_policy()
+        check_nuclei_egress_dial(
+            policy=policy,
+            ip=IP_A,
+            port=443,
+            transport="tcp",
+            authorization_id=policy.authorization_id,
+            resolution_id=policy.resolution_id,
+        )
+        script = render_nft_script(_b81_ruleset())
+        self.assertIn(
+            "ip daddr 8.8.8.8 ip protocol tcp tcp dport 443 accept", script
+        )
+        plans = [
+            args
+            for rule in _b81_ruleset().rules
+            for _, args in render_iptables_plan(rule)
+        ]
+        self.assertIn(
+            [
+                "-d",
+                "8.8.8.8/32",
+                "-p",
+                "tcp",
+                "-m",
+                "tcp",
+                "--dport",
+                "443",
+                "-j",
+                "ACCEPT",
+            ],
+            plans,
+        )
+
+    def test_wrong_ip_blocked(self) -> None:
+        policy = _b81_policy()
+        with self.assertRaises(SandboxError):
+            check_nuclei_egress_dial(
+                policy=policy,
+                ip=IP_B,
+                port=443,
+                transport="tcp",
+                authorization_id=policy.authorization_id,
+                resolution_id=policy.resolution_id,
+            )
+        self.assertNotIn("8.8.4.4", render_nft_script(_b81_ruleset()))
+
+    def test_wrong_port_blocked(self) -> None:
+        policy = _b81_policy()
+        with self.assertRaises(SandboxError):
+            check_nuclei_egress_dial(
+                policy=policy,
+                ip=IP_A,
+                port=444,
+                transport="tcp",
+                authorization_id=policy.authorization_id,
+                resolution_id=policy.resolution_id,
+            )
+        self.assertNotIn("dport 444", render_nft_script(_b81_ruleset()))
+
+    def test_udp_blocked(self) -> None:
+        policy = _b81_policy()
+        with self.assertRaises(SandboxError):
+            check_nuclei_egress_dial(
+                policy=policy,
+                ip=IP_A,
+                port=443,
+                transport="udp",
+                authorization_id=policy.authorization_id,
+                resolution_id=policy.resolution_id,
+            )
+        self.assertNotIn("udp accept", render_nft_script(_b81_ruleset()))
+
+    def test_no_inbound_port_open(self) -> None:
+        script = render_nft_script(_b81_ruleset())
+        input_section = script.split("chain input", 1)[1]
+        accepts = [
+            line.strip()
+            for line in input_section.splitlines()
+            if line.strip().endswith("accept")
+            or line.strip().endswith("accept;")
+        ]
+        self.assertEqual(len(accepts), 2)
+        for line in accepts:
+            self.assertIn("established,related", line)
 
 
 if __name__ == "__main__":
