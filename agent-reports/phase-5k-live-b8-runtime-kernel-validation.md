@@ -2,19 +2,31 @@
 
 **Mode:** VALIDATION ONLY. No live egress enabled. No external network contacted.
 No `WATCH_AI_LIVE_VALIDATION`, no `LIVE_LAUNCH_ENABLED`, no Nuclei scan,
-no external DNS, no browser, no LLM/provider API, no MongoDB/production-data
-change, no git operation, no source-code modification.
+no external DNS lookup, no browser execution, no LLM/provider API call,
+no MongoDB/production-data change, no git mutation, no source-code modification.
 
 **Implementation under validation:** `ai/execution/netns_sandbox.py`
 (`SystemNetnsBackend`, boundary `b7-netns-sandbox/v1`, rules
 `b7-netns-rules/v1`), as built in B7
 (`agent-reports/phase-5k-live-b7-egress-boundary.md`).
 
+**Privilege note:** the login shell is uid 1001 (empty `CapEff`; the prior
+B8 run correctly reported `ENVIRONMENT_NOT_CAPABLE` for that context).
+This run exercises the REAL kernel boundary via passwordless
+`sudo -n` (uid 0, full effective set incl. `CAP_SYS_ADMIN`/`CAP_NET_ADMIN`),
+as directed. Every privileged command below is local-only test
+infrastructure (`ip netns`, `iptables`/`nft` readback, veth topology,
+local listeners); no packet ever left the host (verified by routing
+inspection — §Runtime Evidence).
+
 **Honesty rule applied throughout:** only actual Linux namespace + actual
-kernel firewall behavior counts as runtime proof. Generated Python rules,
-pure-function checks, and mocked namespaces are NOT runtime proof and are
-labelled as such. Each section ends with an explicit verdict:
-`PROVEN` / `NOT PROVEN` / `NOT TESTABLE`.
+kernel firewall behavior counts as runtime proof. Each section ends with an
+explicit verdict: `PROVEN` / `NOT PROVEN` / `NOT TESTABLE`. Where the
+production path itself is defective, the defect is documented with exact
+kernel-tool output and NO code change was made.
+
+**Prior-report note:** per agent rules the previous B8 report file was
+deleted; this report is written FROM SCRATCH from this run's observations.
 
 ---
 
@@ -23,341 +35,399 @@ labelled as such. Each section ends with an explicit verdict:
 | Fact | Observed value |
 |---|---|
 | Distribution | Ubuntu 24.04.4 LTS (noble) |
-| Kernel | `6.18.33.2-microsoft-standard-WSL2` (WSL2 guest kernel, `#1 SMP PREEMPT_DYNAMIC Thu Jun 18 21:54:43 UTC 2026`, x86_64) |
-| UID / euid | `1000 (pouya)` / `1000` — unprivileged user |
-| Effective capabilities (`CapEff`) | `0000000000000000` — **empty** |
-| `CAP_SYS_ADMIN` effective | **Absent** (present only in bounding set, not in effective set) |
-| `CAP_NET_ADMIN` effective | **Absent** |
-| `ip` | Present (`/usr/sbin/ip`) |
-| `unshare` | Present (`/usr/bin/unshare`) |
-| `nsenter`, `lsns` | Present |
-| `nft` | **Missing** (`nft not found`, `shutil.which("nft")` → `None`) |
-| `iptables` / `iptables-nft` / `iptables-legacy` | **Missing** (all variants `not found`, `shutil.which("iptables")` → `None`) |
-| User namespaces (`unshare -U`) | Works (exit 0) |
-| Privileged netns (`unshare -n` alone) | **Fails**: `unshare: unshare failed: Operation not permitted` (exit 1) |
-| Unprivileged user+net ns (`unshare -Urn`) | Works (exit 0; see below — NOT the production backend path) |
-| `ip netns list` | Empty, exit 0 |
-| `lsns -t net` | Single host entry `4026531833` (plus `unassigned` NETNSID), unchanged before/after all probes |
-| Live flags | `WATCH_AI_LIVE_VALIDATION` and `LIVE_LAUNCH_ENABLED` **not set** (verified via `env | grep`) |
-| Nuclei binary (local) | Present at `/home/pouya/go/bin/nuclei`; `nuclei -version` → `v3.11.1` (matches pinned release). Version probe only — **no scan executed** |
+| Kernel | `6.17.0-1022-gcp` (`#25-Ubuntu SMP Sat Jul 25 01:12:40 UTC 2026`, x86_64, GCP guest) |
+| Login UID | `1001 (pouya_behnia)`, `CapEff 0000000000000000` |
+| Privileged context | `sudo -n` → `uid=0(root)`, `capsh Current: =ep`, bounding set includes `cap_sys_admin`, `cap_net_admin` |
+| `probe_netns_capabilities()` as root | `NetnsCapabilities(unshare_ok=True, ip_present=True, netfilter_present=True, can_create_netns=True, reason='')` |
+| `unshare -n true` as root | exit 0 |
+| `ip` | `/usr/sbin/ip` |
+| `nft` | `nftables v1.0.9` |
+| `iptables` | `v1.8.10 (nf_tables)` (`iptables-nft`, `iptables-legacy` also present) |
+| `unshare`, `nsenter`, `lsns` | present |
+| Nuclei binary | `/usr/local/bin/nuclei`, Engine `v3.11.1` (matches pinned release). **Note:** the server-controlled frozen path is `/usr/bin/nuclei`, which does NOT exist on this VM (see §Nuclei Child Validation) |
+| Live flags | `WATCH_AI_LIVE_VALIDATION` and `LIVE_LAUNCH_ENABLED` **not set** (checked before and after) |
+| Host route (untouched) | `8.8.8.8 via 10.128.0.1 dev ens4` — host routing was never modified |
 
-Unprivileged-namespace note (recorded for precision, NOT used as proof):
-`unshare -Urn` yields a genuinely distinct namespace identity
-(host `net:[4026531833]` vs child `net:[4026532480]`, `user:[4026532477]`,
-uid mapped to 0/root inside, single `lo` interface `DOWN`). This proves the
-kernel *can* isolate a network namespace for an unprivileged user via a user
-namespace. It does **not** satisfy B8, because the production
-`SystemNetnsBackend` path requires the privileged sequence
-(`unshare -n` probe + `ip netns add/exec/del` + `nft`/`iptables`), which this
-host cannot provide. Per the B8 stop-rule, the unprivileged mechanism was
-**not** substituted for the production backend.
+**Verdict: ENVIRONMENT CAPABLE** (`can_create_netns=True` as root).
 
 ## Capability Check
 
-`probe_netns_capabilities()` (offline, local kernel call, zero network) returns:
+- Root-context probe: all three preconditions green (`unshare -n` ok,
+  `ip` present, netfilter frontend present).
+- Unprivileged-context probe (uid 1001): `can_create_netns=False`,
+  `reason='unshare -n failed (no CAP_SYS_ADMIN)'`, and
+  `SystemNetnsBackend().create_namespace()` as uid 1001 still raises
+  `SANDBOX_CAPABILITY_MISSING` — the fail-closed gate is intact for
+  unprivileged callers.
 
-```
-NetnsCapabilities(unshare_ok=False, ip_present=True, netfilter_present=False,
-    can_create_netns=False,
-    reason='unshare -n failed (no CAP_SYS_ADMIN); nft/iptables missing')
-```
-
-`SystemNetnsBackend().capabilities()` returns the identical record.
-
-Missing capabilities (exact):
-
-1. Effective `CAP_SYS_ADMIN` (and `CAP_NET_ADMIN`) — `CapEff` is zero;
-   `unshare -n true` fails with `Operation not permitted`.
-2. A netfilter frontend — neither `nft` nor `iptables` exists on `PATH`.
-3. Consequently `can_create_netns = False`; the backend's documented
-   precondition (root/`CAP_SYS_ADMIN` + tooling) is unmet.
-
-**Verdict: ENVIRONMENT_NOT_CAPABLE.** Per §1 of the B8 brief, the runtime
-materialization sequence is STOPPED here; the implementation is NOT weakened
-to make B8 pass, and no fake backend is substituted. All sections below
-report what was honestly observable under this constraint.
+**Verdict: PROVEN** (capable as root; correctly refused without privilege).
 
 ## Real Namespace Creation
 
-Attempted exclusively through the REAL `SystemNetnsBackend`:
+Exclusively through the REAL `SystemNetnsBackend` (no fake backend):
 
-- `SystemNetnsBackend().create_namespace('ex-b8-probe')` →
-  `SandboxError: SANDBOX_CAPABILITY_MISSING: unshare -n failed (no CAP_SYS_ADMIN); nft/iptables missing`.
-- Full lifecycle entry `run_nuclei_in_sandbox(..., backend=SystemNetnsBackend(),
-  bounded_runner=no_spawn)` with genuine offline B7 fixtures
-  (execution `ex-cccc…`, approved `8.8.8.8:443/tcp`, pure in-memory records,
-  zero network) →
-  `SANDBOX_CAPABILITY_MISSING` at the CREATE stage; the injected
-  `bounded_runner` (which raises on any call) was **never invoked**, proving
-  no child was spawned past the failed CREATE.
-- `lsns -t net` before vs after: identical single host namespace
-  (`4026531833`); `ip netns list` empty. No namespace created, no orphan.
+- `create_namespace('ex-b8c0…01')` → `_NamespaceHandle(name='watch-ex-b8c0…01')`;
+  `ip netns list` shows it; `lsns -t net` shows new entry `4026532481`
+  vs host `4026531833`.
+- Child executed via the namespace (`ip netns exec <ns> readlink
+  /proc/self/ns/net`) reports `net:[4026532481]` ≠ host `net:[4026531833]`.
+- `teardown(handle)` → `ip netns list` empty; `lsns -t net` back to the
+  single host entry. Repeated across all probe namespaces (b8c0-01/02,
+  b8d0-01, fixture-id namespaces from lifecycle probes): **no orphan
+  namespace remained after any run.**
 
-No `CREATE → CONFIGURE → VERIFY → EXECUTE → COLLECT → TEARDOWN` runtime
-sequence could be materialized, because CREATE itself is correctly refused.
+Full `CREATE → CONFIGURE → VERIFY → EXECUTE → COLLECT → TEARDOWN` through
+`run_nuclei_in_sandbox` with genuine offline B7 fixtures (real
+`NucleiExecutionSpec` + real `nuclei_scan` `EgressPolicy` for
+`8.8.8.8:443/tcp`) and a recording stub runner:
 
-**Verdict: NOT PROVEN** (creation correctly refused; fail-closed behavior
-itself is PROVEN — see Fail-Closed Cases — but that is refusal evidence,
-not boundary-materialization evidence).
+- nft branch (default `PATH`): `CREATE ok → CONFIGURE raises
+  SANDBOX_CONFIGURE_FAILED → TEARDOWN removes the namespace`
+  (namespace absent afterward; stub runner recorded 0 calls).
+- iptables branch (`nft` hidden from `PATH`, see §Firewall State):
+  `CREATE ok → CONFIGURE ok → VERIFY raises SANDBOX_VERIFY_FAILED →
+  TEARDOWN removes the namespace` (absent afterward; 0 spawn calls).
+
+**Verdict: PROVEN** for CREATE (real namespace, distinct identity) and
+TEARDOWN (no orphans on every path). EXECUTE via the production lifecycle
+is **NOT TESTABLE** end-to-end (blocked by defects #1/#2 below) — the
+lifecycle never reaches spawn, and no host-network fallback occurs.
 
 ## Firewall State
 
-No kernel firewall state could be installed or inspected at runtime:
+Real kernel state, read back from a backend-created + backend-configured
+namespace (`iptables -S`, `iptables -L -v -n -x`, `iptables -t nat -S`):
 
-- No `nft`, no `iptables` → `configure()` has no frontend and is unreachable
-  (CREATE fails first).
-- There is no real namespace in which to read back `OUTPUT`/`INPUT` policy,
-  rule counters, routes, or NAT tables.
+**Branch A — nft (backend default when `nft` is on `PATH`): CONFIGURE
+FAILS. Critical defect #1.** `configure()` feeds `nft -f -` a script that
+the kernel tool rejects with three errors (reproduced verbatim via
+`nft -c -f`):
 
-The B7-generated `NetnsRuleSet` (default-deny + exact ACCEPT tuples + explicit
-DROP denials for metadata/DNS/UDP) was reviewed as source code only. Generated
-rules are NOT kernel state.
+1. `Error: syntax error, unexpected drop, expecting … dport` — the bare
+   `udp drop;` rule and the `ip daddr <ipv4> drop;` rule without a
+   transport match are invalid; additionally `ip6 daddr 169.254.169.254`
+   pairs an IPv6 match with an IPv4 literal (type error).
+2. `Error: you cannot set chain policy twice` — the script emits TWO
+   `type filter hook …` statements (`output` then `input`) inside ONE
+   chain block; a chain admits exactly one type/hook.
+3. Cascading `unexpected '}'` from the above.
 
-**Verdict: NOT PROVEN** (and NOT TESTABLE on this host).
+Observed backend behavior: `SANDBOX_CONFIGURE_FAILED: nft install: ^`.
+No firewall state is installed on this branch.
+
+**Branch B — iptables (backend's own fallback when `nft` is absent from
+`PATH`): CONFIGURE SUCCEEDS.** This is production code
+(`SystemNetnsBackend.configure`, iptables leg), exercised unmodified; only
+the test harness `PATH` omits the `nft` binary (documented scaffolding —
+no fake backend, no source change). Installed kernel state, read back
+verbatim:
+
+```
+-P OUTPUT DROP
+-A OUTPUT -d 8.8.8.8/32 -p tcp -m tcp --dport 443 -j ACCEPT
+-A OUTPUT -d 169.254.169.254/32 -p tcp -j DROP
+-A OUTPUT -d 169.254.169.254/32 -p udp -j DROP
+-A OUTPUT -p udp -m udp --dport 53 -j DROP
+-A OUTPUT -p udp -j DROP
+-P INPUT DROP
+```
+
+NAT table: empty (four base-chain `ACCEPT` policies, zero rules) — no NAT
+escape. This exact state hosted every packet test below.
+
+**Critical defect #2 — `verify()` always crashes.** `_run_checked`
+returns `res.stdout` (bytes); `verify()` tests
+`"-P OUTPUT DROP" in out` (str) → `TypeError: a bytes-like object is
+required, not 'str'`, surfacing as `SANDBOX_VERIFY_FAILED: namespace
+verify raised` even when the kernel state is perfect. Consequence: the
+production lifecycle can NEVER reach EXECUTE on either branch.
+
+**Verdict: PROVEN** (iptables-branch kernel state: default DROP + exact
+ACCEPT + explicit DROPs + empty NAT, all read from the kernel).
+**NOT PROVEN** for the nft branch (nothing installs). Defects #1/#2 are
+carried as blockers; no code was changed.
 
 ## Default-Deny Evidence
 
-No real namespace existed in which to assert `OUTPUT`/`INPUT` policy DROP,
-remove default routes, or send a blocked packet to a non-allowlisted local
-endpoint. No packet was sent anywhere (no external network per §2; no local
-test endpoint was materialized because there is no sandbox to attach it to).
+Isolated local topology (no external contact possible): veth pair
+`sandbox(vb8-s, 10.250.0.2/30) ↔ helper(vb8-h, 10.250.0.1/30 +
+8.8.8.8/32 + 8.8.4.4/32)`; sandbox routes are ONLY `8.8.8.8/32`,
+`8.8.4.4/32`, and the link scope — **no default route** (pre-topology,
+`ip route get 8.8.8.8` inside the sandbox returned `Network is
+unreachable`). Host routing untouched. All destinations below are
+host-local; zero packets could egress `ens4`.
 
-Pure-function design evidence (NOT runtime proof): `require_default_deny`
-and `require_no_default_route` enforce the contract on the `NetnsRuleSet`
-object, and `netns_rules_for_policy` always emits `default_drop_output=True,
-default_drop_input=True, no_unrestricted_default_route=True`. This is static
-semantics, not packet filtering.
+Blocked-destination results (rule counters before → after, child outcome):
 
-**Verdict: NOT PROVEN.**
+| Test | Counter delta | Child outcome | Verdict |
+|---|---|---|---|
+| Same IP + wrong port `8.8.8.8:444/tcp` | chain policy DROP 0 → 6 pkts | `TimeoutError` | PROVEN blocked |
+| Different IP + approved port `8.8.4.4:443/tcp` (listener present) | policy DROP 6 → 12 | `TimeoutError` | PROVEN blocked |
+| UDP `8.8.8.8:443` | all-UDP DROP 0 → 1 | `PermissionError EPERM` (synchronous kernel refusal) | PROVEN blocked |
+| Loopback `127.0.0.1:9999/tcp` (live listener in-sandbox) | policy DROP 12 → 18 | `TimeoutError` (no loopback abuse) | PROVEN blocked |
+| DNS `8.8.8.8:53/udp` | `udp dpt:53` DROP 0 → 1 | `PermissionError EPERM` | PROVEN blocked |
+| Host proxy `10.250.0.1:3128/tcp` (live listener) | policy DROP 24 → 29 | `TimeoutError` | PROVEN blocked |
+
+`INPUT -P DROP` confirmed by readback; no unrestricted route, no
+forwarding path (helper → host-LAN dial returned `ENETUNREACH`), no NAT
+rules.
+
+**Verdict: PROVEN** — non-allowlisted packets are demonstrably dropped by
+the kernel boundary (counters + child-visible refusals/timeouts), not by
+application code.
 
 ## Allowlist Evidence
 
-No allowlisted tuple could be demonstrated as ALLOWED at runtime, and no
-deviation (wrong port / different IP / UDP / second destination) could be
-demonstrated as BLOCKED at runtime — there is no kernel filter to exercise.
+Approved tuple `(8.8.8.8, 443, TCP)` — the only ACCEPT in the kernel table:
 
-Pure-function design evidence (NOT runtime proof), executed offline against
-genuine B7 fixtures with zero network traffic:
+- OUTPUT ACCEPT counter `0 → 7 pkts / 420 B` on first attempt (SYN +
+  retransmits), `7 → 14`, `14 → 20` on repeats.
+- Concurrent observation in the helper namespace: `ss -tn state syn-recv`
+  showed `8.8.8.8:443 ← 10.250.0.2:35818` **while the child was
+  transmitting** — the approved SYN verifiably traversed the filter and
+  arrived at the local listener. No other tuple's ACCEPT counter ever moved.
+- Child `connect()` itself timed out: the SYN-ACK return is dropped by
+  `INPUT -P DROP` (no conntrack/established rule exists). **Functional
+  finding:** with the as-built ruleset, even the approved tuple cannot
+  complete a TCP handshake — return traffic is unconditionally dropped.
+  Approved egress is therefore PROVEN at the OUTPUT-filter level only;
+  usable approved connectivity is NOT PROVEN (and structurally impossible
+  without an established-traffic rule). Recorded as a blocker, not patched.
 
-- `check_nuclei_egress_dial(ip=8.8.8.8, port=443, tcp, matching lineage)` →
-  allowed (in-memory exact-match only).
-- Same IP + wrong port → `SANDBOX_EGRESS_DENIED`.
-- Different IP + approved port → `SANDBOX_EGRESS_DENIED`.
-- UDP + approved IP/port → `SANDBOX_EGRESS_DENIED`.
-
-These prove the *authorization predicate* is exact-match; they prove nothing
-about kernel packet behavior.
-
-**Verdict: NOT PROVEN.**
+**Verdict: PROVEN** (exact-tuple OUTPUT allowance with packet delivery;
+wrong-port/different-IP/UDP/second-destination all PROVEN blocked above).
 
 ## DNS Rebinding Simulation
 
-No external DNS was used (per §6). No runtime simulation was possible: with
-no namespace and no filter, there is no boundary in which
-`SAFE_TEST_IP → allowed / UNSAFE_TEST_IP → blocked` could be observed, and no
-interface/firewall counters exist to record packet-level evidence.
+No external DNS used. Staged local mapping files only
+(`test-target.example → 8.8.8.8`, then `→ 8.8.4.4`); a child inside the
+sandbox resolves the SAME hostname twice and connects:
 
-Design note (NOT runtime proof): the B7 architecture makes the child's
-resolver output irrelevant *in principle* — the filter, when materialized,
-permits only the allowlisted `(ip, port, tcp)` tuples, installs no resolver
-service, permits no UDP, and keeps loopback inside the namespace — but none
-of this was instantiated here.
+- Phase 1 (SAFE `8.8.8.8`): `RESOLVED → 8.8.8.8`; OUTPUT ACCEPT 14 → 20
+  (+6 SYNs passed the filter).
+- Phase 2 (rebound UNSAFE `8.8.4.4`): `RESOLVED → 8.8.4.4`; chain policy
+  DROP 18 → 24 (+6 blocked).
 
-**Verdict: NOT PROVEN.**
+The child resolving the hostname differently cannot bypass the firewall:
+enforcement is on the `(ip, port, tcp)` tuple, independent of whatever the
+child resolved. No interface/firewall counters beyond the iptables
+per-rule counters exist on this branch (nft absent by scaffolding);
+counter deltas above are the packet-level evidence.
+
+**Verdict: PROVEN** (rebound destination blocked; safe destination passed;
+bypass-by-resolution impossible against the kernel filter).
 
 ## Host Network Escape
 
-There was no child process to test, because no sandboxed child could be
-launched (CREATE refused; no fallback to host networking exists — the
-`no_spawn` guard in the lifecycle probe confirms no host-network execution
-occurred as a substitute).
+- Namespace identity: host `net:[4026531833]` vs child `net:[4026532481]`
+  — distinct. PROVEN.
+- Child-visible interfaces: `lo` + `vb8-s` only (`vb8-s` is explicit,
+  documented test scaffolding; no other veth, no docker/host bridge
+  visible). No unexpected interface. PROVEN.
+- Child-visible routes: two test `/32`s + link scope; **no default route,
+  no gateway**. PROVEN.
+- Forwarding: `net.ipv4.ip_forward=1` is a host-global sysctl (GCE
+  default) visible from all namespaces — noted as a caveat — but no
+  forwarding occurs: the sandbox has no transit routes, the filter is
+  default-DROP, and the helper namespace cannot reach host-LAN addresses
+  (`connect_ex 10.128.0.4:22` → `ENETUNREACH`). No forwarding bypass.
+  PROVEN for the tested topology.
+- NAT table empty; no MASQUERADE/SNAT/DNAT rule that could smuggle egress.
+  PROVEN.
+- No inherited host-network execution: every child ran under
+  `ip netns exec <sandbox>` with verified distinct identity; lifecycle
+  probes recorded 0 host-network spawns. PROVEN.
 
-The unprivileged `unshare -Urn` observation (distinct `net:[4026532480]`
-identity, lone `DOWN` loopback) is recorded as a kernel fact about user
-namespaces, NOT as a production-escape test: the production backend never
-ran, so host-network/default-route/forwarding/loopback/veth escape verdicts
-cannot be issued for it.
-
-**Verdict: NOT PROVEN** (no escape occurred — but absence of a child is not
-proof of containment).
+**Verdict: PROVEN** (no escape observed; sysctl caveat documented).
 
 ## Proxy Escape
 
-Runtime verdict: **NOT PROVEN** — no production child environment was ever
-materialized, so there is no runtime child environment to audit.
+- Production child env (`spec.environment`): exactly
+  `{HOME, LANG, LC_ALL, PATH, TMPDIR}` (scratch-confined `HOME`/`TMPDIR`);
+  none of the 13 banned names present.
+- `require_clean_launch_environment` gate exercised: `HTTP_PROXY`,
+  `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` → `PROXY_DETECTED`; all 9
+  `FORBIDDEN_LAUNCH_ENV_VARS` (`HOSTALIASES`, `LOCALDOMAIN`,
+  `RES_OPTIONS`, `GODEBUG`, `SSL_CERT_FILE`, `SSL_CERT_DIR`,
+  `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`) →
+  `FORBIDDEN_ENVIRONMENT`; clean env accepted.
+- Live proxy on the test topology (`10.250.0.1:3128`, reachable L2 from
+  the sandbox): connection attempt from inside the sandbox blocked by the
+  kernel filter (policy DROP +5, child timeout) — a host-side proxy is
+  unreachable unless its exact tuple is allowlisted (it is not).
 
-Static design evidence (NOT runtime proof), verified by reading
-`ai/execution/nuclei_launcher.py` and `ai/execution/egress_guard.py`:
-
-- `FORBIDDEN_LAUNCH_ENV_VARS` denies `HOSTALIASES, LOCALDOMAIN, RES_OPTIONS,
-  GODEBUG, SSL_CERT_FILE, SSL_CERT_DIR, NODE_EXTRA_CA_CERTS,
-  REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE` (`FORBIDDEN_ENVIRONMENT`).
-- `egress_guard.check_environment` denies any proxy-shaped variable
-  (`PROXY_DETECTED`), which is the mechanism covering `HTTP_PROXY,
-  HTTPS_PROXY, ALL_PROXY, NO_PROXY` — presence alone, regardless of value.
-- `require_clean_launch_environment` runs before any spawn in
-  `run_nuclei_in_sandbox` (EXECUTE stage, post-VERIFY), with no override
-  parameter by design.
-- Whether an unreached host-side proxy could be contacted from a future
-  sandbox remains a property of the (uninstantiated) filter, not an observed
-  runtime fact.
-
-**Verdict: NOT PROVEN** (mechanism present in code; never executed at runtime
-here).
+**Verdict: PROVEN.**
 
 ## Lifecycle Cleanup
 
-Exercised the REAL backend only (no fake backend, per the B8 prohibition):
-
-- CREATE-refusal path: `run_nuclei_in_sandbox` with `SystemNetnsBackend`
-  raised `SANDBOX_CAPABILITY_MISSING`; `handle` remained `None`; `lsns`/`ip
-  netns` show no namespace, no interface, no route artifact.
-- The six required cases (normal exit, exception, timeout, kill,
-  output-limit failure, configuration failure) all require a materialized
-  namespace to clean up; none could be executed because CREATE is refused.
-  The B7 suite proves teardown-after-every-path against an injected fake
-  backend — that is lifecycle-*semantics* evidence, explicitly NOT runtime
-  evidence, and is not claimed here.
-
-**Verdict per case: NOT TESTABLE** on this host (no namespace to leak or
-reclaim). Namespace-before = absent, namespace-after = absent; no orphan
-interfaces/routes/namespaces observed — trivially, since nothing was created.
-
-## Fail-Closed Cases
-
-These are PROVEN — refusal (not bypass) is directly observable at runtime
-through the real backend, offline, with zero network:
+Via the REAL backend (creation failures also verified through
+`run_nuclei_in_sandbox`'s `finally`-teardown):
 
 | Case | Observation | Verdict |
 |---|---|---|
-| Capability missing | `create_namespace` → `SANDBOX_CAPABILITY_MISSING` with exact reason | PROVEN |
-| Namespace creation fails | Lifecycle runner surfaces `SANDBOX_CAPABILITY_MISSING` at CREATE; child never spawned (`no_spawn` guard never tripped) | PROVEN |
-| Namespace configuration fails | Unreachable past CREATE; code path raises `SANDBOX_CONFIGURE_FAILED` on any command failure with no host fallback (source-verified) | NOT TESTABLE at runtime |
-| Firewall setup / verification fails | Unreachable (no frontend); `verify()` returns `False` unless `-P OUTPUT DROP` is read back; runner raises `SANDBOX_VERIFY_FAILED` on `False` (source-verified) | NOT TESTABLE at runtime |
-| Allowlist empty | `netns_rules_for_policy` → `SANDBOX_RULES_REJECTED: allowlist empty` (offline pure-function, zero network) | PROVEN (predicate-level; not kernel-level) |
-| Policy / hash mismatch, wrong execution class | `SANDBOX_RULES_REJECTED` / `SANDBOX_EGRESS_DENIED` on version, class, transport, scheme, port-range deviations (offline) | PROVEN (predicate-level; not kernel-level) |
-| Unauthorized destination / UDP / invalid port / unsafe address | `check_nuclei_egress_dial` exact-match denials incl. wrong-port, diff-IP, UDP (offline probes above) | PROVEN (predicate-level; not kernel-level) |
-| Host-network fallback on any failure | Never occurs: CREATE refusal propagates as exception; `bounded_runner` never called; no `ip netns exec` prefix is ever built past failed VERIFY | PROVEN |
+| Normal process exit | CREATE+CONFIGURE via backend, child exit 0, backend teardown → ns absent, `lsns`/`ip netns` clean | PROVEN |
+| Process exception | Stub runner raising inside lifecycle-equivalent path; teardown in `finally` → ns absent | PROVEN |
+| Sandbox configuration failure | `run_nuclei_in_sandbox` on nft branch → `SANDBOX_CONFIGURE_FAILED`; ns absent afterward, 0 spawns | PROVEN |
+| Firewall verification failure | `run_nuclei_in_sandbox` on iptables branch → `SANDBOX_VERIFY_FAILED`; ns absent afterward, 0 spawns | PROVEN |
+| Timeout / kill / output-limit failure | Cannot reach EXECUTE through the production runner (defect #2); `run_bounded_process` behaviors proven directly (timeout kill, output-limit raise — see §Resource Enforcement), and teardown-after-spawn is the same `finally` block proven above | NOT TESTABLE end-to-end (partially PROVEN at component level) |
 
-No failure observed or reachable in code results in host-network execution:
-every failure raises a closed `SandboxError`/`LauncherError` before spawn.
+No orphan interfaces/routes/namespaces after any case (`ip netns list`
+empty, `lsns` single host entry at end of run).
+
+**Verdict: PROVEN** for all materializable paths; EXECUTE-stage failure
+cleanup NOT TESTABLE end-to-end pending defect #2 fix.
+
+## Fail-Closed Cases
+
+| Case | Observation | Verdict |
+|---|---|---|
+| Capability missing (uid 1001) | `create_namespace` → `SANDBOX_CAPABILITY_MISSING` | PROVEN |
+| Namespace creation failure | Lifecycle surfaces `SANDBOX_CAPABILITY_MISSING` at CREATE; 0 spawns | PROVEN |
+| Configuration failure | `SANDBOX_CONFIGURE_FAILED`, teardown, 0 spawns, no host fallback | PROVEN |
+| Verification failure | `SANDBOX_VERIFY_FAILED`, teardown, 0 spawns, no host fallback | PROVEN |
+| Allowlist empty | `SANDBOX_RULES_REJECTED: allowlist empty` | PROVEN |
+| Policy version / class / transport / scheme / port deviations | `SANDBOX_RULES_REJECTED` (5 cases) | PROVEN |
+| Unsafe address (`127.0.0.1`) | `SANDBOX_RULES_REJECTED: unsafe allowed address` | PROVEN |
+| Unauthorized dial (wrong port / diff IP / UDP / bad lineage) | `SANDBOX_EGRESS_DENIED` (4 cases) | PROVEN |
+| Host-network fallback on any failure | Never occurs: 0 spawn calls recorded across all failure probes | PROVEN |
+
+No failure observed or reachable in code results in host-network execution.
+
+**Verdict: PROVEN** (all cases).
 
 ## Nuclei Child Validation
 
-- Pinned binary available locally: `nuclei -version` → `v3.11.1`
-  (matches `PINNED_NUCLEI_VERSION`). **Target-less version probe only.**
-- No Nuclei scan was run (forbidden by the brief, and impossible without a
-  sandbox): no frozen-argv execution, no `ip netns exec` prefix, no
-  environment binding, and no second-destination representability test could
-  be performed at runtime.
-- Static design facts (NOT runtime proof): `build_nuclei_argv` freezes flags
-  (`-disable-update-check`, `-disable-redirects`, `-no-interactsh`, `-jsonl`,
-  `-bulk-size 1`, `-concurrency 1`, `-timeout 5`, `-retries 0`,
-  `-restrict-local-network-access`); the sandbox runner builds the child argv
-  exclusively via `backend.launch_prefix(handle, spec.argv)`.
+Local-only; NO scan executed (would require an external target — forbidden):
 
-**Verdict: runtime child execution could NOT be validated — NOT PROVEN.**
-The binary's presence proves availability only.
+- Pinned binary present: `/usr/local/bin/nuclei`, Engine `v3.11.1`.
+- `/usr/local/bin/nuclei -version -disable-update-check` executed INSIDE
+  the real backend-created/configured sandbox via the production
+  `launch_prefix` (`['ip','netns','exec',<ns>]` prefix asserted) with the
+  EXACT `spec.environment`: printed `Nuclei Engine Version: v3.11.1`;
+  child ns `net:[4026532481]` ≠ host; child env exactly the 5 allowlist
+  keys with scratch-confined `HOME`/`TMPDIR` (config/cache dirs honored
+  the sandbox scratch path — no host-home pollution). Target-less probe;
+  zero dials attempted (and the DROP filter would have stopped any).
+- Frozen argv: `prefix[4:] == spec.argv` identity asserted; 23 tokens;
+  single `-u`, single `-t`; `argv_digest` matches. Static + construction
+  level (runtime scan not attempted).
+- **Observation (deployment, not boundary):** the frozen
+  `SERVER_CONTROLLED_NUCLEI_BINARY` is `/usr/bin/nuclei`, which does not
+  exist on this VM (binary at `/usr/local/bin/nuclei`); executing the
+  frozen argv verbatim here fails closed at spawn (`exec … failed: No
+  such file`). Fail-closed is correct; deploy-time placement must provide
+  the path before any live use.
+
+**Verdict: PROVEN** for child-in-namespace + frozen-argv + prefix + env.
+Full scan execution **NOT TESTABLE** (no external target permitted) — not
+claimed.
 
 ## Resource Enforcement
 
-Frozen ceilings recorded from `default_resource_limits()` (metadata, NOT
-evidence of enforcement):
+Real `run_bounded_process` children as root (local only; all ceilings from
+`default_resource_limits`: wall 120s, cpu 60s, mem 512MiB, proc 1, fd 64,
+file 16MiB, stdout/stderr caps 1MiB):
 
-```
-wall_seconds=120, cpu_seconds=60, memory_bytes=536870912 (512 MiB),
-proc_limit=1, fd_limit=64, file_size_bytes=16777216,
-stdout_cap_bytes=1048576, stderr_cap_bytes=1048576, scratch_bytes=16777216
-```
+| Ceiling | Test | Observation | Verdict |
+|---|---|---|---|
+| Wall timeout | `sleep 30`, wall 3s | `SUBPROCESS_TIMEOUT` at 3.0s, child killed | ENFORCED — PROVEN |
+| stdout cap | 3MB output, 1MB cap | `SUBPROCESS_OUTPUT_LIMIT` | ENFORCED — PROVEN |
+| Memory (`RLIMIT_AS`) | 900MB alloc, 512MB limit | exit 1, `MemoryError` | ENFORCED — PROVEN |
+| CPU (`RLIMIT_CPU`) | spin, cpu 2s | killed (`-9`) at 2.0s | ENFORCED — PROVEN |
+| File size (`RLIMIT_FSIZE`) | 32MB write, 16MB limit | exit 1, `EFBIG File too large` (16,777,216 B file left, cleaned) | ENFORCED — PROVEN |
+| FD count (`RLIMIT_NOFILE`) | 200 opens, limit 64 | exit 1, `EMFILE Too many open files` | ENFORCED — PROVEN |
+| Process count (`RLIMIT_NPROC=1`) | spawn 10 `sleep` children | **exit 0, all 10 spawned** — NOT enforced for root (`CAP_SYS_RESOURCE` bypasses `RLIMIT_NPROC` in-kernel) | NOT ENFORCED — finding |
 
-`run_bounded_process` accepts all of these as parameters (signature verified),
-but no bounded child was ever launched at runtime here, so no ceiling was
-observed to bite (no timeout fired, no OOM, no fd/proc exhaustion, no output
-cap truncated).
+`AppliedLimits` honestly reported `applied=('memory','cpu','proc','fd','file')`.
+The NPROC bypass is a documented kernel behavior for privileged UIDs, not a
+code bug; it means fork-pressure is bounded only by wall/memory caps until a
+cgroup `pids` controller is added. Carried as a (non-blocking) finding.
 
-| Ceiling | Verdict |
-|---|---|
-| Wall timeout | NOT TESTABLE |
-| CPU limit | NOT TESTABLE |
-| Address-space / memory | NOT TESTABLE |
-| Process count | NOT TESTABLE |
-| FD count | NOT TESTABLE |
-| File size | NOT TESTABLE |
-| stdout/stderr caps | NOT TESTABLE |
-
-No security-critical limit is *disproven*, but none is proven either. Per the
-brief, an unproven security-critical limit is a blocker — carried to
-Remaining Blockers.
+**Verdict: all security-critical ceilings PROVEN except proc-count, which
+is NOT ENFORCED as root.**
 
 ## Runtime Evidence
 
-Exact commands run (all local, zero external traffic, zero DNS, zero target
-contact):
+Commands executed (all local; zero external traffic, zero DNS, zero target
+contact; host routing/firewall untouched):
 
-1. `cat /etc/os-release; uname -a; cat /proc/version; id;
-   cat /proc/self/status | grep -i -E 'cap|uid|gid'; capsh --print`
-   → Ubuntu 24.04, WSL2 kernel 6.18.33.2, uid 1000, `CapEff 0`, no effective
-   `CAP_SYS_ADMIN`.
-2. `which ip unshare nft iptables …; ip --version; unshare --help;
-   ls -l /proc/self/ns/net …; cat /proc/sys/user/max_user_namespaces`
-   → `ip`/`unshare`/`nsenter`/`lsns` present; `nft`/`iptables` absent.
-3. `unshare -Urn true` → exit 0; `unshare -n true` → `Operation not
-   permitted` exit 1; `unshare -U true` → exit 0.
-4. `unshare -Urn bash -c 'readlink /proc/self/ns/net; …; ip link show'`
-   → child `net:[4026532480]` ≠ host `net:[4026531833]`; lone `DOWN` `lo`.
-5. `python3 -c probe_netns_capabilities()` → `can_create_netns=False` with
-   exact reason string (twice: free function + backend method).
-6. `SystemNetnsBackend().create_namespace('ex-b8-probe')` →
-   `SANDBOX_CAPABILITY_MISSING` (fail-closed PROVEN).
-7. `run_nuclei_in_sandbox(real backend, genuine offline fixtures, no_spawn
-   runner)` → `SANDBOX_CAPABILITY_MISSING` at CREATE; runner never called.
-8. `lsns -t net` / `ip netns list` before and after → unchanged, empty.
-9. Offline predicate probes (`check_nuclei_egress_dial` SAFE allow +
-   wrong-port/diff-IP/UDP denials) → exact-match confirmed at predicate level.
-10. `nuclei -version` → `v3.11.1` (no scan).
-11. `env | grep -i -E 'LIVE|WATCH_AI'` → no live flags.
-12. Source reads: `ai/execution/netns_sandbox.py` (full, 862 lines),
-    `require_clean_launch_environment`, `check_environment`,
-    `FORBIDDEN_LAUNCH_ENV_VARS`, `run_bounded_process` signature,
-    `default_resource_limits`, `NucleiExecutionSpec` shape.
+1. Privilege + tooling: `id`, `capsh --print`, `which ip unshare nft
+   iptables`, `unshare -n true`, `nuclei -version`,
+   `probe_netns_capabilities()` as root → `can_create_netns=True`;
+   `env | grep` → no live flags (before and after).
+2. `SystemNetnsBackend().create_namespace()` (×several) → real handles;
+   `lsns -t net` / `ip netns list` before/during/after (distinct identity
+   `4026532481`, empty after teardown).
+3. `configure()` on nft branch → `SANDBOX_CONFIGURE_FAILED`; generated
+   script re-checked with `nft -c -f` → 3 verbatim kernel-tool errors.
+4. `configure()` on iptables branch → OK; `iptables -S OUTPUT/INPUT`,
+   `iptables -L OUTPUT -v -n -x`, `iptables -t nat -S` read back verbatim.
+5. `verify()` → `TypeError` (bytes vs str) reproduced twice; lifecycle
+   probes on both branches → `SANDBOX_CONFIGURE_FAILED` /
+   `SANDBOX_VERIFY_FAILED` with 0 spawns and no orphans.
+6. Topology: `ip netns add b8-helper`, veth pair split across namespaces,
+   addresses/routes as documented; `ip route get` inside sandbox (test IPs
+   via veth; everything else `Network is unreachable`); host `ip route get
+   8.8.8.8` unchanged (via `ens4`).
+7. Packet probes: `/tmp` child scripts (`connect` ×6 tuples, hostname
+   rebinding ×2 phases, proxy attempt) executed via `ip netns exec`;
+   per-rule counter deltas recorded; helper `ss -tn state syn-recv`
+   captured mid-flight (`8.8.8.8:443 ← 10.250.0.2:35818`).
+8. Escape reads: `readlink /proc/self/ns/net` (host vs child), `ip route`,
+   `ip link`, `ip_forward` (both), `iptables -t nat -S`, helper→host-LAN
+   dial (`ENETUNREACH`), child `env` audit.
+9. Gate probes: `require_clean_launch_environment` (clean accept; 4 proxy
+   + 9 denylist denials); `spec.environment` audit (5 keys).
+10. Fail-closed matrix: 10 predicate denials + unprivileged refusal.
+11. Resources: 7 `run_bounded_process` runs (`_rlimit_preexec` read for
+    mechanism + `AppliedLimits` accounting).
+12. Nuclei: version probe in-ns with exact env; frozen-argv/prefix/digest
+    assertions; binary-path observation (`/usr/bin` vs `/usr/local/bin`).
+13. Cleanup: backend `teardown` + `ip netns del b8-helper`; final
+    `ip netns list` empty, `lsns` host-only; `/tmp` scaffolding removed.
 
-What was NOT done (deliberately): no packet sent, no listener bound, no
-`ip netns add/exec/del`, no firewall command, no DNS query, no Nuclei scan,
-no LLM call, no MongoDB access, no git operation, no source edit, no env-flag
-change.
+What was NOT done: no packet sent outside the veth topology, no DNS query
+issued, no Nuclei scan, no LLM call, no MongoDB access, no git mutation
+(`git status` read-only), no source edit, no env-flag change.
 
 ## Remaining Blockers
 
-1. **Host lacks production prerequisites** (effective `CAP_SYS_ADMIN`,
-   `nft`/`iptables`) — `ENVIRONMENT_NOT_CAPABLE`. A capable host (root or
-   file-capability holder, `ip` + `nft`/`iptables`, non-WSL2 kernel with full
-   netfilter) is required to re-run B8.
-2. **No real netns was created** via the production backend.
-3. **No real firewall was installed or read back** (no counters, no DROP/ACCEPT
-   proof).
-4. **Default-deny and exact-allowlist unverified at packet level.**
-5. **DNS-rebinding containment unverified at runtime.**
-6. **Host-network and proxy escape unverified at runtime.**
-7. **Lifecycle cleanup under failure unverified at runtime** (six cases).
-8. **Resource ceilings unverified at runtime** (all seven ceilings NOT
-   TESTABLE; each security-critical until proven ENFORCED).
-9. **Nuclei child boundary unverified at runtime** (binary present, never
-   launched in a sandbox).
-10. **WSL2 kernel caveat:** even with capabilities, the
-    `microsoft-standard-WSL2` kernel's netfilter/netns fidelity for
-    `ip netns`-based testing should be confirmed on the re-run host; prefer a
-    bare-metal/VM kernel for the proving run.
+1. **Defect #1 (critical): `configure()` nft script is invalid** — three
+   kernel-tool errors (bare-`udp`/typeless-`ip daddr` matches,
+   `ip6 daddr` with IPv4 literal, two hooks in one chain). Default branch
+   installs nothing. (No code changed per B8 rules.)
+2. **Defect #2 (critical): `verify()` `TypeError`** (bytes `in`-tested
+   against str) — VERIFY can never pass; the production lifecycle can
+   never reach EXECUTE on any branch. (No code changed per B8 rules.)
+3. **Functional finding: `INPUT -P DROP` with no established-traffic rule**
+   makes even approved TCP uncompletable (proven: SYN passes, SYN-ACK
+   dies). Usable approved egress requires a return-path rule by design
+   decision, not by accident.
+4. **Weak `verify()`:** even absent defect #2, it asserts only
+   `-P OUTPUT DROP` via iptables — not the exact ACCEPT set, not INPUT
+   policy, not routes, not counters. Kernel-level VERIFY should confirm
+   the full contract it gates.
+5. **Proc-count ceiling not enforced as root** (`RLIMIT_NPROC` bypass via
+   `CAP_SYS_RESOURCE`); needs a cgroup `pids` controller for a real
+   fork bound. Wall/memory caps bound the damage meanwhile.
+6. **Deploy note:** frozen binary `/usr/bin/nuclei` absent on this VM
+   (present at `/usr/local/bin/nuclei`); live use must provide the exact
+   frozen path (failure mode is closed: spawn error).
+7. **Caveat:** `ip_forward=1` host-global sysctl (GCE default); harmless
+   here (no transit routes + default-DROP) but a hardening review should
+   decide its desired state for the live host.
 
 ## Live Egress Status
 
 **DISABLED** — and not merely unconfigured:
 
-- `WATCH_AI_LIVE_VALIDATION` unset; `LIVE_LAUNCH_ENABLED` unset.
-- No production configuration modified.
-- `probe_netns_capabilities().can_create_netns` is `False`, so every live
-  path through `SystemNetnsBackend` is refused before any network action.
-- The lifecycle result model carries `live_egress=False`.
-- No real CVE validation performed; no real target contacted.
+- `WATCH_AI_LIVE_VALIDATION` unset; `LIVE_LAUNCH_ENABLED` unset (verified
+  before and after; no production configuration modified).
+- Defects #1/#2 additionally make live execution structurally unreachable
+  through `run_nuclei_in_sandbox` (every path raises closed before spawn;
+  0 spawn calls recorded).
+- No real CVE validation performed; no real target contacted; no external
+  packet transmitted.
 
 No "GO" decision is made or implied in B8.
 
@@ -365,16 +435,16 @@ No "GO" decision is made or implied in B8.
 
 **RUNTIME_BOUNDARY_NOT_PROVEN**
 
-**ENVIRONMENT_NOT_CAPABLE** — this WSL2 host (uid 1000, empty effective
-capability set, no `nft`/`iptables`) cannot materialize the B7 production
-backend (`unshare -n` fails; netfilter frontend absent). The implementation
-itself behaved correctly under these conditions: it refused every live path
-with `SANDBOX_CAPABILITY_MISSING`/`SANDBOX_RULES_REJECTED`/
-`SANDBOX_EGRESS_DENIED` as appropriate, spawned no child, fell back to no
-host network, and left no namespace/interface/route artifact. Refusal is
-correct fail-closed behavior — but refusal is not a runtime boundary proof.
-Predicate-level exactness (allowlist, denylist, proxy guards) is confirmed in
-code and offline checks; kernel-level filtering, containment, escape
-resistance, cleanup, and resource enforcement all remain unproven pending a
-capable-host re-run. B8 therefore produces evidence *for* the next security
-review, not authorization for live egress.
+The kernel boundary was genuinely materialized and measured: real
+namespaces with distinct identity, a real backend-installed default-deny
+filter (iptables branch) with exact-allowlist semantics proven at packet
+level (ACCEPT/SYN-RECV evidence for the approved tuple; DROP-counter
+evidence for wrong-port/different-IP/UDP/loopback/DNS/proxy/rebound
+destinations), containment/escape resistance proven, teardown proven on
+every path, six of seven resource ceilings proven enforced, and fail-closed
+behavior proven across the matrix. BUT the production lifecycle cannot
+reach EXECUTE: the default nft branch installs nothing (defect #1) and
+`verify()` unconditionally crashes (defect #2). A boundary the production
+runner cannot traverse is not a proven runtime boundary. Fix #1/#2 (plus
+decisions on #3/#4), then re-run B8; live egress remains DISABLED until
+that re-run proves `RUNTIME_BOUNDARY_PROVEN`.

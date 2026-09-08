@@ -24,7 +24,7 @@ import secrets
 from typing import Any, Callable
 
 from ai.authorizer.service import get_issued_authorization, issue_authorization
-from ai.authorizer.store import InMemoryAuthorizationStore
+from ai.authorizer.store import AuthorizationStore, InMemoryAuthorizationStore
 from ai.evidence.handoff import assemble_handoff, bind_provenance
 from ai.evidence.store import canonical_envelope_bytes
 from ai.execution.b3_boundary import (
@@ -199,7 +199,9 @@ class ControlledLiveValidationLane:
       fallback for dry-run; never authoritative for live execution)
     - ``policy_store``: InMemoryPolicyStore (default: narrow explicit-host
       policy derived from the CLI target; a supplied store is used as-is)
-    - ``authz_store``: InMemoryAuthorizationStore (default)
+    - ``authz_store``: AuthorizationStore (default
+      InMemoryAuthorizationStore; production wiring injects the
+      5H-core MongoAuthorizationStore — same protocol, same gates)
     - ``now`` / ``monotonic``: time injection
     """
 
@@ -210,7 +212,7 @@ class ControlledLiveValidationLane:
         resolver: Any | None = None,
         dns_mapping: dict[str, list[str]] | None = None,
         policy_store: InMemoryPolicyStore | None = None,
-        authz_store: InMemoryAuthorizationStore | None = None,
+        authz_store: AuthorizationStore | None = None,
         now: Callable[[], str] | None = None,
         monotonic: Callable[[], float] | None = None,
     ) -> None:

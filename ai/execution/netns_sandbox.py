@@ -69,6 +69,9 @@ __all__ = [
     "probe_netns_capabilities",
     "NetnsBackend",
     "SystemNetnsBackend",
+    "render_nft_script",
+    "check_nft_ruleset",
+    "check_iptables_state",
     "SandboxStageLog",
     "SandboxedRunResult",
     "run_nuclei_in_sandbox",
@@ -338,6 +341,387 @@ def check_nuclei_egress_dial(
 
 
 # ------------------------------------------------------------------
+# Firewall renderers (B8.1-A/D: deterministic, kernel-validated).
+# ------------------------------------------------------------------
+
+#: nft INPUT statements permitting ONLY return traffic of approved TCP
+#: flows (B8.1-D). TCP-scoped on purpose: OUTPUT drops every
+#: non-approved new flow, so no UDP (or other) flow can ever reach
+#: ESTABLISHED state; scoping the allowance to TCP additionally removes
+#: blind port-guess ingress against conntrack entries of dropped UDP
+#: packets. Family matches are exact, so IPv4 and IPv6 need twin
+#: statements (an ``ip protocol`` match never matches IPv6 and vice
+#: versa). No inbound port is opened; no new inbound flow is admitted.
+_NFT_ESTABLISHED_STATEMENTS = (
+    "ct state established,related ip protocol tcp accept",
+    "ct state established,related ip6 nexthdr tcp accept",
+)
+
+#: iptables/ip6tables INPUT allowance for the same contract (TCP-scoped).
+_IPTABLES_ESTABLISHED_ARGS = [
+    "-p",
+    "tcp",
+    "-m",
+    "conntrack",
+    "--ctstate",
+    "ESTABLISHED,RELATED",
+    "-j",
+    "ACCEPT",
+]
+_IPTABLES_ESTABLISHED_LINE = "-A INPUT " + " ".join(_IPTABLES_ESTABLISHED_ARGS)
+
+
+def _rule_family(dst_ip: str) -> str:
+    """Return the nftables family match (``ip``/``ip6``) for a literal."""
+
+    try:
+        return "ip6" if ipaddress.ip_address(dst_ip).version == 6 else "ip"
+    except ValueError:
+        raise SandboxError(
+            "SANDBOX_CONFIGURE_FAILED", "egress ip unparseable"
+        ) from None
+
+
+def _checked_port(dport: object) -> int:
+    """Return a validated port, or fail closed (never render wildcards)."""
+
+    if (
+        not isinstance(dport, int)
+        or isinstance(dport, bool)
+        or not 1 <= dport <= 65535
+    ):
+        raise SandboxError("SANDBOX_CONFIGURE_FAILED", "port not in range")
+    return dport
+
+
+def _l3_proto_match(family: str, proto: str) -> str:
+    """Render the family-correct L3 protocol match (never cross-family)."""
+
+    if family == "ip6":
+        return f"ip6 nexthdr {proto}"
+    return f"ip protocol {proto}"
+
+
+def render_nft_statements(rule: EgressRule) -> tuple[str, ...]:
+    """Render one :class:`EgressRule` as nft statement(s).
+
+    Only exact, narrow shapes are renderable: an ACCEPT must be a full
+    ``(ip, port, tcp)`` tuple (anything broader raises instead of
+    emitting an unsafe broad ACCEPT); a DROP is an exact address and/or
+    port denial. Unknown shapes fail closed.
+    """
+
+    if not isinstance(rule, EgressRule):
+        raise SandboxError("SANDBOX_CONFIGURE_FAILED", "rule untyped")
+    if rule.chain != "OUTPUT" or rule.verdict not in ("ACCEPT", "DROP"):
+        raise SandboxError("SANDBOX_CONFIGURE_FAILED", "rule shape rejected")
+    if rule.proto not in ("tcp", "udp"):
+        raise SandboxError("SANDBOX_CONFIGURE_FAILED", "rule proto rejected")
+    if rule.verdict == "ACCEPT":
+        if (
+            rule.proto != "tcp"
+            or rule.dst_ip is None
+            or rule.dport is None
+        ):
+            raise SandboxError(
+                "SANDBOX_CONFIGURE_FAILED", "broad accept refused"
+            )
+        family = _rule_family(rule.dst_ip)
+        port = _checked_port(rule.dport)
+        return (
+            f"{family} daddr {rule.dst_ip} "
+            f"{_l3_proto_match(family, 'tcp')} tcp dport {port} accept",
+        )
+    if rule.dst_ip is not None:
+        family = _rule_family(rule.dst_ip)
+        # NOTE: no anonymous L4 header after the L3 protocol match —
+        # a bare ``tcp``/``udp`` match requires dport/sport detail and
+        # the kernel rejects the statement (B8.1-A probe t7).
+        return (
+            f"{family} daddr {rule.dst_ip} "
+            f"{_l3_proto_match(family, rule.proto)} drop",
+        )
+    if rule.proto == "udp" and rule.dport is not None:
+        return (f"udp dport {_checked_port(rule.dport)} drop",)
+    if rule.proto == "udp" and rule.dport is None:
+        # Family-agnostic UDP denial needs both family matches
+        # (``ip protocol`` never matches IPv6 and vice versa).
+        return ("ip protocol udp drop", "ip6 nexthdr udp drop")
+    raise SandboxError("SANDBOX_CONFIGURE_FAILED", "rule shape rejected")
+
+
+def render_nft_script(ruleset: NetnsRuleSet) -> str:
+    """Render the full ``table inet watch`` script for a rule set.
+
+    Exactly two chains, one hook each (a second ``type filter hook``
+    line inside a chain is a kernel syntax error — B8 blocker #1):
+    OUTPUT defaults to DROP with only the exact allowlist ACCEPTs plus
+    explicit DROP denials; INPUT defaults to DROP with only the
+    ESTABLISHED,RELATED TCP return path. The output is validated with
+    ``nft -c -f`` wherever the tool runs (see B8.1 tests).
+    """
+
+    if not isinstance(ruleset, NetnsRuleSet):
+        raise SandboxError("SANDBOX_CONFIGURE_FAILED", "ruleset untyped")
+    require_default_deny(ruleset)
+    require_no_default_route(ruleset)
+    output: list[str] = []
+    for rule in ruleset.rules:
+        output.extend(render_nft_statements(rule))
+    body = "".join(f"    {stmt};\n" for stmt in output)
+    established = "".join(f"    {stmt};\n" for stmt in _NFT_ESTABLISHED_STATEMENTS)
+    return (
+        "table inet watch {\n"
+        "  chain output {\n"
+        "    type filter hook output priority 0; policy drop;\n"
+        f"{body}"
+        "  }\n"
+        "  chain input {\n"
+        "    type filter hook input priority 0; policy drop;\n"
+        f"{established}"
+        "  }\n"
+        "}\n"
+    )
+
+
+def render_iptables_plan(
+    rule: EgressRule,
+) -> tuple[tuple[str, list[str]], ...]:
+    """Render one rule as ``(frontend, args)`` insertion plans.
+
+    ``frontend`` is ``iptables`` (IPv4) or ``ip6tables`` (IPv6); the arg
+    list is canonical — ``"-A OUTPUT " + " ".join(args)`` is exactly what
+    ``iptables -S OUTPUT`` prints back, so configure and verify share one
+    source of truth. Address-less rules apply to both families.
+    """
+
+    if not isinstance(rule, EgressRule):
+        raise SandboxError("SANDBOX_CONFIGURE_FAILED", "rule untyped")
+    if rule.chain != "OUTPUT" or rule.verdict not in ("ACCEPT", "DROP"):
+        raise SandboxError("SANDBOX_CONFIGURE_FAILED", "rule shape rejected")
+    if rule.proto not in ("tcp", "udp"):
+        raise SandboxError("SANDBOX_CONFIGURE_FAILED", "rule proto rejected")
+    verdict = "ACCEPT" if rule.verdict == "ACCEPT" else "DROP"
+    if rule.verdict == "ACCEPT":
+        if (
+            rule.proto != "tcp"
+            or rule.dst_ip is None
+            or rule.dport is None
+        ):
+            raise SandboxError(
+                "SANDBOX_CONFIGURE_FAILED", "broad accept refused"
+            )
+        family = _rule_family(rule.dst_ip)
+        port = _checked_port(rule.dport)
+        bits = "128" if family == "ip6" else "32"
+        front = "ip6tables" if family == "ip6" else "iptables"
+        return (
+            (
+                front,
+                [
+                    "-d",
+                    f"{rule.dst_ip}/{bits}",
+                    "-p",
+                    "tcp",
+                    "-m",
+                    "tcp",
+                    "--dport",
+                    str(port),
+                    "-j",
+                    verdict,
+                ],
+            ),
+        )
+    if rule.dst_ip is not None:
+        family = _rule_family(rule.dst_ip)
+        bits = "128" if family == "ip6" else "32"
+        front = "ip6tables" if family == "ip6" else "iptables"
+        return (
+            (
+                front,
+                ["-d", f"{rule.dst_ip}/{bits}", "-p", rule.proto, "-j", verdict],
+            ),
+        )
+    if rule.proto == "udp" and rule.dport is not None:
+        port = _checked_port(rule.dport)
+        args = ["-p", "udp", "-m", "udp", "--dport", str(port), "-j", verdict]
+        return (("iptables", list(args)), ("ip6tables", list(args)))
+    if rule.proto == "udp" and rule.dport is None:
+        args = ["-p", "udp", "-j", verdict]
+        return (("iptables", list(args)), ("ip6tables", list(args)))
+    raise SandboxError("SANDBOX_CONFIGURE_FAILED", "rule shape rejected")
+
+
+# ------------------------------------------------------------------
+# Firewall contract checkers (B8.1-C: pure, unit-testable).
+# ------------------------------------------------------------------
+
+
+def _normalize_nft_line(line: str) -> str:
+    """Collapse whitespace and drop the trailing statement semicolon."""
+
+    return " ".join(line.strip().rstrip(";").strip().split())
+
+
+def _normalize_ctstate_sets(line: str) -> str:
+    """Sort conntrack-state set members (tools canonicalize ordering).
+
+    ``iptables -S`` prints ``--ctstate RELATED,ESTABLISHED`` while the
+    installer wrote ``ESTABLISHED,RELATED``; both denote the same set.
+    Normalizing avoids version-dependent string mismatch (fail-open
+    risk: none — membership is compared exactly after sorting).
+    """
+
+    import re
+
+    def _sort(match: "re.Match[str]") -> str:
+        members = sorted(
+            part.strip().upper()
+            for part in match.group(2).split(",")
+            if part.strip()
+        )
+        return match.group(1) + ",".join(members)
+
+    line = re.sub(r"(ct state\s+)([A-Za-z,]+)", _sort, line)
+    line = re.sub(r"(--ctstate\s+)([A-Za-z,]+)", _sort, line)
+    return line
+
+
+def check_nft_ruleset(ruleset_text: object, ruleset: NetnsRuleSet) -> bool:
+    """Check dumped ``nft list ruleset`` output against the contract.
+
+    Requires: exactly our table, exactly the output/input chains with
+    DROP policy, the exact expected statement sets (allowlist ACCEPTs,
+    explicit DROPs, ESTABLISHED return), and no NAT anywhere. Anything
+    else (extra table/chain/ACCEPT, missing rule, unparseable dump) is
+    False — fail closed, never an exception.
+    """
+
+    try:
+        if not isinstance(ruleset_text, str) or not isinstance(
+            ruleset, NetnsRuleSet
+        ):
+            return False
+        if "type nat" in ruleset_text:
+            return False
+        tables: list[str] = []
+        chains: dict[str, dict[str, list[str] | str | None]] = {}
+        current: str | None = None
+        header: str | None = None
+        for raw in ruleset_text.splitlines():
+            line = _normalize_nft_line(raw)
+            if not line or line in ("{", "}"):
+                continue
+            if line.startswith("table "):
+                tables.append(line.rstrip("{").strip())
+                continue
+            if line.startswith("chain "):
+                current = line.split()[1]
+                chains[current] = {"header": None, "statements": []}
+                header = None
+                continue
+            if current is None:
+                return False
+            if "type filter hook" in line:
+                if chains[current]["header"] is not None:
+                    return False  # second hook line in one chain
+                chains[current]["header"] = line
+                continue
+            stmts = chains[current]["statements"]
+            assert isinstance(stmts, list)
+            stmts.append(line)
+        if tables != ["table inet watch"]:
+            return False
+        if set(chains) != {"output", "input"}:
+            return False
+        out_header = chains["output"]["header"]
+        in_header = chains["input"]["header"]
+        if (
+            not isinstance(out_header, str)
+            or "hook output" not in out_header
+            or "policy drop" not in out_header
+            or not isinstance(in_header, str)
+            or "hook input" not in in_header
+            or "policy drop" not in in_header
+        ):
+            return False
+        expected_output: list[str] = []
+        for rule in ruleset.rules:
+            expected_output.extend(render_nft_statements(rule))
+        out_stmts = chains["output"]["statements"]
+        in_stmts = chains["input"]["statements"]
+        assert isinstance(out_stmts, list) and isinstance(in_stmts, list)
+        if sorted(
+            _normalize_ctstate_sets(_normalize_nft_line(s)) for s in out_stmts
+        ) != sorted(
+            _normalize_ctstate_sets(_normalize_nft_line(s))
+            for s in expected_output
+        ):
+            return False
+        if sorted(
+            _normalize_ctstate_sets(_normalize_nft_line(s)) for s in in_stmts
+        ) != sorted(
+            _normalize_ctstate_sets(_normalize_nft_line(s))
+            for s in _NFT_ESTABLISHED_STATEMENTS
+        ):
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def check_iptables_state(
+    *,
+    output_text: object,
+    input_text: object,
+    nat_text: object,
+    expected_output_lines: tuple[str, ...],
+) -> bool:
+    """Check ``iptables -S`` dumps against the contract.
+
+    Requires: OUTPUT policy DROP with exactly the expected rule lines
+    (no unexpected ACCEPT, exact allowlist); INPUT policy DROP with
+    exactly the ESTABLISHED return rule; NAT without any ``-A`` rule.
+    Anything else is False — fail closed, never an exception.
+    """
+
+    try:
+        if (
+            not isinstance(output_text, str)
+            or not isinstance(input_text, str)
+            or not isinstance(nat_text, str)
+        ):
+            return False
+        out_lines = [
+            _normalize_ctstate_sets(line.strip())
+            for line in output_text.splitlines()
+            if line.strip()
+        ]
+        if not out_lines or out_lines[0] != "-P OUTPUT DROP":
+            return False
+        if sorted(out_lines[1:]) != sorted(
+            _normalize_ctstate_sets(line) for line in expected_output_lines
+        ):
+            return False
+        in_lines = [
+            _normalize_ctstate_sets(line.strip())
+            for line in input_text.splitlines()
+            if line.strip()
+        ]
+        if in_lines != [
+            "-P INPUT DROP",
+            _normalize_ctstate_sets(_IPTABLES_ESTABLISHED_LINE),
+        ]:
+            return False
+        for line in nat_text.splitlines():
+            if line.strip().startswith("-A"):
+                return False
+        return True
+    except Exception:
+        return False
+
+
+# ------------------------------------------------------------------
 # Capability probe (local, offline, no network).
 # ------------------------------------------------------------------
 
@@ -425,7 +809,7 @@ def _run_checked(
     detail: str,
     timeout: float = 30.0,
     input_text: str | None = None,
-) -> str:
+) -> object:
     """Run one offline tool command; raise ``code`` on any failure."""
 
     if not isinstance(cmd, (list, tuple)) or any(
@@ -457,6 +841,23 @@ def _run_checked(
     return res.stdout or ""
 
 
+def _decode_command_text(raw: object) -> str | None:
+    """Decode tool output to text (B8.1-B: explicit bytes handling).
+
+    Returns the decoded string, or None when the payload is missing or
+    undecodable — callers fail closed on None. Never raises.
+    """
+
+    try:
+        if isinstance(raw, bytes):
+            return raw.decode("utf-8", "replace")
+        if isinstance(raw, str):
+            return raw
+        return None
+    except Exception:
+        return None
+
+
 @dataclass(frozen=True)
 class _NamespaceHandle:
     name: str
@@ -467,10 +868,13 @@ class SystemNetnsBackend:
     """Real namespace materialization (requires root/CAP_SYS_ADMIN).
 
     - CREATE: ``ip netns add watch-<execution_id>``.
-    - CONFIGURE: loopback up; filter chain policy DROP on OUTPUT+INPUT;
-      exact ACCEPT tuples for the allowlist; explicit DROP denials.
-    - VERIFY: read back the installed rules and assert default-deny +
-      exact allowlist + no default route.
+    - CONFIGURE: loopback up; filter policy DROP on OUTPUT+INPUT; exact
+      ACCEPT tuples for the allowlist; explicit DROP denials; a
+      TCP-scoped ESTABLISHED,RELATED return rule on INPUT (approved
+      flows can complete; nothing inbound-new is admitted).
+    - VERIFY: read back the installed kernel state and assert the full
+      contract (both DROP policies, exact allowlist, no unexpected
+      ACCEPT, required return rule, empty NAT).
     - EXECUTE: ``ip netns exec watch-<execution_id> <argv>``.
     - TEARDOWN: ``ip netns del watch-<execution_id>``.
     Every command is ``shell=False``; any failure raises the matching
@@ -514,70 +918,62 @@ class SystemNetnsBackend:
             nft_cmd = shutil.which("nft")
             frontend = ["ip", "netns", "exec", _ns]
             if nft_cmd:
-                rules: list[str] = [
-                    "table inet watch { chain output {",
-                    "type filter hook output priority 0; policy drop;",
-                ]
-                for r in ruleset.rules:
-                    add = "accept" if r.verdict == "ACCEPT" else "drop"
-                    if r.proto == "udp":
-                        if r.dst_ip is not None:
-                            rules.append(
-                                f"ip6 daddr {r.dst_ip} udp dport {r.dport or 0} {add};"
-                            )
-                        elif r.dport is not None:
-                            rules.append(f"udp dport {r.dport} {add};")
-                        else:
-                            rules.append(f"udp {add};")
-                    else:
-                        if r.dst_ip is not None and r.dport is not None:
-                            rules.append(
-                                f"ip daddr {r.dst_ip} tcp dport {r.dport} {add};"
-                            )
-                        elif r.dst_ip is not None:
-                            rules.append(f"ip daddr {r.dst_ip} {add};")
-                        else:
-                            rules.append(f"tcp {add};")
-                rules.extend(
-                    ["type filter hook input priority 0; policy drop;", "} }"]
-                )
-                nft_input = "".join(rules)
+                # B8.1-A: single validated script (two chains, one hook
+                # each, family-correct matches). Rejected by ``nft -f``
+                # on any error -> SANDBOX_CONFIGURE_FAILED, never partial.
+                script = render_nft_script(ruleset)
                 _run_checked(
                     frontend + [nft_cmd, "-f", "-"],
                     "SANDBOX_CONFIGURE_FAILED",
                     "nft install",
-                    input_text=nft_input,
+                    input_text=script,
                 )
             else:
-                ipt = shutil.which("iptables")
-                if ipt is None:
+                ipt4 = shutil.which("iptables")
+                ipt6 = shutil.which("ip6tables")
+                if ipt4 is None and ipt6 is None:
                     raise SandboxError(
                         "SANDBOX_CONFIGURE_FAILED", "no netfilter frontend"
                     )
-                _run_checked(
-                    frontend + [ipt, "-P", "OUTPUT", "DROP"],
-                    "SANDBOX_CONFIGURE_FAILED",
-                    "output policy",
-                )
-                _run_checked(
-                    frontend + [ipt, "-P", "INPUT", "DROP"],
-                    "SANDBOX_CONFIGURE_FAILED",
-                    "input policy",
-                )
+                plan: dict[str, list[list[str]]] = {}
                 for r in ruleset.rules:
-                    args: list[str] = []
-                    if r.dst_ip is not None:
-                        args += ["-d", r.dst_ip]
-                    proto = "tcp" if r.proto == "tcp" else "udp"
-                    args += ["-p", proto]
-                    if r.dport is not None:
-                        args += ["--dport", str(r.dport)]
-                    args += ["-j", "ACCEPT" if r.verdict == "ACCEPT" else "DROP"]
+                    for front, args in render_iptables_plan(r):
+                        binary = ipt4 if front == "iptables" else ipt6
+                        if binary is None:
+                            raise SandboxError(
+                                "SANDBOX_CONFIGURE_FAILED",
+                                f"no {front} frontend",
+                            )
+                        plan.setdefault(binary, []).append(args)
+                # Harden every present frontend (policies + TCP-scoped
+                # ESTABLISHED return), even one carrying no allowlist
+                # rules: an unhardened family would stay default-ACCEPT.
+                for binary in (ipt4, ipt6):
+                    if binary is None:
+                        continue
                     _run_checked(
-                        frontend + [ipt, "-A", "OUTPUT"] + args,
+                        frontend + [binary, "-P", "OUTPUT", "DROP"],
                         "SANDBOX_CONFIGURE_FAILED",
-                        "rule insert",
+                        "output policy",
                     )
+                    _run_checked(
+                        frontend + [binary, "-P", "INPUT", "DROP"],
+                        "SANDBOX_CONFIGURE_FAILED",
+                        "input policy",
+                    )
+                    _run_checked(
+                        frontend + [binary, "-A", "INPUT"]
+                        + list(_IPTABLES_ESTABLISHED_ARGS),
+                        "SANDBOX_CONFIGURE_FAILED",
+                        "established return",
+                    )
+                for binary, argsets in plan.items():
+                    for args in argsets:
+                        _run_checked(
+                            frontend + [binary, "-A", "OUTPUT"] + list(args),
+                            "SANDBOX_CONFIGURE_FAILED",
+                            "rule insert",
+                        )
         except SandboxError:
             raise
         except Exception as exc:
@@ -586,23 +982,94 @@ class SystemNetnsBackend:
             ) from exc
 
     def verify(self, handle: object, ruleset: NetnsRuleSet) -> bool:
+        """Verify the live kernel contract (B8.1-B/C: never crashes).
+
+        Reads back REAL kernel state and checks the full contract:
+        OUTPUT/INPUT policy DROP, the exact allowlist (no unexpected
+        ACCEPT), the required ESTABLISHED TCP return rule, and empty
+        NAT. Any deviation, any tool failure, any unexpected output —
+        False (the caller raises ``SANDBOX_VERIFY_FAILED``). No
+        exception ever escapes: bytes/str handling is explicit and the
+        whole body is fail-closed.
+        """
+
         if not isinstance(handle, _NamespaceHandle):
             return False
         try:
             require_default_deny(ruleset)
             require_no_default_route(ruleset)
-        except SandboxError:
+        except (SandboxError, TypeError):
             return False
+        try:
+            _ns = handle.name
+            if shutil.which("nft") is not None:
+                raw = _run_checked(
+                    ["ip", "netns", "exec", _ns, "nft", "list", "ruleset"],
+                    "SANDBOX_VERIFY_FAILED",
+                    "nft readback",
+                )
+                text = _decode_command_text(raw)
+                if text is None:
+                    return False
+                return check_nft_ruleset(text, ruleset)
+            ipt4 = shutil.which("iptables")
+            if ipt4 is not None:
+                return self._verify_iptables_family(handle, ruleset)
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def _verify_iptables_family(
+        handle: _NamespaceHandle, ruleset: NetnsRuleSet
+    ) -> bool:
+        """Verify the iptables/ip6tables legs against the shared plan."""
+
         _ns = handle.name
-        ipt = shutil.which("iptables")
-        if ipt is not None:
-            out = _run_checked(
-                ["ip", "netns", "exec", _ns, ipt, "-S", "OUTPUT"],
+        ipt4 = shutil.which("iptables")
+        ipt6 = shutil.which("ip6tables")
+        if ipt4 is None and ipt6 is None:
+            return False
+        expected: dict[str, list[str]] = {}
+        for r in ruleset.rules:
+            for front, args in render_iptables_plan(r):
+                binary = ipt4 if front == "iptables" else ipt6
+                if binary is None:
+                    return False
+                expected.setdefault(binary, []).append(
+                    "-A OUTPUT " + " ".join(args)
+                )
+        for binary in (ipt4, ipt6):
+            if binary is None:
+                continue
+            out_raw = _run_checked(
+                ["ip", "netns", "exec", _ns, binary, "-S", "OUTPUT"],
                 "SANDBOX_VERIFY_FAILED",
                 "readback",
             )
-            return "-P OUTPUT DROP" in out
-        return False
+            in_raw = _run_checked(
+                ["ip", "netns", "exec", _ns, binary, "-S", "INPUT"],
+                "SANDBOX_VERIFY_FAILED",
+                "readback",
+            )
+            nat_raw = _run_checked(
+                ["ip", "netns", "exec", _ns, binary, "-t", "nat", "-S"],
+                "SANDBOX_VERIFY_FAILED",
+                "readback",
+            )
+            out_text = _decode_command_text(out_raw)
+            in_text = _decode_command_text(in_raw)
+            nat_text = _decode_command_text(nat_raw)
+            if out_text is None or in_text is None or nat_text is None:
+                return False
+            if not check_iptables_state(
+                output_text=out_text,
+                input_text=in_text,
+                nat_text=nat_text,
+                expected_output_lines=tuple(expected.get(binary, ())),
+            ):
+                return False
+        return True
 
     def launch_prefix(self, handle: object, argv: list[str]) -> list[str]:
         if not isinstance(handle, _NamespaceHandle):
