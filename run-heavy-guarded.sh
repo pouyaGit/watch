@@ -2,6 +2,27 @@
 
 set -euo pipefail
 
+# --------------------------------------------------
+# Robust tool PATH for systemd / heavy jobs.
+#
+# systemd units run with a minimal PATH and never source ~/.zshrc,
+# so Go tool directories (e.g. alterx) must be explicit here.
+# Do NOT hardcode an interactive user's home (e.g. do not hardcode
+# /home/pouya_behnia/go/bin): it is covered dynamically via $HOME/go/bin,
+# so when HOME=/home/pouya_behnia the resolved PATH includes
+# /home/pouya_behnia/go/bin without any username baked into the repo.
+# /root/go/bin + /usr/local/go/bin cover the production systemd PATH
+# (see setup-weekly-jobs.sh Environment=PATH and utils/common.py
+# WATCH_TOOL_PATH for the canonical dir set).
+# --------------------------------------------------
+
+HEAVY_TOOL_DIRS="/opt/watch/venv/bin"
+if [ -n "${HOME:-}" ]; then
+    HEAVY_TOOL_DIRS="$HEAVY_TOOL_DIRS:$HOME/go/bin"
+fi
+HEAVY_TOOL_DIRS="$HEAVY_TOOL_DIRS:/root/go/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH="$HEAVY_TOOL_DIRS:${PATH:-}"
+
 LOCKFILE="/run/watch-pipeline.lock"
 
 # --------------------------------------------------
