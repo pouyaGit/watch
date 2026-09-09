@@ -21,6 +21,9 @@ Usage::
     python -m ai.research_cli batch --days 7 --limit 5
     python -m ai.research_cli batch --cves CVE-2026-1557,CVE-2026-0001
     python -m ai.research_cli batch --file cves.txt
+    python -m ai.research_cli kb list
+    python -m ai.research_cli kb show <knowledge_id>
+    python -m ai.research_cli kb search --xss-type reflected
     python -m ai.research_cli validate-live --cve CVE-2026-1557 --target https://example.com
 
 ``check`` is fully offline except for a localhost MongoDB ping and
@@ -34,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,6 +48,75 @@ NUCLEI_DIRS = (
     Path("ai_data/nuclei/results"),
     Path("ai_data/nuclei/findings"),
 )
+
+REFERENCE_ARCHIVE_VERSION = "references-1"
+
+
+def write_reference_archive(
+    cve_id: str,
+    reference_contexts,
+    discovered_documents=None,
+) -> Path:
+    """Persist already-built ReferenceContext material (Stage R1).
+
+    Writes ``ai_data/research/<CVE>.references.json`` with one record
+    per :class:`ReferenceContext`: ``source_url``, ``source_type``,
+    ``title``, ``exact_record``, ``context_chunks``, plus
+    ``content_hash`` where the fetched-document material carries one
+    (``None`` otherwise -- never invented). The existing research JSON
+    schema is untouched; reference fetching behavior is untouched; no
+    fetch is performed here.
+
+    The write is atomic (temp file + rename) and deterministic
+    (sorted keys), matching the knowledge-store persistence pattern.
+    """
+
+    hash_by_url: dict[str, str] = {}
+
+    for item in discovered_documents or []:
+        url = item.get("url")
+        content_hash = item.get("content_hash")
+
+        if url and content_hash and url not in hash_by_url:
+            hash_by_url[url] = content_hash
+
+    records = []
+
+    for context in reference_contexts:
+        records.append(
+            {
+                "source_url": context.source_url,
+                "source_type": context.source_type,
+                "title": context.title,
+                "exact_record": context.exact_record,
+                "context_chunks": list(context.context_chunks),
+                "content_hash": hash_by_url.get(context.source_url),
+            }
+        )
+
+    archive = {
+        "archive_version": REFERENCE_ARCHIVE_VERSION,
+        "cve_id": cve_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "record_count": len(records),
+        "records": records,
+    }
+
+    RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
+    path = RESEARCH_DIR / f"{cve_id}.references.json"
+    temp_path = path.with_name(f"{path.name}.tmp")
+    temp_path.write_text(
+        json.dumps(
+            archive,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temp_path, path)
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +339,15 @@ def _research_single_cve(cve_id: str, skip_llm: bool = False) -> dict:
         )
         for context in contexts_raw
     ]
+
+    # Stage R1: persist the already-built ReferenceContext material
+    # alongside (never inside) the existing research JSON. No fetch,
+    # no schema change to the research payload, no secrets.
+    write_reference_archive(
+        cve.title,
+        reference_contexts,
+        discovered_documents,
+    )
 
     if skip_llm:
         research_payload: dict = {
@@ -536,6 +618,142 @@ def run_batch(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Read-only knowledge-base inspection (Stage R1)
+#
+# Wraps the EXISTING KnowledgeStore APIs only (retrieve / get_by_id).
+# No new search semantics: filters map 1:1 onto
+# KnowledgeStore.retrieve() exact-match fields. No mutation, no
+# ingestion, no network, no LLM.
+# ---------------------------------------------------------------------------
+
+
+def _kb_store():
+    from ai.knowledge.store import KnowledgeStore
+
+    return KnowledgeStore()
+
+
+# (cli flag, retrieve kwarg) pairs. Order is fixed for determinism.
+KB_SEARCH_FIELDS: tuple[tuple[str, str], ...] = (
+    ("technology", "technologies"),
+    ("xss_type", "xss_types"),
+    ("context", "contexts"),
+    ("waf", "wafs"),
+    ("technique", "techniques"),
+    ("source_type", "source_types"),
+    ("evidence_quality", "evidence_quality"),
+    ("tag", "tags"),
+)
+
+
+def _kb_search_kwargs(args: argparse.Namespace) -> dict:
+    kwargs = {}
+
+    for _, kwarg in KB_SEARCH_FIELDS:
+        values = getattr(args, kwarg, None)
+
+        if values:
+            kwargs[kwarg] = values
+
+    return kwargs
+
+
+def run_kb_list(args: argparse.Namespace, store=None) -> int:
+    store = store if store is not None else _kb_store()
+
+    try:
+        documents = store.retrieve()
+    except ValueError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                [
+                    document.model_dump(mode="json")
+                    for document in documents
+                ],
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        for document in documents:
+            print(f"{document.knowledge_id} | {document.title}")
+        print(f"KB DOCS: {len(documents)}")
+
+    return 0
+
+
+def run_kb_show(args: argparse.Namespace, store=None) -> int:
+    store = store if store is not None else _kb_store()
+
+    try:
+        document = store.get_by_id(args.knowledge_id)
+    except ValueError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    if document is None:
+        print(
+            f"ERROR: unknown knowledge_id: {args.knowledge_id}",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        json.dumps(
+            document.model_dump(mode="json"),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def run_kb_search(args: argparse.Namespace, store=None) -> int:
+    store = store if store is not None else _kb_store()
+
+    try:
+        documents = store.retrieve(**_kb_search_kwargs(args))
+    except ValueError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                [
+                    document.model_dump(mode="json")
+                    for document in documents
+                ],
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        for document in documents:
+            print(f"{document.knowledge_id} | {document.title}")
+        print(f"MATCHES: {len(documents)}")
+
+    return 0
+
+
+def run_kb(args: argparse.Namespace) -> int:
+    if args.kb_command == "list":
+        return run_kb_list(args)
+    if args.kb_command == "show":
+        return run_kb_show(args)
+    if args.kb_command == "search":
+        return run_kb_search(args)
+    return 2
+
+
+# ---------------------------------------------------------------------------
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -594,7 +812,119 @@ def build_parser() -> argparse.ArgumentParser:
         help="attempt live execution; also requires "
         "WATCH_AI_LIVE_VALIDATION=true or the lane blocks at config",
     )
+
+    kb = sub.add_parser(
+        "kb",
+        help="read-only knowledge-base inspection (no writes)",
+    )
+    kb_sub = kb.add_subparsers(dest="kb_command", required=True)
+
+    kb_list = kb_sub.add_parser(
+        "list", help="list all KB documents (deterministic order)"
+    )
+    kb_list.add_argument(
+        "--json",
+        action="store_true",
+        help="emit full documents as JSON",
+    )
+
+    kb_show = kb_sub.add_parser(
+        "show", help="show one KB document by knowledge_id"
+    )
+    kb_show.add_argument(
+        "knowledge_id", help="e.g. kb-0123456789abcdef"
+    )
+
+    kb_search = kb_sub.add_parser(
+        "search",
+        help="exact-match metadata search "
+        "(same filters as KnowledgeStore.retrieve)",
+    )
+    kb_search.add_argument(
+        "--technology",
+        dest="technologies",
+        action="append",
+        default=None,
+    )
+    kb_search.add_argument(
+        "--xss-type",
+        dest="xss_types",
+        action="append",
+        default=None,
+    )
+    kb_search.add_argument(
+        "--context",
+        dest="contexts",
+        action="append",
+        default=None,
+    )
+    kb_search.add_argument(
+        "--waf", dest="wafs", action="append", default=None
+    )
+    kb_search.add_argument(
+        "--technique",
+        dest="techniques",
+        action="append",
+        default=None,
+    )
+    kb_search.add_argument(
+        "--source-type",
+        dest="source_types",
+        action="append",
+        default=None,
+    )
+    kb_search.add_argument(
+        "--evidence-quality",
+        dest="evidence_quality",
+        action="append",
+        default=None,
+    )
+    kb_search.add_argument(
+        "--tag", dest="tags", action="append", default=None
+    )
+    kb_search.add_argument(
+        "--json",
+        action="store_true",
+        help="emit full documents as JSON",
+    )
+
+    report = sub.add_parser(
+        "report",
+        help="render a deterministic Markdown research report "
+        "from persisted artifacts (no network, no LLM, no Nuclei, "
+        "no Mongo)",
+    )
+    report.add_argument("--cve", required=True, help="e.g. CVE-2026-1557")
+    report.add_argument(
+        "--output",
+        default=None,
+        help="override output path "
+        "(default: ai_data/reports/<CVE>.md)",
+    )
     return parser
+
+
+def run_report(args: argparse.Namespace) -> int:
+    from ai.reports.renderer import (
+        ReportError,
+        build_report_for_cve,
+    )
+
+    output = getattr(args, "output", None)
+
+    try:
+        path = build_report_for_cve(
+            args.cve,
+            output=output,
+        )
+    except ReportError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"REPORTED: {args.cve}")
+    print(f"SAVED: {path}")
+    print("MODE: read-only render (no network, no LLM, no execution)")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -605,6 +935,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_research(args)
     if args.command == "batch":
         return run_batch(args)
+    if args.command == "kb":
+        return run_kb(args)
+    if args.command == "report":
+        return run_report(args)
     if args.command == "validate-live":
         return run_validate_live(args)
     return 2
