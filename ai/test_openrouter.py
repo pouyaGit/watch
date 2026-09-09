@@ -684,5 +684,178 @@ class OpenRouterProviderIntegrationTest(unittest.TestCase):
             )
 
 
+class OpenRouterProviderFailureNormalizationTests(unittest.TestCase):
+    """Stage R10 regression: provider failure normalization.
+
+    Every failure mode observed in R9/R9.4/R9.5 (HTTP 404 discontinued
+    slug, HTTP 200 with empty choices, HTTP 429 rate limit) plus
+    timeout/network failures and malformed provider responses must
+    normalize into a clean :class:`OpenRouterProviderError` with no
+    API-key material in the message or cause chain.
+
+    Additionally, ONE invocation must be exactly ONE provider HTTP
+    call: the openai SDK's built-in retry-on-408/409/429/5xx behavior
+    must be disabled (no automatic retries; retries/fallback routing
+    belong to a future orchestration layer).
+
+    No real network calls: all requests go through httpx.MockTransport.
+    """
+
+    def _build_provider(self, handler) -> OpenRouterProvider:
+        client = _build_capturing_client(handler)
+        return OpenRouterProvider(
+            api_key="sk-or-v1-secret-key",
+            model="minimax/minimax-m3:free",
+            http_client=client,
+        )
+
+    # -- HTTP status normalization (R9 / R9.5 failure modes) -----
+
+    def test_404_discontinued_slug_normalized_with_status(self):
+        """R9 (Minimax): HTTP 404 -> clean provider error that keeps
+        the status code visible for downstream classification."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                404,
+                json={"error": {"code": 404, "message": "No endpoints"}},
+            )
+
+        provider = self._build_provider(handler)
+
+        with self.assertRaises(OpenRouterProviderError) as ctx:
+            provider.generate("p")
+
+        self.assertIn("HTTP 404", str(ctx.exception))
+        self.assertNotIn(
+            "sk-or-v1-secret-key", str(ctx.exception)
+        )
+
+    def test_429_rate_limit_normalized_with_status(self):
+        """R9.5 (Gemma): HTTP 429 -> clean provider error that keeps
+        the status code visible for downstream classification."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                429,
+                json={"error": {"code": 429, "message": "Rate limited"}},
+            )
+
+        provider = self._build_provider(handler)
+
+        with self.assertRaises(OpenRouterProviderError) as ctx:
+            provider.generate("p")
+
+        self.assertIn("HTTP 429", str(ctx.exception))
+        self.assertNotIn(
+            "sk-or-v1-secret-key", str(ctx.exception)
+        )
+
+    # -- Timeout / network normalization --------------------------
+
+    def test_timeout_normalized_to_connection_error(self):
+        """A provider-side timeout must normalize into the same clean
+        connection-error shape as any other transport failure."""
+
+        from openai import APITimeoutError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise APITimeoutError(request=request)
+
+        provider = self._build_provider(handler)
+
+        with self.assertRaises(OpenRouterProviderError) as ctx:
+            provider.generate("p")
+
+        self.assertIn("connection error", str(ctx.exception))
+        self.assertIn("APITimeoutError", str(ctx.exception))
+        self.assertNotIn(
+            "sk-or-v1-secret-key", str(ctx.exception)
+        )
+
+    # -- One invocation = one provider call ------------------------
+
+    def _counting_handler(self, counter: dict, status: int):
+        def handler(request: httpx.Request) -> httpx.Response:
+            counter["calls"] = counter.get("calls", 0) + 1
+            return httpx.Response(
+                status,
+                json={"error": {"code": status, "message": "down"}},
+            )
+
+        return handler
+
+    def test_no_automatic_retry_on_429(self):
+        """One invocation = one provider call, even on HTTP 429.
+
+        The openai SDK retries 429/5xx by default (max_retries=2);
+        the provider must disable that so rate-limit budget is not
+        burned by hidden retries."""
+
+        counter: dict = {}
+        provider = self._build_provider(
+            self._counting_handler(counter, 429)
+        )
+
+        with self.assertRaises(OpenRouterProviderError):
+            provider.generate("p")
+
+        self.assertEqual(counter["calls"], 1)
+
+    def test_no_automatic_retry_on_5xx(self):
+        counter: dict = {}
+        provider = self._build_provider(
+            self._counting_handler(counter, 503)
+        )
+
+        with self.assertRaises(OpenRouterProviderError):
+            provider.generate("p")
+
+        self.assertEqual(counter["calls"], 1)
+
+    # -- Malformed provider response normalization -----------------
+
+    def test_non_string_message_content_rejected(self):
+        """Some providers/models return ``message.content`` as a list
+        of content parts (or other non-string shapes). That must not
+        leak past the provider boundary as a non-str LLMResult or a
+        downstream AttributeError; it must be a clean provider error."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payload = _make_chat_payload()
+            payload["choices"][0]["message"]["content"] = [
+                {"type": "text", "text": "hello"}
+            ]
+            return httpx.Response(200, json=payload)
+
+        provider = self._build_provider(handler)
+
+        with self.assertRaises(OpenRouterProviderError) as ctx:
+            provider.generate("p")
+
+        self.assertIn("not a string", str(ctx.exception))
+
+    def test_non_list_choices_rejected(self):
+        """``choices`` in any non-list shape must normalize into the
+        clean 'no choices' provider error, never leak a raw KeyError."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "x",
+                    "model": "m",
+                    "choices": {"0": {"message": {"content": "hi"}}},
+                },
+            )
+
+        provider = self._build_provider(handler)
+
+        with self.assertRaises(OpenRouterProviderError) as ctx:
+            provider.generate("p")
+
+        self.assertIn("no choices", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

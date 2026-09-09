@@ -1,0 +1,204 @@
+{# research_detail.html — persisted CVE research detail (Stage D5 polish).
+
+   Everything on this page is offline research state derived from the
+   persisted cli.json artifact (plus confined, read-only Nuclei artifact
+   metadata). Nothing here is a confirmed vulnerability against any Watch
+   target, and the page says so explicitly. #}
+{% extends "base.html" %}
+{% block title %}{{ cve }} — Research — WATCH{% endblock %}
+{% block page %}{{ cve }}{% endblock %}
+
+{% from "macros.html" import sev_badge, research_banner, empty_state, tri_bool with context %}
+
+{% block content %}
+<a class="back-link" href="{{ research_url }}">← Research / CVEs</a>
+
+{{ research_banner("RESEARCH ONLY — NOT A PRODUCTION FINDING") }}
+
+{# ---------- header ---------- #}
+<div class="panel mb-6">
+  <div class="panel-body rd-head">
+    <div class="rd-head-left">
+      <div class="mono rd-cve">{{ cve }}</div>
+      <div class="detail-title">{{ r.title or 'Untitled' }}</div>
+    </div>
+    <div class="rd-head-right">
+      {{ sev_badge(r.severity, r.sev_bucket) }}
+      {% if r.authoritative is sameas true %}
+        <span class="badge badge-ok" title="authoritative flag as persisted">AUTHORITATIVE</span>
+      {% elif r.authoritative is sameas false %}
+        <span class="badge badge-warn" title="authoritative flag as persisted">NOT AUTHORITATIVE</span>
+      {% endif %}
+      {% if r.report_url %}<a class="btn-ghost" href="{{ r.report_url }}">Deterministic report →</a>{% endif %}
+    </div>
+  </div>
+  <div class="panel-body rd-metarow">
+    <span class="dm-item"><span class="dm-k">CVSS</span>
+      <span class="mono rd-cvss">{{ r.cvss_score if r.cvss_score is not none else '—' }}</span></span>
+    {% if r.cvss_vector %}<span class="dm-item"><span class="dm-k">Vector</span>
+      <span class="mono text-xs">{{ r.cvss_vector }}</span></span>{% endif %}
+    <span class="dm-item"><span class="dm-k">Public exploit</span>{{ tri_bool(r.public_exploit) }}</span>
+    <span class="dm-item"><span class="dm-k">Research status</span>{{ r.research_status or '—' }}</span>
+    <span class="dm-item"><span class="dm-k">LLM status</span>{{ r.llm_status or '—' }}</span>
+    {% if r.generated_at %}<span class="dm-item"><span class="dm-k">Generated</span>
+      <span class="mono text-xs" title="{{ r.generated_at }}">{{ r.generated_at.split('T')[0] }}</span></span>{% endif %}
+    <span class="dm-item"><span class="dm-k">Artifact</span>
+      <span class="mono text-xs text-muted">{{ r.artifact }}{% if r.research_version %} · {{ r.research_version }}{% endif %}</span></span>
+  </div>
+</div>
+
+{# ---------- summary (full width, first) ---------- #}
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Summary</h2></div>
+  <div class="panel-body">
+    <p class="prose">{{ r.summary or 'No persisted summary.' }}</p>
+    {% if r.root_cause %}<p class="prose text-muted"><strong>Root cause:</strong> {{ r.root_cause }}</p>{% endif %}
+    {% if r.impact %}
+    <div class="section-label mt-3">Impact (as persisted)</div>
+    <ul class="plain">{% for i in r.impact %}<li class="text-sm">{{ i }}</li>{% endfor %}</ul>
+    {% endif %}
+  </div>
+</section>
+
+<div class="detail-grid">
+
+  {# ---------- vulnerability ---------- #}
+  <section class="panel">
+    <div class="panel-head"><h2>Vulnerability</h2></div>
+    <div class="panel-body">
+      <table class="kv">
+        <tr><th>Type</th><td>{{ r.vulnerability_type or '—' }}{% if r.cwe %} <span class="badge-sm">{{ r.cwe }}</span>{% endif %}</td></tr>
+        <tr><th>Endpoints / paths</th><td class="mono">
+          {% if r.endpoints %}{% for p in r.endpoints %}<div>{{ p }}</div>{% endfor %}{% else %}—{% endif %}</td></tr>
+        <tr><th>Parameters</th><td class="mono">
+          {% if r.parameters %}{{ r.parameters | join(', ') }}{% else %}—{% endif %}</td></tr>
+        <tr><th>Authentication</th><td>{{ r.authentication or '—' }}</td></tr>
+        <tr><th>Product</th><td>{{ (r.products or []) | join('; ') or '—' }}</td></tr>
+        <tr><th>Versions</th><td class="mono">{{ (r.versions or []) | join('; ') or '—' }}</td></tr>
+      </table>
+      {% if r.attack_requirements %}
+      <div class="section-label mt-3">Attack requirements (as persisted)</div>
+      <ul class="plain">{% for a in r.attack_requirements %}<li class="text-sm">{{ a }}</li>{% endfor %}</ul>
+      {% endif %}
+    </div>
+  </section>
+
+  {# ---------- watch relevance ---------- #}
+  <section class="panel">
+    <div class="panel-head"><h2>Watch Relevance</h2><span class="badge-sm">persisted correlation metadata</span></div>
+    <div class="panel-body">
+      <table class="kv">
+        <tr><th>Programs</th><td>{% if r.programs %}{% for p in r.programs %}<span class="badge-sm">{{ p }}</span>{% endfor %}{% else %}<span class="text-muted">—</span>{% endif %}</td></tr>
+        <tr><th>Technologies</th><td>{% if r.technologies %}{% for t in r.technologies %}<span class="badge-sm">{{ t }}</span>{% endfor %}{% else %}<span class="text-muted">—</span>{% endif %}</td></tr>
+        <tr><th>Assets</th><td class="mono text-xs">
+          {% if r.assets %}{{ r.assets | join(', ') }}{% else %}<span class="text-muted">—</span>{% endif %}</td></tr>
+        <tr><th>Assessments</th><td>{{ r.assessment_count if r.assessment_count is not none else '—' }}</td></tr>
+        <tr><th>Sources</th><td>discovered {{ r.discovered_source_count if r.discovered_source_count is not none else '—' }} ·
+          fetched {{ r.fetched_source_count if r.fetched_source_count is not none else '—' }}</td></tr>
+        <tr><th>Bounty relevance</th><td>{{ r.bug_bounty_relevance if r.bug_bounty_relevance is not none else '—' }}</td></tr>
+      </table>
+      <p class="text-xs text-muted mt-3">Watch-specific applicability is
+        <strong>unknown</strong> — persisted artifacts do not confirm the
+        vulnerable product/version on any specific target, and this view
+        performs no live validation.</p>
+    </div>
+  </section>
+
+  {# ---------- evidence ---------- #}
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Evidence</h2><span class="badge-sm">persisted research notes — not verified output</span></div>
+    <div class="panel-body">
+      {% if r.evidence %}
+      <ul class="plain evidence-list">
+        {% for e in r.evidence %}<li class="text-sm">{{ e }}</li>{% endfor %}
+      </ul>
+      {% else %}
+        {{ empty_state("No persisted evidence entries.", 'Evidence appears here after the offline research CLI runs for this CVE.', compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+  {# ---------- detection ideas ---------- #}
+  {% if r.detection_ideas %}
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Detection Ideas</h2><span class="badge-sm">ideas only — none executed here</span></div>
+    <div class="panel-body">
+      <ul class="plain">{% for d in r.detection_ideas %}<li class="text-sm">{{ d }}</li>{% endfor %}</ul>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ---------- references ---------- #}
+  <section class="panel">
+    <div class="panel-head"><h2>References</h2><span class="badge-sm">not fetched at render time</span></div>
+    <div class="panel-body">
+      {% if r.references %}
+      <ul class="plain ref-list">
+        {% for ref in r.references %}<li class="mono text-xs">{{ ref }}</li>{% endfor %}
+      </ul>
+      {% else %}
+        {{ empty_state("No persisted references.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+  {# ---------- nuclei ---------- #}
+  <section class="panel">
+    <div class="panel-head"><h2>Nuclei</h2><span class="badge-sm">offline artifacts only — nothing executed here</span></div>
+    <div class="panel-body">
+      <table class="kv">
+        <tr><th>Candidate</th><td>{{ tri_bool(r.nuclei_candidate) }}</td></tr>
+        <tr><th>Decision</th><td>{% set _dec = r.nuclei_decision or (r.nuclei.results.get('decision') if r.nuclei and r.nuclei.results else None) %}{% if _dec %}<span class="badge-sm">{{ _dec }}</span>{% else %}—{% endif %}</td></tr>
+        {% if r.nuclei_reason %}<tr><th>Reason</th><td class="text-sm">{{ r.nuclei_reason }}</td></tr>{% endif %}
+        {% if r.nuclei and r.nuclei.template %}
+        <tr><th>Template</th><td class="mono text-xs">{{ r.nuclei.template.id or r.nuclei.template.name }}
+          {% if r.nuclei.template.severity %}<span class="badge-sm">{{ r.nuclei.template.severity }}</span>{% endif %}</td></tr>
+        {% endif %}
+        {% if r.nuclei and r.nuclei.results %}
+        <tr><th>Validation</th><td class="text-xs">
+          semantic={{ tri_bool(r.nuclei.results.get('semantic_valid', '—')) }} ·
+          template={{ tri_bool(r.nuclei.results.get('nuclei_valid', '—')) }} ·
+          runs={{ r.nuclei.results.get('run_result_count', 0) }} ·
+          findings={{ r.nuclei.results.get('finding_count', 0) }}</td></tr>
+        {% endif %}
+        {% if r.nuclei and r.nuclei.findings %}
+        <tr><th>Findings artifact</th><td class="mono text-xs text-muted">{{ r.nuclei.findings.name }}
+          {% if r.nuclei.findings.record_count is not none %}· {{ r.nuclei.findings.record_count }} record(s){% endif %}</td></tr>
+        {% endif %}
+      </table>
+    </div>
+  </section>
+
+  {# ---------- report ---------- #}
+  <section class="panel">
+    <div class="panel-head"><h2>Report</h2></div>
+    <div class="panel-body">
+      {% if r.report_url %}
+        <a class="btn-primary" href="{{ r.report_url }}">View deterministic report →</a>
+      {% else %}
+        {{ empty_state("No persisted report for this CVE.", 'Reports are generated offline from persisted artifacts.', compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+  {# ---------- scope ---------- #}
+  <section class="panel">
+    <div class="panel-head"><h2>Scope &amp; Limitations</h2></div>
+    <div class="panel-body">
+      <ul class="plain text-sm text-muted">
+        <li>Read-only render of persisted local artifacts.</li>
+        <li>No live validation, no target contact, no payload execution.</li>
+        <li>References were not fetched at render time.</li>
+        <li>Evidence entries are persisted research notes, not verified output.</li>
+        <li>Production findings require the Watch verification pipeline.</li>
+      </ul>
+    </div>
+  </section>
+
+</div>
+
+<p class="disclaimer-foot">
+  This page reflects persisted research state only. Watch findings require production
+  verification, which this view never performs or implies.
+</p>
+{% endblock %}

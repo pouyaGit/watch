@@ -238,3 +238,136 @@ class XSSResearchLLMResult(BaseModel):
 
     model: str | None = None
     raw_response_id: str | None = None
+
+
+class XSSCandidateSourceEvidence(BaseModel):
+    """One matched KB document and why it matched (Stage R3 agent)."""
+
+    knowledge_id: str
+    title: str
+    score: int
+    reasons: list[str] = Field(
+        default_factory=list
+    )
+
+
+class XSSAttributedSink(BaseModel):
+    """A sink/source value with the KB documents that state it."""
+
+    value: str
+    knowledge_ids: list[str] = Field(
+        default_factory=list
+    )
+
+
+class XSSResearchCandidate(BaseModel):
+    """
+    Structured XSS research candidate (Stage R3 agent MVP).
+
+    A candidate is a research hypothesis, never a confirmed
+    vulnerability. ``status`` is one of ``RESEARCH_CANDIDATE``,
+    ``INSUFFICIENT_EVIDENCE`` or ``REJECTED``. Pattern matches must
+    never be read as exploitability claims; see ``disclaimer``.
+    """
+
+    candidate_id: str
+    agent_version: str
+
+    status: str
+
+    query: str
+    xss_type: str | None = None
+    context: str | None = None
+    technologies: list[str] = Field(
+        default_factory=list
+    )
+    techniques: list[str] = Field(
+        default_factory=list
+    )
+
+    source_evidence: list[XSSCandidateSourceEvidence] = Field(
+        default_factory=list
+    )
+    vulnerability_pattern: str | None = None
+    injection_context: str | None = None
+    sinks: list[XSSAttributedSink] = Field(
+        default_factory=list
+    )
+    sources: list[XSSAttributedSink] = Field(
+        default_factory=list
+    )
+    preconditions: list[str] = Field(
+        default_factory=list
+    )
+    test_idea: str | None = None
+
+    confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+    )
+
+    unknowns: list[str] = Field(
+        default_factory=list
+    )
+    references: list[str] = Field(
+        default_factory=list
+    )
+
+    disclaimer: str = (
+        "Pattern match is NOT exploitability. "
+        "No live testing was performed and no target was contacted."
+    )
+
+
+class XSSLLMResearchEvidence(BaseModel):
+    """One evidence/inference/unknown line from the LLM research assistant.
+
+    ``kind`` separates facts directly present in supplied Watch
+    artifacts (EVIDENCE), model interpretation (INFERENCE), and facts
+    that cannot be established from the supplied evidence (UNKNOWN).
+
+    The LLM never converts inference into evidence. EVIDENCE items MUST
+    carry ``knowledge_ids`` drawn from the supplied KB evidence;
+    INFERENCE/UNKNOWN items MUST NOT carry attribution (they are model
+    reasoning, not sourced facts).
+    """
+
+    kind: Literal["EVIDENCE", "INFERENCE", "UNKNOWN"]
+    text: str
+    knowledge_ids: list[str] = Field(default_factory=list)
+
+
+class XSSLLMResearchAssistantResult(BaseModel):
+    """Structured research explanation from the LLM research assistant.
+
+    Consumed AFTER the deterministic :class:`XSSResearchCandidate`,
+    which remains authoritative for status and confidence. ``status``
+    and ``confidence`` here MUST mirror the deterministic candidate
+    exactly; the LLM cannot upgrade or downgrade them. ``references_used``
+    must be a subset of the supplied KB evidence ids; ``content_hash`` is
+    the SHA-256 of the deterministic candidate the research is based on,
+    so a later re-read can confirm it was not regenerated against a
+    different candidate.
+
+    All free-text fields are model reasoning. The only sourced facts are
+    the EVIDENCE items (with attribution) and the references_used list.
+    """
+
+    candidate_id: str
+    status: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    content_hash: str
+
+    explanation: str
+    likely_attack_surface: str | None = None
+    relevant_context: str | None = None
+    supporting_reasoning: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    suggested_test_idea: str | None = None
+
+    references_used: list[str] = Field(default_factory=list)
+    evidence: list[XSSLLMResearchEvidence] = Field(default_factory=list)
+
+    model: str | None = None
+    raw_response_id: str | None = None

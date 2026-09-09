@@ -97,3 +97,46 @@
     {% if hint %}<div class="empty-hint">{{ hint }}</div>{% endif %}
   </div>
 {%- endmacro %}
+
+{# ---------- error state (generic; never carries paths/secrets) ---------- #}
+{% macro error_panel(title='Something went wrong', hint='The request could not be completed.', status_code=None) -%}
+  <div class="error-panel" role="alert">
+    <div class="error-code">Error{{ ' ' ~ status_code if status_code }}</div>
+    <div class="error-title">{{ title }}</div>
+    <div class="error-hint">{{ hint }}</div>
+  </div>
+{%- endmacro %}
+
+{# ---------- research-scope banners (visual trust boundary) ---------- #}
+{% macro research_banner(text='RESEARCH ONLY — NOT A PRODUCTION FINDING') -%}
+  <div class="research-banner">{{ text }}</div>
+{%- endmacro %}
+
+{# ---------- severity badge (bucket is server-whitelisted) ---------- #}
+{% macro sev_badge(sev, bucket='unknown') -%}
+  {%- set b = bucket if bucket in ('critical', 'high', 'medium', 'low', 'unknown') else 'unknown' -%}
+  <span class="sev-badge sev-{{ b }}">{{ sev or 'Unknown' }}</span>
+{%- endmacro %}
+
+{# ---------- tri-state bool (yes/no/unknown) like the report renderer ---------- #}
+{% macro tri_bool(value) -%}
+  {%- if value is sameas true -%}yes
+  {%- elif value is sameas false -%}no
+  {%- elif value is not none -%}{{ value }}
+  {%- else -%}unknown{%- endif -%}
+{%- endmacro %}
+
+{# ---------- XSS candidate status badge (whitelisted classes only) ---------- #}
+{% macro xss_status_badge(status) -%}
+  {%- if status == 'RESEARCH_CANDIDATE' -%}
+    <span class="badge badge-running">CANDIDATE</span>
+  {%- elif status == 'INSUFFICIENT_EVIDENCE' -%}
+    <span class="badge badge-warn">INSUFFICIENT</span>
+  {%- elif status == 'REJECTED' -%}
+    <span class="badge badge-idle">REJECTED</span>
+  {%- elif status -%}
+    <span class="badge badge-neutral">{{ status }}</span>
+  {%- else -%}
+    <span class="badge badge-idle">—</span>
+  {%- endif -%}
+{%- endmacro %}

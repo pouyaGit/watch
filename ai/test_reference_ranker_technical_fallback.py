@@ -484,6 +484,11 @@ class ProvenanceForwardingTests(unittest.TestCase):
             url = BLOB_URL
             title = None
             content = "body text"
+            # Stage R13 provenance surface (mirrors ReferenceDocument).
+            content_hash = "a" * 64
+            raw_content_hash = "b" * 64
+            extraction_format = "text/html"
+            extraction_status = "ok"
 
         class _Collector:
             def __enter__(self):
@@ -517,6 +522,12 @@ class ProvenanceForwardingTests(unittest.TestCase):
         self.assertEqual(len(docs), 1)
         self.assertEqual(docs[0]["discovery_tags"], ["nvd_reference", "github"])
         self.assertEqual(docs[0]["discovery_query"], CVE)
+        # Stage R13: extraction provenance is forwarded alongside the
+        # legacy keys; ok-status documents pass the hard-miss filter.
+        self.assertEqual(docs[0]["extraction_status"], "ok")
+        self.assertEqual(docs[0]["content_hash"], "a" * 64)
+        self.assertEqual(docs[0]["raw_content_hash"], "b" * 64)
+        self.assertEqual(docs[0]["extraction_format"], "text/html")
         # ReferenceDocument.tags confusion guard: the ephemeral keys are
         # distinct names, and the output still carries the legacy key.
         self.assertIn("tags", docs[0])

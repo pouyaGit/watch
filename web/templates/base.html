@@ -82,6 +82,16 @@
       <a class="side-link{{ ' active' if active == 'changes' }}" href="{{ changes_url }}" @click="navOpen = false">
         <span class="side-ico">±</span>Recent Changes</a>
 
+      <p class="nav-group">Research</p>
+      <a class="side-link{{ ' active' if active == 'research' }}" href="{{ research_url }}" @click="navOpen = false">
+        <span class="side-ico">☣</span>Research / CVEs</a>
+      <a class="side-link{{ ' active' if active == 'xss' }}" href="{{ xss_url }}" @click="navOpen = false">
+        <span class="side-ico">✕</span>XSS</a>
+      <a class="side-link{{ ' active' if active == 'kb' }}" href="{{ kb_url }}" @click="navOpen = false">
+        <span class="side-ico">✎</span>Knowledge Base</a>
+      <a class="side-link{{ ' active' if active == 'reports' }}" href="{{ reports_url }}" @click="navOpen = false">
+        <span class="side-ico">▤</span>Reports</a>
+
       <p class="nav-group">System</p>
       <a class="side-link{{ ' active' if active == 'runs' }}" href="{{ runs_url }}" @click="navOpen = false">
         <span class="side-ico">▤</span>Runs</a>

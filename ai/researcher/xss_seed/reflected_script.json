@@ -1,0 +1,18 @@
+{
+  "title": "Reflected XSS: script-block string termination",
+  "source_url": "https://research.example.test/xss-seed-reflected-script",
+  "source_type": "seed",
+  "published_at": "2026-09-01",
+  "technologies": ["JavaScript"],
+  "xss_types": ["reflected"],
+  "contexts": ["script"],
+  "wafs": [],
+  "techniques": ["script breakout", "string termination"],
+  "payload_patterns": ["';MARKER;//"],
+  "verification_patterns": ["observe reflection inside inline script string"],
+  "content": "Seed describing reflected XSS where a query parameter is reflected inside an inline script string literal without safe encoding. Breakout terminates the string and the statement. Source: query parameter. Sink: inline script reflection.",
+  "summary": "Deterministic R3 seed for reflected/script.",
+  "evidence_quality": "SECONDARY",
+  "confidence": 0.6,
+  "tags": ["xss-seed", "reflected", "script"]
+}

@@ -11,3 +11,6 @@ uvicorn[standard]
 starlette
 psutil
 jinja2
+
+# Stage R13 -- reference body extraction (pure-Python PDF text reader)
+pypdf

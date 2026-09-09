@@ -1,0 +1,38 @@
+{# report_detail.html — one deterministic Markdown report (Stage D3).
+
+   The Markdown is UNTRUSTED persisted text. There is no Markdown
+   renderer in this project's dependency set, so it is displayed as
+   escaped plain text inside a <pre> block. Explicitly: no |safe, no
+   raw HTML rendering, no JS markdown parser. #}
+{% extends "base.html" %}
+{% block title %}{{ report.cve }} — Report — WATCH{% endblock %}
+{% block page %}Report — {{ report.cve }}{% endblock %}
+
+{% from "macros.html" import research_banner with context %}
+
+{% block content %}
+<div class="report-toolbar">
+  <a class="back-link" href="{{ reports_url }}">← Reports</a>
+  <span class="report-actions">
+    <a class="badge-link" href="{{ research_url }}">Research →</a>
+    <a class="btn-primary" href="{{ download_url }}">⬇ Download .md</a>
+  </span>
+</div>
+
+{{ research_banner("RESEARCH REPORT — NOT A PRODUCTION FINDING") }}
+
+<section class="panel">
+  <div class="panel-head">
+    <h2 class="mono">{{ report.cve }}</h2>
+    <span class="text-xs text-muted">{{ report.artifact }} · {{ report.size_bytes | fmtnum }} B</span>
+  </div>
+  <div class="panel-body">
+    <pre class="md-report">{{ report.markdown }}</pre>
+  </div>
+</section>
+
+<p class="disclaimer-foot">
+  Raw Markdown shown as plain text — this dashboard does not render Markdown as HTML.
+  Use “Download .md” to view it in your own safe viewer.
+</p>
+{% endblock %}

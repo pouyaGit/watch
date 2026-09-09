@@ -72,6 +72,7 @@ def write_reference_archive(
     """
 
     hash_by_url: dict[str, str] = {}
+    body_by_url: dict[str, dict] = {}
 
     for item in discovered_documents or []:
         url = item.get("url")
@@ -80,9 +81,18 @@ def write_reference_archive(
         if url and content_hash and url not in hash_by_url:
             hash_by_url[url] = content_hash
 
+        if url and url not in body_by_url:
+            body_by_url[url] = {
+                "body": item.get("content") or "",
+                "raw_content_hash": item.get("raw_content_hash"),
+                "extraction_format": item.get("extraction_format"),
+                "extraction_status": item.get("extraction_status"),
+            }
+
     records = []
 
     for context in reference_contexts:
+        provenance = body_by_url.get(context.source_url, {})
         records.append(
             {
                 "source_url": context.source_url,
@@ -91,6 +101,13 @@ def write_reference_archive(
                 "exact_record": context.exact_record,
                 "context_chunks": list(context.context_chunks),
                 "content_hash": hash_by_url.get(context.source_url),
+                # Stage R13 additive: normalized extracted body plus
+                # extraction provenance (absent/None for legacy
+                # records; never fabricated on failure).
+                "body": provenance.get("body") or "",
+                "raw_content_hash": provenance.get("raw_content_hash"),
+                "extraction_format": provenance.get("extraction_format"),
+                "extraction_status": provenance.get("extraction_status"),
             }
         )
 
@@ -117,6 +134,116 @@ def write_reference_archive(
     )
     os.replace(temp_path, path)
     return path
+
+
+def refresh_reference_archive(
+    cve_id: str,
+    collector=None,
+) -> dict:
+    """Re-fetch archived reference URLs and update bodies (Stage R13).
+
+    Reads ``ai_data/research/<CVE>.references.json``, re-fetches each
+    ``source_url`` once through :class:`ReferenceCollector`, and
+    updates in place: ``body``, ``content_hash``, ``raw_content_hash``,
+    ``extraction_format``, ``extraction_status``. URLs that now fail,
+    are unsupported, or yield no extractable body are recorded with an
+    empty body and ``content_hash=None`` (fail-soft; never fabricated).
+    Titles, ``exact_record`` and ``context_chunks`` are preserved.
+    The write is atomic and deterministic. Returns a summary dict.
+    """
+
+    cve_id = cve_id.strip().upper()
+    path = RESEARCH_DIR / f"{cve_id}.references.json"
+    if not path.exists():
+        raise FileNotFoundError(f"references archive not found: {path}")
+
+    archive = json.loads(path.read_text(encoding="utf-8"))
+    records = archive.get("records")
+    if not isinstance(records, list):
+        raise ValueError(f"invalid references archive records: {path}")
+
+    owned = collector is None
+    if owned:
+        from ai.collectors.reference import ReferenceCollector
+
+        collector = ReferenceCollector()
+
+    updated = 0
+    try:
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            url = str(record.get("source_url") or "").strip()
+            if not url:
+                continue
+            document = collector.fetch(url)
+            if (
+                document is None
+                or document.extraction_status != "ok"
+                or not document.content
+            ):
+                record["body"] = ""
+                record["content_hash"] = None
+                record["raw_content_hash"] = (
+                    getattr(document, "raw_content_hash", None)
+                    if document is not None
+                    else None
+                )
+                record["extraction_format"] = (
+                    getattr(document, "extraction_format", None)
+                    if document is not None
+                    else None
+                )
+                record["extraction_status"] = (
+                    getattr(document, "extraction_status", None) or "failed"
+                    if document is not None
+                    else "failed"
+                )
+                continue
+            record["body"] = document.content
+            record["content_hash"] = document.content_hash
+            record["raw_content_hash"] = document.raw_content_hash
+            record["extraction_format"] = document.extraction_format
+            record["extraction_status"] = document.extraction_status
+            updated += 1
+    finally:
+        if owned:
+            collector.close()
+
+    archive["record_count"] = len(
+        [r for r in records if isinstance(r, dict)]
+    )
+    archive["generated_at"] = datetime.now(timezone.utc).isoformat()
+
+    RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f"{path.name}.tmp")
+    temp_path.write_text(
+        json.dumps(archive, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temp_path, path)
+
+    return {
+        "cve_id": cve_id,
+        "path": str(path),
+        "records": len(records),
+        "updated": updated,
+    }
+
+
+def run_references_refresh(args: argparse.Namespace) -> int:
+    """CLI handler for ``references refresh`` (Stage R13)."""
+
+    try:
+        summary = refresh_reference_archive(args.cve)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(f"REFRESHED: {summary['cve_id']} -> {summary['path']}")
+    print(f"  records: {summary['records']}  bodies-updated: {summary['updated']}")
+    print("MODE: research-only re-fetch (no LLM, no execution, no retries)")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +631,9 @@ def _research_single_cve(cve_id: str, skip_llm: bool = False) -> dict:
             "id": cve.title,
             "vendor": cve.vendor,
             "products": cve.products,
+            # Stage R12: verbatim NVD weakness identifiers (already
+            # collected by CVECollector); empty when NVD names none.
+            "cwes": sorted(set(getattr(cve, "cwes", None) or [])),
             "cvss_score": cve.cvss_score,
             "cvss_vector": cve.cvss_vector,
         },
@@ -750,7 +880,57 @@ def run_kb(args: argparse.Namespace) -> int:
         return run_kb_show(args)
     if args.kb_command == "search":
         return run_kb_search(args)
+    if args.kb_command == "ingest":
+        return run_kb_ingest(args)
     return 2
+
+
+def run_kb_ingest(
+    args: argparse.Namespace, store=None, research_dir=None
+) -> int:
+    """Ingest persisted research artifacts (Stage R4).
+
+    Local-only deterministic write path under ``kb`` (the historical
+    read-only commands above are unchanged): builds KnowledgeDocuments
+    from ``<CVE>.cli.json`` (+ ``<CVE>.references.json`` when present)
+    and persists via ``KnowledgeStore.ingest``. ``--dry-run`` builds
+    without writing. No network, no LLM, no subprocess.
+    """
+    from ai.knowledge.ingestion import (
+        ResearchIngestionError,
+        ingest_research,
+    )
+
+    store = store if store is not None else _kb_store()
+    kwargs: dict = {}
+    if research_dir is not None:
+        kwargs["research_dir"] = research_dir
+    try:
+        result = ingest_research(
+            args.cve,
+            store,
+            dry_run=bool(getattr(args, "dry_run", False)),
+            references_only=bool(getattr(args, "references_only", False)),
+            **kwargs,
+        )
+    except ResearchIngestionError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    if result.dry_run:
+        print(f"DRY-RUN: {result.cve_id} (no writes performed)")
+    else:
+        print(f"INGESTED: {result.cve_id}")
+    for knowledge_id in result.knowledge_ids:
+        state = (
+            "present"
+            if knowledge_id in result.existing
+            else ("would-create" if result.dry_run else "created")
+        )
+        print(f"  {knowledge_id} {state}")
+    for note in result.notes:
+        print(f"  note: {note}")
+    print("MODE: local-only ingestion (no network, no LLM, no execution)")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -888,6 +1068,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="emit full documents as JSON",
     )
 
+    kb_ingest = kb_sub.add_parser(
+        "ingest",
+        help="ingest persisted research artifacts into the local "
+        "KnowledgeStore (deterministic, idempotent, no network, no LLM)",
+    )
+    kb_ingest.add_argument("--cve", required=True, help="e.g. CVE-2026-1557")
+    kb_ingest.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="build documents without writing to the store",
+    )
+    kb_ingest.add_argument(
+        "--references-only",
+        action="store_true",
+        help="ingest only the references archive",
+    )
+
+    # Stage R13: re-fetch persisted reference archives and update the
+    # extracted body + provenance in place (research-only, fail-soft).
+    references = sub.add_parser(
+        "references",
+        help="reference archive maintenance (Stage R13)",
+    )
+    references_sub = references.add_subparsers(
+        dest="references_command", required=True
+    )
+    references_refresh = references_sub.add_parser(
+        "refresh",
+        help="re-fetch archived reference URLs and persist extracted "
+        "body + provenance (no LLM, no execution, no retries)",
+    )
+    references_refresh.add_argument(
+        "--cve", required=True, help="e.g. CVE-2024-5376"
+    )
+
     report = sub.add_parser(
         "report",
         help="render a deterministic Markdown research report "
@@ -900,6 +1115,79 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override output path "
         "(default: ai_data/reports/<CVE>.md)",
+    )
+
+    xss = sub.add_parser(
+        "xss",
+        help="deterministic XSS research agent MVP "
+        "(seeded KB only; no network, no LLM, no execution)",
+    )
+    xss_sub = xss.add_subparsers(dest="xss_command", required=True)
+
+    xss_sub.add_parser(
+        "list", help="list persisted XSS research candidates"
+    )
+
+    xss_search = xss_sub.add_parser(
+        "search",
+        help="rank seeded KB documents for a query (no persistence)",
+    )
+    xss_search.add_argument("--query", required=True)
+    xss_search.add_argument("--xss-type", default=None)
+    xss_search.add_argument("--context", default=None)
+    xss_search.add_argument(
+        "--technology", dest="technologies", action="append", default=None
+    )
+    xss_search.add_argument(
+        "--technique", dest="techniques", action="append", default=None
+    )
+    xss_search.add_argument("--limit", type=int, default=10)
+    xss_search.add_argument(
+        "--json", action="store_true", help="emit matches as JSON"
+    )
+
+    xss_research = xss_sub.add_parser(
+        "research",
+        help="build and persist one XSS research candidate",
+    )
+    xss_research.add_argument("--query", required=True)
+    xss_research.add_argument("--xss-type", default=None)
+    xss_research.add_argument("--context", default=None)
+    xss_research.add_argument(
+        "--technology", dest="technologies", action="append", default=None
+    )
+    xss_research.add_argument(
+        "--technique", dest="techniques", action="append", default=None
+    )
+    xss_research.add_argument(
+        "--output",
+        default=None,
+        help="override output path "
+        "(default: ai_data/research/xss/<candidate_id>.json)",
+    )
+
+    xss_show = xss_sub.add_parser(
+        "show", help="show one persisted XSS research candidate"
+    )
+    xss_show.add_argument("candidate_id", help="e.g. xss-0123456789abcdef")
+    xss_show.add_argument(
+        "--json", action="store_true", help="emit the candidate as JSON"
+    )
+
+    xss_llm = xss_sub.add_parser(
+        "llm-research",
+        help="run the LLM research assistant over one persisted "
+        "candidate (optional; requires OPENROUTER_API_KEY; the "
+        "deterministic candidate stays authoritative)",
+    )
+    xss_llm.add_argument(
+        "candidate_id", help="e.g. xss-0123456789abcdef"
+    )
+    xss_llm.add_argument(
+        "--output",
+        default=None,
+        help="override output path "
+        "(default: ai_data/research/xss/llm/<candidate_id>.json)",
     )
     return parser
 
@@ -927,6 +1215,227 @@ def run_report(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Deterministic XSS research agent MVP (Stage R3).
+#
+# Thin CLI over ai.researcher.xss_agent only: seeded/local KB matching,
+# candidate persistence under ai_data/research/xss/. No network, no LLM,
+# no subprocess, no browser, no Nuclei, no verifier, no findings, no
+# alerts. ``store`` / ``research_dir`` overrides exist for offline tests.
+# ---------------------------------------------------------------------------
+
+
+def _xss_store():
+    from ai.knowledge.store import KnowledgeStore
+
+    return KnowledgeStore()
+
+
+def run_xss_list(args: argparse.Namespace, research_dir=None) -> int:
+    from ai.researcher.xss_agent import list_candidates
+
+    items = list_candidates(
+        **({"research_dir": research_dir} if research_dir is not None else {})
+    )
+    for item in items:
+        print(f"{item['candidate_id']} | {item['status']} | {item['query']}")
+    print(f"CANDIDATES: {len(items)}")
+    return 0
+
+
+def run_xss_search(args: argparse.Namespace, store=None) -> int:
+    from ai.researcher.xss_agent import XSSAgentError, rank_documents
+
+    store = store if store is not None else _xss_store()
+    try:
+        ranked, _signals = rank_documents(
+            args.query,
+            store=store,
+            xss_type=getattr(args, "xss_type", None),
+            context=getattr(args, "context", None),
+            technologies=getattr(args, "technologies", None),
+            techniques=getattr(args, "techniques", None),
+        )
+    except XSSAgentError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    ranked = ranked[: max(getattr(args, "limit", 10) or 10, 0)]
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                [
+                    {
+                        "knowledge_id": m["knowledge_id"],
+                        "title": m["title"],
+                        "score": m["score"],
+                        "reasons": m["reasons"],
+                    }
+                    for m in ranked
+                ],
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        for match in ranked:
+            print(f"{match['knowledge_id']} | score={match['score']} | {match['title']}")
+            for reason in match["reasons"]:
+                print(f"    - {reason}")
+        print(f"MATCHES: {len(ranked)}")
+    return 0
+
+
+def run_xss_research(
+    args: argparse.Namespace, store=None, research_dir=None
+) -> int:
+    from ai.researcher.xss_agent import XSSAgentError, research_and_persist
+
+    store = store if store is not None else _xss_store()
+    kwargs: dict = {}
+    if research_dir is not None:
+        kwargs["research_dir"] = research_dir
+    try:
+        candidate, path = research_and_persist(
+            args.query,
+            store=store,
+            xss_type=getattr(args, "xss_type", None),
+            context=getattr(args, "context", None),
+            technologies=getattr(args, "technologies", None),
+            techniques=getattr(args, "techniques", None),
+            output_path=getattr(args, "output", None),
+            **kwargs,
+        )
+    except XSSAgentError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(f"CANDIDATE: {candidate.candidate_id} ({candidate.status})")
+    print(f"SAVED: {path}")
+    print("MODE: research-only (no network, no LLM, no execution)")
+    return 0
+
+
+def run_xss_show(args: argparse.Namespace, research_dir=None) -> int:
+    from ai.researcher.xss_agent import XSSAgentError, load_candidate
+
+    try:
+        payload = load_candidate(
+            args.candidate_id,
+            **({"research_dir": research_dir} if research_dir is not None else {}),
+        )
+    except XSSAgentError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    if getattr(args, "json", False):
+        print(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+        )
+    else:
+        print(f"CANDIDATE: {payload.get('candidate_id')}")
+        print(f"STATUS: {payload.get('status')}")
+        print(f"QUERY: {payload.get('query')}")
+        print(f"TYPE/CONTEXT: {payload.get('xss_type')}/{payload.get('context')}")
+        print(f"CONFIDENCE: {payload.get('confidence')}")
+        for item in payload.get("source_evidence", []):
+            print(f"  {item.get('knowledge_id')} | score={item.get('score')}")
+        print(f"DISCLAIMER: {payload.get('disclaimer')}")
+    return 0
+
+
+def run_xss_llm_research(
+    args: argparse.Namespace,
+    store=None,
+    research_dir=None,
+    llm=None,
+) -> int:
+    """LLM research assistant over one persisted candidate (Stage R7).
+
+    Deterministic candidate stays authoritative (status/confidence
+    cannot change). The LLM is a research/synthesis assistant only.
+    Provider (OpenRouter) is built from env unless an ``llm`` override
+    is supplied (offline tests). No automatic LLM call: this is an
+    explicit subcommand only.
+    """
+    from ai.researcher.xss_agent import XSSAgentError, load_candidate
+    from ai.researcher.xss_llm_assistant import (
+        XSSLLMResearchError,
+        XSSLLMResearchAssistant,
+        persist_research,
+    )
+    # Imported lazily (same convention as OpenRouterProvider below) so the
+    # CLI module stays import-light and the provider remains injected.
+    # R9.1: in-flight provider failures raise OpenRouterProviderError
+    # (a RuntimeError, NOT an XSSLLMResearchError). Without catching it
+    # here the raw traceback — including chained provider metadata such
+    # as an OpenRouter user_id — propagates to stderr.
+    from ai.llm.openrouter import OpenRouterProviderError
+
+    research_kwargs = {}
+    if research_dir is not None:
+        research_kwargs["research_dir"] = research_dir
+
+    try:
+        candidate = load_candidate(args.candidate_id, **research_kwargs)
+    except XSSAgentError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    store = store if store is not None else _xss_store()
+    if llm is None:
+        try:
+            from dotenv import load_dotenv
+
+            load_dotenv()
+            from ai.llm.openrouter import OpenRouterProvider
+
+            llm = OpenRouterProvider()
+        except Exception as exc:
+            print(
+                f"ERROR: provider not configured: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    assistant = XSSLLMResearchAssistant(llm)
+    try:
+        result = assistant.research(candidate, store)
+        llm_dir = (
+            Path(research_dir) / "llm"
+            if research_dir is not None
+            else None
+        )
+        path = persist_research(
+            result,
+            output_path=getattr(args, "output", None),
+            research_dir=llm_dir or None,
+        )
+    except (XSSLLMResearchError, OpenRouterProviderError) as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"LLM-RESEARCH: {result.candidate_id} ({result.status})")
+    print(f"SAVED: {path}")
+    print(
+        "MODE: LLM research assistant (deterministic candidate remains "
+        "authoritative; no execution, no network beyond provider)"
+    )
+    return 0
+
+
+def run_xss(args: argparse.Namespace) -> int:
+    if args.xss_command == "list":
+        return run_xss_list(args)
+    if args.xss_command == "search":
+        return run_xss_search(args)
+    if args.xss_command == "research":
+        return run_xss_research(args)
+    if args.xss_command == "show":
+        return run_xss_show(args)
+    if args.xss_command == "llm-research":
+        return run_xss_llm_research(args)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "check":
@@ -939,6 +1448,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_kb(args)
     if args.command == "report":
         return run_report(args)
+    if args.command == "references":
+        return run_references_refresh(args)
+    if args.command == "xss":
+        return run_xss(args)
     if args.command == "validate-live":
         return run_validate_live(args)
     return 2

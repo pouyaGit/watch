@@ -52,6 +52,10 @@ def _ctx(request: Request, **extra):
         "programs_url": build_url("/ui/programs"),
         "dns_url":     build_url("/ui/dns-bruteforce/status"),
         "docs_url":    build_url("/docs"),
+        "research_url": build_url("/ui/research"),
+        "xss_url":     build_url("/ui/xss"),
+        "kb_url":      build_url("/ui/kb"),
+        "reports_url": build_url("/ui/reports"),
         "stats_link":  build_url("/api/stats/by-program"),
         "fresh_link":  build_url("/ui/http/fresh"),
     }
@@ -70,6 +74,11 @@ def dashboard(request: Request):
     rows = dash.program_rows(sort="updated", direction="desc")[:12]
     for r in rows:
         r["detail_url"] = build_url(f"/ui/program/{r['program_name']}")
+    try:
+        from backend import research_data
+        research_overview = research_data.get_overview()
+    except Exception:  # never let the recon dashboard fail on research data
+        research_overview = None
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -83,6 +92,7 @@ def dashboard(request: Request):
             activity_summary=dash.activity_summary(),
             programs=rows,
             fresh_count=stats.get("fresh_http_24h", 0),
+            research_overview=research_overview,
         ),
     )
 

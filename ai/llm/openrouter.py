@@ -91,8 +91,10 @@ class OpenRouterProvider(LLMProvider):
     The provider is the only place that talks to OpenRouter. The
     XSS layer above it only ever calls :meth:`generate`. The
     provider never logs or echoes the API key, never performs
-    retries, and never reaches out to anything other than the
-    configured OpenRouter chat completions endpoint.
+    retries (the openai SDK's built-in retry-on-429/5xx behavior is
+    disabled via ``max_retries=0``, so ONE invocation is exactly
+    ONE provider HTTP call), and never reaches out to anything
+    other than the configured OpenRouter chat completions endpoint.
 
     Configuration:
 
@@ -158,6 +160,13 @@ class OpenRouterProvider(LLMProvider):
             "api_key": resolved_api_key,
             "base_url": base_url,
             "timeout": timeout,
+            # One invocation = exactly one provider HTTP call. The
+            # openai SDK retries 408/409/429/5xx by default
+            # (max_retries=2), which would burn rate-limit budget
+            # (e.g. free-tier 429s) behind the caller's back.
+            # Automatic retries / fallback-model routing belong to a
+            # future orchestration layer, not to this provider.
+            "max_retries": 0,
         }
         if http_client is not None:
             client_kwargs["http_client"] = http_client
@@ -169,7 +178,7 @@ class OpenRouterProvider(LLMProvider):
 
     def _extract_content(self, response: Any) -> str:
         choices = getattr(response, "choices", None)
-        if not choices:
+        if not isinstance(choices, (list, tuple)) or not choices:
             raise OpenRouterProviderError(
                 "OpenRouter response has no choices"
             )
@@ -181,6 +190,15 @@ class OpenRouterProvider(LLMProvider):
         if not content:
             raise OpenRouterProviderError(
                 "OpenRouter response has no message content"
+            )
+        if not isinstance(content, str):
+            # Malformed provider response: some providers/models
+            # return ``message.content`` as a non-string (e.g. an
+            # array of content parts). It must never leak past the
+            # provider boundary as a non-str ``LLMResult.content``.
+            raise OpenRouterProviderError(
+                "OpenRouter response content is not a string: "
+                f"{type(content).__name__}"
             )
 
         return content

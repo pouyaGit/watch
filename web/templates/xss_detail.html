@@ -1,0 +1,190 @@
+{# xss_detail.html — one persisted XSS research candidate (Stage D3).
+
+   All candidate fields are UNTRUSTED persisted strings and are rendered
+   through Jinja autoescaping. The test idea is visually quarantined:
+   it was never executed and must never look like an instruction to act. #}
+{% extends "base.html" %}
+{% block title %}{{ c.candidate_id }} — XSS — WATCH{% endblock %}
+{% block page %}{{ c.candidate_id }}{% endblock %}
+
+{% from "macros.html" import empty_state, xss_status_badge, research_banner with context %}
+
+{% block content %}
+<a class="back-link" href="{{ xss_url }}">← XSS candidates</a>
+
+{{ research_banner("RESEARCH CANDIDATE — NOT A PRODUCTION FINDING") }}
+
+<div class="panel mb-6">
+  <div class="panel-head">
+    <h2 class="mono">{{ c.candidate_id }}</h2>
+    <span>{{ xss_status_badge(c.status) }}</span>
+  </div>
+  <div class="panel-body">
+    <div class="detail-meta">
+      <span class="dm-item"><span class="dm-k">Confidence</span>
+        <span class="mono">{{ '%.2f' | format(c.confidence) if c.confidence is number else (c.confidence if c.confidence is not none else '—') }}</span></span>
+      <span class="dm-item"><span class="dm-k">XSS type</span>{{ c.xss_type or '—' }}</span>
+      <span class="dm-item"><span class="dm-k">Injection context</span><span class="mono text-xs">{{ c.injection_context or c.context or '—' }}</span></span>
+      <span class="dm-item"><span class="dm-k">Query</span>{{ c.query or '—' }}</span>
+      <span class="dm-item"><span class="dm-k">Agent</span><span class="mono text-xs">{{ c.agent_version or '—' }}</span></span>
+    </div>
+    {% if c.vulnerability_pattern %}
+    <p class="prose"><strong>Pattern (untrusted text):</strong> {{ c.vulnerability_pattern }}</p>
+    {% endif %}
+    {% if c.disclaimer %}<p class="prose text-muted">{{ c.disclaimer }}</p>{% endif %}
+  </div>
+</div>
+
+<div class="detail-grid">
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Evidence</h2><span class="badge-sm">KB relevance matches — offline scoring, not verification</span></div>
+    <div class="panel-body">
+      {% if c.source_evidence %}
+        {% for e in c.source_evidence %}
+        <div class="ev-card">
+          <div class="ev-head">
+            <span class="mono text-xs ev-kid">
+              {% if e.kb_url %}<a href="{{ e.kb_url }}">{{ e.knowledge_id }}</a>{% else %}{{ e.knowledge_id or '—' }}{% endif %}
+            </span>
+            <span class="ev-title">{{ e.title or 'Untitled knowledge document' }}</span>
+            <span class="ev-score">
+              {% if e.score is number %}
+                <span class="conf-meter"><span class="conf-fill" style="width: {{ [ (e.score * 8), 100 ] | min }}%"></span></span>
+                <span class="mono text-xs">{{ e.score }}</span>
+              {% else %}{{ e.score if e.score is not none else '—' }}{% endif %}
+            </span>
+          </div>
+          {% if e.reasons %}
+          <ul class="plain ev-reasons">
+            {% for reason in e.reasons %}<li class="text-xs">{{ reason }}</li>{% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+        {% endfor %}
+      {% else %}
+        {{ empty_state("No persisted evidence entries.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Sinks / Sources</h2></div>
+    <div class="panel-body">
+      <div class="section-label">Sinks</div>
+      {% if c.sinks %}<ul class="plain">{% for s in c.sinks %}<li class="text-sm mono">{{ s.value }}
+        {% if s.knowledge_ids %}<span class="text-muted">({{ s.knowledge_ids | join(', ') }})</span>{% endif %}</li>{% endfor %}</ul>
+      {% else %}<p class="text-sm text-muted">—</p>{% endif %}
+      <div class="section-label mt-3">Sources</div>
+      {% if c.sources %}<ul class="plain">{% for s in c.sources %}<li class="text-sm mono">{{ s.value }}
+        {% if s.knowledge_ids %}<span class="text-muted">({{ s.knowledge_ids | join(', ') }})</span>{% endif %}</li>{% endfor %}</ul>
+      {% else %}<p class="text-sm text-muted">—</p>{% endif %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Preconditions / Unknowns</h2></div>
+    <div class="panel-body">
+      <div class="section-label">Preconditions</div>
+      {% if c.preconditions %}<ul class="plain">{% for p in c.preconditions %}<li class="text-sm">{{ p }}</li>{% endfor %}</ul>
+      {% else %}<p class="text-sm text-muted">—</p>{% endif %}
+      <div class="section-label mt-3">Unknowns</div>
+      {% if c.unknowns %}<ul class="plain">{% for u in c.unknowns %}<li class="text-sm">{{ u }}</li>{% endfor %}</ul>
+      {% else %}<p class="text-sm text-muted">—</p>{% endif %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>KB References</h2></div>
+    <div class="panel-body">
+      {% if c.kb_refs %}
+      <ul class="plain">{% for ref in c.kb_refs %}<li class="mono text-sm"><a href="{{ ref.url }}">{{ ref.id }}</a></li>{% endfor %}</ul>
+      {% elif c.references %}
+      <ul class="plain">{% for ref in c.references %}<li class="mono text-sm">{{ ref }}</li>{% endfor %}</ul>
+      {% else %}
+        {{ empty_state("No KB references.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+</div>
+
+{# ---- LLM research (R7, read-only commentary, never authoritative) ---- #}
+<section class="panel llm-panel">
+  <div class="panel-head">
+    <h2>LLM Research</h2>
+    <span class="quarantine-label">LLM RESEARCH — NOT VERIFIED</span>
+  </div>
+  <div class="panel-body">
+    <p class="text-xs text-muted">DETERMINISTIC CANDIDATE above is authoritative for status, confidence and evidence.
+    The section below is explanatory assistance only — it never changes candidate status or confidence.</p>
+    {% if llm %}
+    <p class="text-sm"><strong>Model (untrusted text):</strong> {{ llm.model or '—' }}</p>
+    {% if llm.explanation %}
+    <div class="section-label">Explanation</div>
+    <pre class="idea-pre">{{ llm.explanation }}</pre>
+    {% endif %}
+    {% if llm.likely_attack_surface %}
+    <div class="section-label mt-3">Likely attack surface</div>
+    <pre class="idea-pre">{{ llm.likely_attack_surface }}</pre>
+    {% endif %}
+    {% if llm.relevant_context %}
+    <div class="section-label mt-3">Relevant context</div>
+    <pre class="idea-pre">{{ llm.relevant_context }}</pre>
+    {% endif %}
+    {% if llm.supporting_reasoning %}
+    <div class="section-label mt-3">Supporting reasoning</div>
+    <ul class="plain">{% for s in llm.supporting_reasoning %}<li class="text-sm">{{ s }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if llm.missing_evidence %}
+    <div class="section-label mt-3">Missing evidence</div>
+    <ul class="plain">{% for m in llm.missing_evidence %}<li class="text-sm">{{ m }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if llm.suggested_test_idea %}
+    <div class="section-label mt-3">Suggested test idea (never executed)</div>
+    <pre class="idea-pre">{{ llm.suggested_test_idea }}</pre>
+    {% endif %}
+    {% if llm.evidence %}
+    <div class="section-label mt-3">Evidence / Inference / Unknown</div>
+    {% for e in llm.evidence %}
+    <div class="ev-card">
+      <div class="ev-head">
+        <span class="badge-sm">{{ e.kind or 'UNKNOWN' }}</span>
+        {% if e.knowledge_ids %}<span class="text-muted text-xs">({{ e.knowledge_ids | join(', ') }})</span>{% endif %}
+      </div>
+      <p class="text-sm">{{ e.text }}</p>
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% if llm.references_used %}
+    <div class="section-label mt-3">References used</div>
+    <ul class="plain">{% for ref in llm.references_used %}<li class="mono text-sm">{{ ref }}</li>{% endfor %}</ul>
+    {% endif %}
+    <p class="text-xs text-muted">Research commentary only — not a verified finding. Status and confidence remain those of the deterministic candidate above.</p>
+    {% elif llm_error %}
+    <p class="text-sm text-muted">LLM research artifact is unreadable; showing candidate only.</p>
+    {% else %}
+    <p class="text-sm text-muted">LLM research not generated.</p>
+    {% endif %}
+  </div>
+</section>
+
+{# ---- quarantined test idea ---- #}
+<section class="panel quarantine">
+  <div class="panel-head">
+    <h2>Test Idea</h2>
+    <span class="quarantine-label">UNTESTED RESEARCH IDEA — NEVER EXECUTED</span>
+  </div>
+  <div class="panel-body">
+    {% if c.test_idea %}
+    <pre class="idea-pre">{{ c.test_idea }}</pre>
+    {% else %}
+      {{ empty_state("No test idea persisted.", compact=True) }}
+    {% endif %}
+    <p class="text-xs text-muted">Rendered as escaped plain text. The platform does not execute,
+    scan, or replay anything from this page.</p>
+  </div>
+</section>
+
+<p class="disclaimer-foot">{{ c.disclaimer or 'Research candidate only — not a confirmed vulnerability.' }}</p>
+{% endblock %}

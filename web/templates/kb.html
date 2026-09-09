@@ -1,0 +1,92 @@
+{# kb.html — Knowledge Base document index (Stage D3).
+
+   Metadata-only listing via the read-only KnowledgeStore API. Source
+   URLs are shown as plain text (not fetched, and not turned into
+   links so untrusted persisted URLs can never be clicked-through
+   blindly). #}
+{% extends "base.html" %}
+{% block title %}Knowledge Base — WATCH{% endblock %}
+{% block page %}Knowledge Base{% endblock %}
+
+{% from "macros.html" import pager with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Knowledge Base</h1>
+  <p class="page-sub">Deterministic, source-attributed research knowledge (read-only).</p>
+</div>
+
+<form method="get" action="/ui/kb" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Title / tag / source URL…"
+         class="search-input" autocomplete="off">
+  <input type="search" name="cve" value="{{ cve }}" placeholder="CVE tag…"
+         class="search-input" style="max-width:160px" autocomplete="off">
+  <input type="search" name="tag" value="{{ tag }}" placeholder="Tag…"
+         class="search-input" style="max-width:140px" autocomplete="off">
+  <button type="submit" class="btn-primary">Search</button>
+  {% if q or cve or tag %}<a class="badge-link" href="{{ kb_url }}">Clear</a>{% endif %}
+</form>
+
+{% if chips %}
+<div class="filter-chips">
+  <span class="fc-label">Active:</span>
+  {% for chip in chips %}
+    <a class="filter-chip" href="{{ chip.url }}" title="Remove {{ chip.key }} filter">
+      <span class="fc-key">{{ chip.key }}</span>
+      <span class="fc-val">{{ chip.value }}</span>
+      <span class="fc-x">✕</span>
+    </a>
+  {% endfor %}
+  <a class="filter-chip filter-chip-clear" href="{{ clear_url }}">clear all</a>
+</div>
+{% endif %}
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'documents') }}
+
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Knowledge ID</th>
+        <th>Title</th>
+        <th>Source</th>
+        <th>Type</th>
+        <th>CVE</th>
+        <th>Evidence</th>
+        <th class="num">Confidence</th>
+        <th>Tags</th>
+        <th>Indexed</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in results %}
+      <tr>
+        <td><a class="mono cve-link" href="{{ d.detail_url }}">{{ d.knowledge_id }}</a></td>
+        <td class="td-title" title="{{ d.title or '' }}">
+          <a class="row-title" href="{{ d.detail_url }}">{{ d.title or '—' }}</a></td>
+        <td class="mono text-xs truncate" style="max-width:220px" title="{{ d.source_url or '' }}">{{ d.source_url or '—' }}</td>
+        <td class="text-xs">{{ d.source_type or '—' }}</td>
+        <td class="mono text-xs">{% if d.cve_search_url %}<a href="{{ d.cve_search_url }}">{{ d.cve }}</a>{% elif d.cve %}{{ d.cve }}{% else %}—{% endif %}</td>
+        <td class="text-xs">{{ d.evidence_quality or '—' }}</td>
+        <td class="num text-xs mono">{{ ('%.2f' | format(d.confidence)) if d.confidence is number else (d.confidence if d.confidence is not none else '—') }}</td>
+        <td class="tag-cell">
+          {% set tags = d.tags or [] %}
+          {% for t in tags[:3] %}<span class="badge-sm">{{ t }}</span>{% endfor %}
+          {% if tags | length > 3 %}<span class="badge-sm" title="{{ tags[3:] | join(', ') }}">+{{ tags | length - 3 }}</span>{% endif %}
+          {% if not tags %}<span class="text-muted text-xs">—</span>{% endif %}
+        </td>
+        <td class="text-xs mono text-muted" title="{{ d.indexed_at or '' }}">{{ d.indexed_date or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="empty">
+        No knowledge documents match this filter.
+        <div class="empty-hint">Documents appear here after research ingestion writes to the KnowledgeStore.</div>
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'documents') }}
+{% endblock %}

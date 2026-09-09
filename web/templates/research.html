@@ -1,0 +1,128 @@
+{# research.html — Research / CVEs landing table (Stage D5 polish).
+
+   Every row is persisted research data rendered through Jinja
+   autoescaping. Research artifacts are hypotheses, never findings: the
+   scope banner below is part of the contract with the operator. #}
+{% extends "base.html" %}
+{% block title %}Research / CVEs — WATCH{% endblock %}
+{% block page %}Research / CVEs{% endblock %}
+
+{% from "macros.html" import sort_link, pager, sev_badge, research_banner, tri_bool with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Research / CVEs</h1>
+  <p class="page-sub">Persisted CVE research artifacts — offline, read-only, pre-verification.</p>
+</div>
+
+{{ research_banner() }}
+
+<div class="kpi-grid kpi-5 mb-6">
+  <div class="stat-card">
+    <div class="stat-label">Researched CVEs</div>
+    <div class="stat-value">{{ stats.total | fmtnum }}</div></div>
+  <div class="stat-card">
+    <div class="stat-label">Severity</div>
+    <div class="stat-value" style="font-size:13px">
+      {% set sev = stats.severity %}
+      <span class="sev-badge sev-critical">{{ sev.get('critical', 0) }} crit</span>
+      <span class="sev-badge sev-high">{{ sev.get('high', 0) }} high</span>
+      <span class="sev-badge sev-medium">{{ sev.get('medium', 0) + sev.get('moderate', 0) }} med</span>
+      <span class="sev-badge sev-low">{{ sev.get('low', 0) }} low</span></div></div>
+  <div class="stat-card">
+    <div class="stat-label">Public Exploit</div>
+    <div class="stat-value accent2">{{ stats.public_exploits | fmtnum }}</div>
+    <div class="stat-sub">flagged in persisted research</div></div>
+  <a href="{{ xss_url }}" class="stat-card stat-link">
+    <div class="stat-label">XSS Candidates</div>
+    <div class="stat-value">{{ overview.xss_candidates | fmtnum }}</div></a>
+  <a href="{{ reports_url }}" class="stat-card stat-link">
+    <div class="stat-label">Reports</div>
+    <div class="stat-value ok">{{ overview.reports | fmtnum }}</div></a>
+</div>
+
+{# search + filters #}
+<form method="get" action="/ui/research" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="CVE / title / product…"
+         class="search-input" autocomplete="off">
+  <select name="severity" class="filter-select">
+    <option value="">Severity: any</option>
+    {% for v in ['critical', 'high', 'medium', 'low', 'unknown'] %}
+      <option value="{{ v }}"{{ ' selected' if severity == v }}>{{ v | capitalize }}</option>
+    {% endfor %}
+  </select>
+  <input type="search" name="status" value="{{ status }}" placeholder="Status…"
+         class="search-input" style="max-width:140px" autocomplete="off">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="direction" value="{{ direction }}">
+  <button type="submit" class="btn-primary">Filter</button>
+</form>
+
+{# active filter chips — removable, always visible #}
+{% if chips %}
+<div class="filter-chips">
+  <span class="fc-label">Active:</span>
+  {% for chip in chips %}
+    <a class="filter-chip" href="{{ chip.url }}" title="Remove {{ chip.key }} filter">
+      <span class="fc-key">{{ chip.key }}</span>
+      <span class="fc-val">{{ chip.value }}</span>
+      <span class="fc-x">✕</span>
+    </a>
+  {% endfor %}
+  <a class="filter-chip filter-chip-clear" href="{{ clear_url }}">clear all</a>
+</div>
+{% endif %}
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'CVEs') }}
+
+{% set fparams = {'q': q, 'severity': severity, 'status': status} %}
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>{{ sort_link(research_url, 'cve', 'CVE', sort, direction, fparams) }}</th>
+        <th>{{ sort_link(research_url, 'title', 'Title', sort, direction, fparams) }}</th>
+        <th>{{ sort_link(research_url, 'cvss', 'Severity / CVSS', sort, direction, fparams) }}</th>
+        <th>Vulnerability</th>
+        <th>Product</th>
+        <th>Exploit</th>
+        <th>Status</th>
+        <th>Nuclei</th>
+        <th>Report</th>
+        <th>{{ sort_link(research_url, 'updated', 'Researched', sort, direction, fparams) }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in results %}
+      <tr>
+        <td><a class="mono cve-link" href="{{ r.detail_url }}">{{ r.cve }}</a></td>
+        <td class="td-title" title="{{ r.title or '' }}">
+          <a class="row-title" href="{{ r.detail_url }}">{{ r.title or '—' }}</a></td>
+        <td>
+          {{ sev_badge(r.severity, r.sev_bucket) }}
+          {% if r.cvss_score is not none %}<div class="mono text-xs text-muted">{{ r.cvss_score }}</div>{% endif %}
+        </td>
+        <td class="text-xs">{{ r.vulnerability_type or '—' }}{% if r.cwe %} <span class="badge-sm">{{ r.cwe }}</span>{% endif %}</td>
+        <td class="text-xs truncate" style="max-width:170px" title="{{ (r.products or []) | join(', ') }}">{{ (r.products or ['—']) | join(', ') }}</td>
+        <td class="text-xs">{{ tri_bool(r.public_exploit) }}</td>
+        <td class="text-xs">{{ r.research_status or '—' }}</td>
+        <td class="text-xs">
+          {% if r.nuclei_decision %}<span class="badge-sm">{{ r.nuclei_decision }}</span>
+          {% else %}{{ tri_bool(r.nuclei_candidate) }}{% endif %}
+        </td>
+        <td>{% if r.report_url %}<a class="badge-link" href="{{ r.report_url }}">report</a>{% else %}<span class="text-muted text-xs">—</span>{% endif %}</td>
+        <td class="text-xs mono text-muted" title="{{ r.generated_at or '' }}">{{ r.generated_date or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10" class="empty">
+        No research artifacts match this filter.
+        <div class="empty-hint">Run the offline research pipeline first, or clear the search/filters.</div>
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'CVEs') }}
+{% endblock %}

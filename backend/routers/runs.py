@@ -41,6 +41,10 @@ def _ctx(request: Request, **extra):
         "programs_url": build_url("/ui/programs"),
         "dns_url": build_url("/ui/dns-bruteforce/status"),
         "docs_url": build_url("/docs"),
+        "research_url": build_url("/ui/research"),
+        "xss_url": build_url("/ui/xss"),
+        "kb_url": build_url("/ui/kb"),
+        "reports_url": build_url("/ui/reports"),
         "stats_link": build_url("/api/stats/by-program"),
         "fresh_link": build_url("/ui/http/fresh"),
     }

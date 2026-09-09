@@ -18,9 +18,27 @@ class KnowledgeSourceClaims(BaseModel):
     techniques: list[str] = Field(default_factory=list)
     payload_patterns: list[str] = Field(default_factory=list)
     verification_patterns: list[str] = Field(default_factory=list)
+    # Stage R12: deterministic vulnerability-intelligence dimensions.
+    # Optional additive metadata; empty by default; never a verdict.
+    vulnerability_types: list[str] = Field(default_factory=list)
+    cwes: list[str] = Field(default_factory=list)
+    parameters: list[str] = Field(default_factory=list)
     evidence_quality: str = "UNKNOWN"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     tags: list[str] = Field(default_factory=list)
+
+
+class KnowledgeIntelligenceEvidence(BaseModel):
+    """Provenance trace for one extracted intelligence value."""
+
+    field: str
+    value: str
+    source_artifact: str
+    source_url: str | None = None
+    source_type: str
+    evidence: str
+    rule_id: str
+    rule_version: str
 
 
 class KnowledgeProvenance(BaseModel):
@@ -69,6 +87,10 @@ class KnowledgeAggregate(BaseModel):
     verification_patterns: list[KnowledgeAttributedValue] = Field(
         default_factory=list
     )
+    # Stage R12: deterministic vulnerability-intelligence dimensions.
+    vulnerability_types: list[KnowledgeAttributedValue] = Field(default_factory=list)
+    cwes: list[KnowledgeAttributedValue] = Field(default_factory=list)
+    parameters: list[KnowledgeAttributedValue] = Field(default_factory=list)
     tags: list[KnowledgeAttributedValue] = Field(default_factory=list)
     source_confidence: list[KnowledgeConfidenceAttribution] = Field(
         default_factory=list
@@ -105,6 +127,13 @@ class KnowledgeDocument(BaseModel):
     payload_patterns: list[str] = Field(default_factory=list)
     verification_patterns: list[str] = Field(default_factory=list)
 
+    # Stage R12: deterministic vulnerability-intelligence dimensions.
+    # Optional additive metadata surfaced from evidence-backed
+    # extraction; empty by default; never a verdict.
+    vulnerability_types: list[str] = Field(default_factory=list)
+    cwes: list[str] = Field(default_factory=list)
+    parameters: list[str] = Field(default_factory=list)
+
     content: str
 
     summary: str | None = None
@@ -124,6 +153,13 @@ class KnowledgeDocument(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
     content_hash: str | None = None
+
+    # Stage R12: bounded, verbatim provenance trace for extracted
+    # intelligence values above. Additive metadata only; never consumed
+    # as a verdict by any agent.
+    intelligence_evidence: list[KnowledgeIntelligenceEvidence] = Field(
+        default_factory=list
+    )
 
     provenance: list[KnowledgeProvenance] = Field(default_factory=list)
     aggregate: KnowledgeAggregate = Field(default_factory=KnowledgeAggregate)

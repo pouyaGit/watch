@@ -379,6 +379,9 @@ class KnowledgeStore:
             techniques=document.techniques,
             payload_patterns=document.payload_patterns,
             verification_patterns=document.verification_patterns,
+            vulnerability_types=document.vulnerability_types,
+            cwes=document.cwes,
+            parameters=document.parameters,
             evidence_quality=document.evidence_quality,
             confidence=document.confidence,
             tags=document.tags,
@@ -416,9 +419,14 @@ class KnowledgeStore:
             claims = []
 
             for claim in source.claims:
+                # Stage R12: an already-stamped claim keeps its stable
+                # id even as additive claim fields (e.g. intelligence
+                # dimensions) extend the hash input; only unstamped
+                # incoming claims are content-stamped.
+                stamped = claim.claim_id or _claim_id(claim)
                 claims.append(
                     claim.model_copy(
-                        update={"claim_id": _claim_id(claim)}
+                        update={"claim_id": stamped}
                     )
                 )
 
@@ -579,6 +587,11 @@ class KnowledgeStore:
             verification_patterns=self._aggregate_values(
                 provenance, "verification_patterns"
             ),
+            vulnerability_types=self._aggregate_values(
+                provenance, "vulnerability_types"
+            ),
+            cwes=self._aggregate_values(provenance, "cwes"),
+            parameters=self._aggregate_values(provenance, "parameters"),
             tags=self._aggregate_values(provenance, "tags"),
             source_confidence=sorted(
                 confidence,
@@ -610,12 +623,44 @@ class KnowledgeStore:
             "techniques": values(aggregate.techniques),
             "payload_patterns": values(aggregate.payload_patterns),
             "verification_patterns": values(aggregate.verification_patterns),
+            "vulnerability_types": values(aggregate.vulnerability_types),
+            "cwes": values(aggregate.cwes),
+            "parameters": values(aggregate.parameters),
             "tags": values(aggregate.tags),
             "evidence_quality": primary_claim.evidence_quality if primary_claim else document.evidence_quality,
             "confidence": primary_claim.confidence if primary_claim else document.confidence,
             "provenance": provenance,
             "aggregate": aggregate,
         }
+
+    def _merged_intelligence_evidence(
+        self,
+        existing: KnowledgeDocument,
+        incoming: KnowledgeDocument,
+    ) -> list:
+        """Union extracted-intelligence provenance traces deterministically.
+
+        Stage R12: evidence records are source-attributed metadata, not
+        claims merged into provenance; both sides are preserved, deduped
+        by full field tuple, and sorted for byte-stable output.
+        """
+
+        from ai.schemas.knowledge import KnowledgeIntelligenceEvidence
+
+        merged: dict[tuple, KnowledgeIntelligenceEvidence] = {}
+        for item in [*existing.intelligence_evidence, *incoming.intelligence_evidence]:
+            key = (
+                item.field,
+                item.value,
+                item.source_artifact,
+                item.source_url or "",
+                item.source_type,
+                item.evidence,
+                item.rule_id,
+                item.rule_version,
+            )
+            merged.setdefault(key, item)
+        return [merged[key] for key in sorted(merged)]
 
     def ingest(
         self,
@@ -652,6 +697,12 @@ class KnowledgeStore:
                         existing,
                         provenance,
                         aggregate,
+                    ),
+                    "intelligence_evidence": (
+                        self._merged_intelligence_evidence(
+                            existing,
+                            document,
+                        )
                     ),
                     "indexed_at": min(
                         existing.indexed_at,

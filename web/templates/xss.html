@@ -1,0 +1,96 @@
+{# xss.html — XSS research candidates (Stage D5 polish).
+
+   These are pattern-match hypotheses stored under the research XSS
+   directory. They are NOT production findings and this page must never
+   be allowed to imply otherwise. Legacy Mongo XssFindings are not read
+   here. #}
+{% extends "base.html" %}
+{% block title %}XSS Candidates — WATCH{% endblock %}
+{% block page %}XSS Research Candidates{% endblock %}
+
+{% from "macros.html" import pager, xss_status_badge, research_banner with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">XSS</h1>
+  <p class="page-sub">Offline XSS research candidates derived from persisted KB patterns.</p>
+</div>
+
+{{ research_banner("RESEARCH CANDIDATES — NOT PRODUCTION FINDINGS") }}
+
+<form method="get" action="/ui/xss" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Query / pattern / id…"
+         class="search-input" autocomplete="off">
+  <select name="status" class="filter-select">
+    <option value="">Status: any</option>
+    {% for v in ['RESEARCH_CANDIDATE', 'INSUFFICIENT_EVIDENCE', 'REJECTED'] %}
+      <option value="{{ v }}"{{ ' selected' if status == v }}>{{ v }}</option>
+    {% endfor %}
+  </select>
+  <input type="search" name="type" value="{{ type }}" placeholder="XSS type…"
+         class="search-input" style="max-width:120px" autocomplete="off">
+  <input type="search" name="context" value="{{ context }}" placeholder="Context…"
+         class="search-input" style="max-width:140px" autocomplete="off">
+  <button type="submit" class="btn-primary">Filter</button>
+</form>
+
+{% if chips %}
+<div class="filter-chips">
+  <span class="fc-label">Active:</span>
+  {% for chip in chips %}
+    <a class="filter-chip" href="{{ chip.url }}" title="Remove {{ chip.key }} filter">
+      <span class="fc-key">{{ chip.key }}</span>
+      <span class="fc-val">{{ chip.value }}</span>
+      <span class="fc-x">✕</span>
+    </a>
+  {% endfor %}
+  <a class="filter-chip filter-chip-clear" href="{{ clear_url }}">clear all</a>
+</div>
+{% endif %}
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'candidates') }}
+
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Candidate</th>
+        <th>Status</th>
+        <th class="num">Confidence</th>
+        <th>Type</th>
+        <th>Context</th>
+        <th>Query</th>
+        <th>Top Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in results %}
+      <tr>
+        <td><a class="mono cve-link" href="{{ c.detail_url }}">{{ c.candidate_id }}</a></td>
+        <td>{{ xss_status_badge(c.status) }}</td>
+        <td class="num">
+          {% if c.confidence is number %}
+            <span class="conf-meter"><span class="conf-fill{{ ' conf-hi' if c.confidence >= 0.7 else '' }}" style="width: {{ (c.confidence * 100) | round | int }}%"></span></span>
+            <span class="text-xs mono">{{ '%.2f' | format(c.confidence) }}</span>
+          {% elif c.confidence is not none %}<span class="mono text-xs">{{ c.confidence }}</span>
+          {% else %}—{% endif %}
+        </td>
+        <td>{% if c.xss_type %}<span class="badge-sm">{{ c.xss_type }}</span>{% else %}<span class="text-muted text-xs">—</span>{% endif %}</td>
+        <td class="text-xs mono">{{ c.context or c.injection_context or '—' }}</td>
+        <td class="td-title text-xs" title="{{ c.query or '' }}">
+          <a class="row-title" href="{{ c.detail_url }}">{{ c.query or '—' }}</a></td>
+        <td class="td-title text-xs" title="{{ c.top_evidence or '' }}">{{ c.top_evidence or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="empty">
+        No XSS candidates match this filter.
+        <div class="empty-hint">Candidates are produced by the offline XSS research agent; nothing here is a finding.</div>
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'candidates') }}
+{% endblock %}

@@ -1,0 +1,18 @@
+{
+  "title": "Reflected XSS: quoted HTML attribute breakout via event handler",
+  "source_url": "https://research.example.test/xss-seed-reflected-attribute",
+  "source_type": "seed",
+  "published_at": "2026-09-01",
+  "technologies": ["HTML"],
+  "xss_types": ["reflected"],
+  "contexts": ["html_attribute"],
+  "wafs": [],
+  "techniques": ["attribute breakout", "event handler injection"],
+  "payload_patterns": ["\" autofocus onfocus=MARKER"],
+  "verification_patterns": ["observe reflection inside quoted attribute value"],
+  "content": "Seed describing reflected XSS where a query parameter is reflected inside a double-quoted HTML attribute value without output encoding. Breakout closes the attribute and injects an event handler. Source: query parameter. Sink: unescaped attribute reflection.",
+  "summary": "Deterministic R3 seed for reflected/html_attribute.",
+  "evidence_quality": "SECONDARY",
+  "confidence": 0.6,
+  "tags": ["xss-seed", "reflected", "html_attribute"]
+}

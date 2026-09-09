@@ -1,0 +1,18 @@
+{
+  "title": "DOM XSS: location.hash flowing into innerHTML sink",
+  "source_url": "https://research.example.test/xss-seed-dom-javascript",
+  "source_type": "seed",
+  "published_at": "2026-09-01",
+  "technologies": ["JavaScript"],
+  "xss_types": ["dom"],
+  "contexts": ["javascript"],
+  "wafs": [],
+  "techniques": ["sink analysis", "source-to-sink tracing"],
+  "payload_patterns": ["#<img src=x onerror=MARKER>"],
+  "verification_patterns": ["trace fragment to innerHTML assignment in page script"],
+  "content": "Seed describing DOM XSS where location.hash flows into an innerHTML sink without sanitization. Source: location.hash fragment. Sink: innerHTML assignment in first-party script.",
+  "summary": "Deterministic R3 seed for dom/javascript.",
+  "evidence_quality": "SECONDARY",
+  "confidence": 0.65,
+  "tags": ["xss-seed", "dom", "javascript"]
+}

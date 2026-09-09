@@ -1,0 +1,90 @@
+{# kb_detail.html — one persisted KnowledgeStore document (Stage D3).
+
+   Content is PLAIN TEXT rendered through autoescaping inside a <pre>.
+   No Markdown/HTML interpretation, no |safe, provenance kept verbatim. #}
+{% extends "base.html" %}
+{% block title %}{{ doc.knowledge_id }} — KB — WATCH{% endblock %}
+{% block page %}{{ doc.knowledge_id }}{% endblock %}
+
+{% from "macros.html" import empty_state with context %}
+
+{% block content %}
+<a class="back-link" href="{{ kb_url }}">← Knowledge Base</a>
+
+<div class="panel mb-6">
+  <div class="panel-head">
+    <h2>{{ doc.title or 'Untitled document' }}</h2>
+    <span class="mono text-xs text-muted">{{ doc.knowledge_id }}</span>
+  </div>
+  <div class="panel-body">
+    <div class="section-label">Document metadata</div>
+    <div class="detail-meta">
+      <span class="dm-item"><span class="dm-k">Source type</span>{{ doc.source_type or '—' }}</span>
+      <span class="dm-item"><span class="dm-k">Source URL</span><span class="mono text-xs">{{ doc.source_url or '—' }}</span></span>
+      <span class="dm-item"><span class="dm-k">Evidence quality</span>{{ doc.evidence_quality or '—' }}</span>
+      <span class="dm-item"><span class="dm-k">Confidence</span>
+        <span class="mono">{{ '%.2f' | format(doc.confidence) if doc.confidence is number else (doc.confidence if doc.confidence is not none else '—') }}</span></span>
+      {% if doc.cve %}<span class="dm-item"><span class="dm-k">CVE</span>
+        <span class="mono">{{ doc.cve }}</span>
+        {% if doc.research_url %}<a class="text-xs" href="{{ doc.research_url }}">research →</a>{% endif %}</span>{% endif %}
+      {% if doc.indexed_at %}<span class="dm-item"><span class="dm-k">Indexed</span><span class="mono text-xs">{{ doc.indexed_at }}</span></span>{% endif %}
+      {% if doc.published_at %}<span class="dm-item"><span class="dm-k">Published</span><span class="mono text-xs">{{ doc.published_at }}</span></span>{% endif %}
+    </div>
+    {% if doc.xss_types or doc.contexts %}
+    <div class="detail-meta" style="margin-top:6px">
+      {% for t in doc.xss_types or [] %}<span class="dm-item"><span class="dm-k">XSS type</span>{{ t }}</span>{% endfor %}
+      {% for c in doc.contexts or [] %}<span class="dm-item"><span class="dm-k">Context</span><span class="mono text-xs">{{ c }}</span></span>{% endfor %}
+    </div>
+    {% endif %}
+    {% if doc.tags %}<div class="section-label mt-3">Tags</div><div class="tag-row">{% for t in doc.tags %}<span class="badge-sm">{{ t }}</span>{% endfor %}</div>{% endif %}
+    {% if doc.technologies %}<div class="tag-row">{% for t in doc.technologies %}<span class="badge-sm">tech: {{ t }}</span>{% endfor %}</div>{% endif %}
+  </div>
+</div>
+
+<div class="detail-grid">
+
+  <section class="panel">
+    <div class="panel-head"><h2>Summary</h2></div>
+    <div class="panel-body">
+      <p class="prose">{{ doc.summary or 'No persisted summary.' }}</p>
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Content</h2><span class="badge-sm">plain text — not rendered as HTML</span></div>
+    <div class="panel-body">
+      {% if doc.content %}<pre class="md-report kb-content">{{ doc.content }}</pre>
+      {% else %}{{ empty_state("Document has no persisted content.", compact=True) }}{% endif %}
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Provenance</h2><span class="badge-sm">source-attributed claims — preserved exactly as stored</span></div>
+    <div class="panel-body">
+      {% if doc.provenance %}
+        {% for src in doc.provenance %}
+        <div class="prov-block">
+          <div class="prov-head">
+            <span class="mono text-xs">{{ src.source_type or 'source' }} · {{ src.source_id or '' }}</span>
+            <span class="text-xs text-muted">{{ (src.claims or []) | length }} claim(s)</span>
+          </div>
+          <div class="mono text-xs text-muted">{{ src.source_url }}</div>
+          {% for claim in (src.claims or [])[:5] %}
+          <div class="prov-claim">
+            {% if claim.summary %}<div class="text-sm">{{ claim.summary }}</div>{% endif %}
+            <div class="text-xs text-muted">confidence={{ claim.confidence }} · evidence={{ claim.evidence_quality }}
+              {% if claim.xss_types %} · xss={{ claim.xss_types | join('/') }}{% endif %}
+              {% if claim.contexts %} · ctx={{ claim.contexts | join('/') }}{% endif %}</div>
+          </div>
+          {% endfor %}
+          {% if (src.claims or []) | length > 5 %}<div class="text-xs text-muted">… {{ (src.claims or []) | length - 5 }} more claim(s)</div>{% endif %}
+        </div>
+        {% endfor %}
+      {% else %}
+        {{ empty_state("No provenance records.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+</div>
+{% endblock %}

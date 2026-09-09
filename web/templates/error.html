@@ -1,0 +1,16 @@
+{# error.html — generic error page for the research UI.
+   Renders fixed, operator-authored messages only; never filesystem paths,
+   stack traces, or secrets. #}
+{% extends "base.html" %}
+{% block title %}Error — WATCH{% endblock %}
+{% block page %}Error{% endblock %}
+
+{% from "macros.html" import error_panel with context %}
+
+{% block content %}
+{{ error_panel(title=title, hint=hint, status_code=code) }}
+<div class="mt-3">
+  <a class="badge-link" href="{{ root_url }}">← Back to Dashboard</a>
+  <a class="badge-link" href="{{ research_url }}">Research →</a>
+</div>
+{% endblock %}

@@ -54,6 +54,41 @@
 </a>
 {% endif %}
 
+{# ----- RESEARCH (compact, read-only artifacts; secondary to recon) ----- #}
+{% if research_overview %}
+<div class="section-label">Research
+  <span class="rl-note">offline artifacts — not production findings</span>
+  <a class="badge-link" style="float:right;margin-top:-4px" href="{{ docs_url }}" title="Read-only research JSON API (Stage D2)">API →</a>
+</div>
+<div class="kpi-grid kpi-6 kpi-research mb-6">
+  <a href="{{ research_url }}" class="stat-card stat-link">
+    <div class="stat-label">Research CVEs</div>
+    <div class="stat-value">{{ research_overview.research_cves | fmtnum }}</div>
+    <div class="stat-sub">persisted cli.json artifacts</div></a>
+  <a href="{{ research_url }}" class="stat-card stat-link">
+    <div class="stat-label">Public Exploits</div>
+    <div class="stat-value">{{ research_overview.public_exploit_cves | fmtnum }}</div>
+    <div class="stat-sub">flagged in persisted research</div></a>
+  <a href="{{ research_url }}" class="stat-card stat-link" title="Nuclei candidate flags in persisted research (nothing executed)">
+    <div class="stat-label">Nuclei Candidates</div>
+    <div class="stat-value warn">{{ research_overview.nuclei_candidates | fmtnum }}</div>
+    <div class="stat-sub">artifacts: {{ research_overview.nuclei.generated | fmtnum }} gen · {{ research_overview.nuclei.results | fmtnum }} res · {{ research_overview.nuclei.findings | fmtnum }} find</div></a>
+  <a href="{{ xss_url }}" class="stat-card stat-link">
+    <div class="stat-label">XSS Candidates</div>
+    <div class="stat-value accent2">{{ research_overview.xss_candidates | fmtnum }}</div>
+    <div class="stat-sub">
+      {% for st, n in research_overview.xss_by_status.items() %}{{ st | lower | replace('_', ' ') }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}
+      {% if not research_overview.xss_by_status %}none yet{% endif %}
+    </div></a>
+  <a href="{{ kb_url }}" class="stat-card stat-link">
+    <div class="stat-label">KB Documents</div>
+    <div class="stat-value">{{ research_overview.kb_documents | fmtnum }}</div></a>
+  <a href="{{ reports_url }}" class="stat-card stat-link">
+    <div class="stat-label">Reports</div>
+    <div class="stat-value ok">{{ research_overview.reports | fmtnum }}</div></a>
+</div>
+{% endif %}
+
 {# ----- SYSTEM HEALTH (secondary, htmx live) ----- #}
 <div class="section-label">System Health</div>
 <div class="kpi-grid kpi-4 kpi-secondary mb-6"

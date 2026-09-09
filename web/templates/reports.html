@@ -1,0 +1,64 @@
+{# reports.html — deterministic Markdown reports (Stage D3).
+
+   List view reads metadata only (never the bodies). Paths are confined
+   server-side to ai_data/reports/<validated-CVE>.md. #}
+{% extends "base.html" %}
+{% block title %}Reports — WATCH{% endblock %}
+{% block page %}Research Reports{% endblock %}
+
+{% from "macros.html" import pager, research_banner with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Reports</h1>
+  <p class="page-sub">Deterministic Markdown renders from persisted local artifacts.</p>
+</div>
+
+{{ research_banner("RESEARCH REPORTS — NOT PRODUCTION FINDINGS") }}
+
+<form method="get" action="/ui/reports" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="CVE…"
+         class="search-input" autocomplete="off">
+  <button type="submit" class="btn-primary">Filter</button>
+  {% if q %}<a class="badge-link" href="{{ reports_url }}">Clear</a>{% endif %}
+</form>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'reports') }}
+
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>CVE</th>
+        <th>Artifact</th>
+        <th class="num">Size</th>
+        <th>Available</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for rep in results %}
+      <tr>
+        <td><a class="mono cve-link" href="{{ rep.detail_url }}">{{ rep.cve }}</a></td>
+        <td class="mono text-xs text-muted">{{ rep.artifact }}</td>
+        <td class="num text-xs">{{ rep.size_bytes | fmtnum }} B
+          <span class="text-muted">({{ (rep.size_bytes / 1024) | round(1) }} KB)</span></td>
+        <td><span class="badge badge-ok">yes</span></td>
+        <td class="row-actions">
+          <a class="badge-link" href="{{ rep.detail_url }}">view</a>
+          <a class="btn-ghost" href="{{ rep.download_url }}">⬇ download .md</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">
+        No persisted reports.
+        <div class="empty-hint">Reports are generated offline from research artifacts for which a CVE id was requested.</div>
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'reports') }}
+{% endblock %}
