@@ -215,7 +215,7 @@ class ProvenanceAndAttributionTests(unittest.TestCase):
         record = records[0]
         self.assertEqual(record.value, "id")
         self.assertEqual(record.rule_id, "parameter-name-bare")
-        self.assertEqual(record.rule_version, "r14-1")
+        self.assertEqual(record.rule_version, "r15-1")
         self.assertEqual(record.source_artifact, "CVE-2024-5376.cli.json")
         self.assertIn("id parameter", record.evidence)
 

@@ -104,6 +104,167 @@
     </div>
   </section>
 
+  {# ---------- R19 research intelligence (R15-R18) ---------- #}
+  {% if intel and intel.available %}
+  <section class="panel">
+    <div class="panel-head"><h2>Exploitability</h2><span class="badge-sm">R15 — not verified</span></div>
+    <div class="panel-body">
+      {% set e = intel.exploitability or {} %}
+      <table class="kv">
+        <tr><th>Authentication required</th><td class="mono">{{ e.get('authentication_required', 'unknown') }}</td></tr>
+        <tr><th>Privilege required</th><td class="mono">{{ e.get('privilege_required', 'unknown') }}</td></tr>
+        <tr><th>User interaction required</th><td class="mono">{{ e.get('user_interaction_required', 'unknown') }}</td></tr>
+        <tr><th>Exploit available</th><td class="mono">{{ e.get('exploit_available', 'unknown') }}</td></tr>
+        <tr><th>Public PoC</th><td class="mono">{{ e.get('public_poc', 'unknown') }}</td></tr>
+        <tr><th>Active exploitation</th><td class="mono">{{ e.get('active_exploitation', 'unknown') }}</td></tr>
+        <tr><th>Exploit complexity</th><td class="mono">{{ e.get('exploit_complexity', 'unknown') }}</td></tr>
+      </table>
+      {% if e.get('conflicts') %}<p class="text-xs text-warn mt-2">Conflicting evidence: {{ e.get('conflicts') | join(', ') }}</p>{% endif %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>CVSS Structural</h2><span class="badge-sm">R15 — no score calculated</span></div>
+    <div class="panel-body">
+      {% set c = intel.cvss or {} %}
+      <table class="kv">
+        <tr><th>Attack vector</th><td class="mono">{{ c.get('attack_vector', 'unknown') }}</td></tr>
+        <tr><th>Attack complexity</th><td class="mono">{{ c.get('attack_complexity', 'unknown') }}</td></tr>
+        <tr><th>Attack requirements</th><td class="mono">{{ c.get('attack_requirements', 'unknown') }}</td></tr>
+        <tr><th>Privileges required</th><td class="mono">{{ c.get('privileges_required', 'unknown') }}</td></tr>
+        <tr><th>User interaction</th><td class="mono">{{ c.get('user_interaction', 'unknown') }}</td></tr>
+        <tr><th>Source</th><td class="mono text-xs">{{ c.get('source', 'unknown') }}</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Research Priority</h2><span class="badge-sm">R16 — research attention only</span></div>
+    <div class="panel-body">
+      {% set p = intel.priority or {} %}
+      <div class="rd-metarow">
+        <span class="dm-item"><span class="dm-k">Priority</span>
+          <span class="badge-sm">{{ p.get('priority', 'INSUFFICIENT_DATA') }}</span></span>
+        <span class="dm-item"><span class="dm-k">Score</span>
+          <span class="mono">{{ p.get('score', 0) }}</span></span>
+      </div>
+      {% if p.get('reasons') %}
+      <div class="section-label mt-3">Reasons</div>
+      <ul class="plain">{% for reason in p.get('reasons') %}<li class="text-sm">{{ reason }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if p.get('negative_factors') %}
+      <div class="section-label mt-3">Negative factors</div>
+      <ul class="plain text-muted">{% for n in p.get('negative_factors') %}<li class="text-sm">{{ n }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if p.get('unknown_factors') %}
+      <div class="section-label mt-3">Unknowns</div>
+      <ul class="plain text-muted">{% for u in p.get('unknown_factors') %}<li class="text-sm">{{ u }}</li>{% endfor %}</ul>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Asset Relevance</h2><span class="badge-sm">R17 — research relevance only</span></div>
+    <div class="panel-body">
+      {% if intel.relevance %}
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th>Program</th><th>Relevance</th><th>Score</th><th>Reasons</th><th>Unknowns</th></tr></thead>
+          <tbody>
+            {% for row in intel.relevance %}
+            <tr>
+              <td>{% if row.program_url %}<a class="row-title" href="{{ row.program_url }}">{{ row.program }}</a>{% else %}<span class="mono">{{ row.program }}</span>{% endif %}</td>
+              <td><span class="badge-sm">{{ row.relevance }}</span></td>
+              <td class="mono">{{ row.score }}</td>
+              <td class="text-xs">{% if row.reasons %}<ul class="plain">{% for reason in row.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>{% else %}—{% endif %}</td>
+              <td class="text-xs text-muted">{% if row.unknown_factors %}{{ row.unknown_factors | join('; ') }}{% else %}—{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+        {{ empty_state("No local asset/program relevance for this CVE.", 'Relevance appears only when local asset intelligence deterministically overlaps the research profile.', compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Research Queue Candidates</h2><span class="badge-sm">R18 — research planning, not verified</span></div>
+    <div class="panel-body">
+      {% if intel.queue %}
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th>Rank</th><th>Program</th><th>Queue score</th><th>Priority</th><th>Relevance</th><th>Blockers</th></tr></thead>
+          <tbody>
+            {% for item in intel.queue %}
+            <tr>
+              <td class="mono">{{ item.rank }}</td>
+              <td>{% if item.program_url %}<a class="row-title" href="{{ item.program_url }}">{{ item.program }}</a>{% else %}<span class="mono">{{ item.program }}</span>{% endif %}</td>
+              <td class="mono"><strong>{{ item.queue_score }}</strong></td>
+              <td class="text-xs">{{ item.priority_class }} / {{ item.priority_score }}</td>
+              <td class="text-xs">{{ item.relevance }} / {{ item.relevance_score }}</td>
+              <td class="text-xs">{% if item.blockers %}{% for b in item.blockers %}<span class="badge-sm">{{ b }}</span> {% endfor %}{% else %}—{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="text-xs text-muted mt-3">Research planning only. A queue candidate never asserts that the program or any asset is vulnerable.</p>
+      {% else %}
+        {{ empty_state("No deterministic queue candidates for this CVE.", 'Candidates require a deterministic positive asset relevance for a known program.', compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+  {% else %}
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Research Intelligence</h2><span class="badge-sm">R15-R18</span></div>
+    <div class="panel-body">
+      {{ empty_state("No local knowledge-base intelligence for this CVE.", 'Run the offline knowledge ingestion (kb ingest) to attach exploitability / priority / relevance projections.', compact=True) }}
+    </div>
+  </section>
+  {% endif %}
+
+  {# ---------- research tasks (R20 workflow) ---------- #}
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Research Tasks</h2><span class="badge-sm">R20 workflow — not verified</span></div>
+    <div class="panel-body">
+      {% if tasks %}
+      <div class="table-wrap"><table class="tbl">
+        <thead><tr><th>Status</th><th>Program</th><th>Title</th><th>Task</th><th>Updated</th></tr></thead>
+        <tbody>
+          {% for t in tasks %}
+          <tr>
+            <td><span class="badge-sm">{{ t.status }}</span></td>
+            <td>{{ t.program }}</td>
+            <td class="td-title" title="{{ t.title }}">{{ t.title }}</td>
+            <td><a class="badge-link" href="{{ t.task_url }}">{{ t.task_id }}</a></td>
+            <td class="text-xs mono text-muted">{{ (t.updated_at or '')[:19] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}
+        {{ empty_state("No research task for this CVE yet.", compact=True) }}
+      {% endif %}
+      {% if intel and intel.queue %}
+      <div class="section-label mt-3">Start a task from a queue candidate</div>
+      {% for item in intel.queue %}
+        {% if item.queue_id not in (task_by_queue or {}) %}
+        <form method="post" action="/ui/research/tasks" style="display:inline-block;margin:0 8px 8px 0">
+          {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+          <input type="hidden" name="cve" value="{{ item.cve }}">
+          <input type="hidden" name="program" value="{{ item.program }}">
+          <input type="hidden" name="queue_id" value="{{ item.queue_id }}">
+          <input type="hidden" name="title" value="{{ item.cve }} -> {{ item.program }}">
+          <button type="submit" class="btn-ghost">Start Research — {{ item.program }}</button>
+        </form>
+        {% endif %}
+      {% endfor %}
+      {% endif %}
+    </div>
+  </section>
+
   {# ---------- evidence ---------- #}
   <section class="panel span-2">
     <div class="panel-head"><h2>Evidence</h2><span class="badge-sm">persisted research notes — not verified output</span></div>

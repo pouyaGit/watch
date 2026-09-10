@@ -5,6 +5,7 @@ dns_brute_common.py -- shared helpers for watch_dns_static.py and watch_dns_dyna
 
 import subprocess
 import hashlib
+import re
 import requests
 import sys
 import os
@@ -61,6 +62,110 @@ def count_lines(path):
         return 0
 
 
+# ====================== Dynamic (alterx) safety ======================
+class ToolTimeout(ToolError):
+    """A required external tool exceeded its time budget.
+
+    Distinct from a generic ToolError so the dynamic pipeline can report a
+    TIMEOUT outcome (with partial output discarded) separately from a hard
+    failure, and never mistake it for a legitimate "0 candidates" result.
+    """
+
+
+# alterx's shipped permutation config (permutation_v0.1.0.yaml) expands each
+# input line into at most this many permutations: six {{word}} patterns
+# (6 x 111 words) + {{number}} (24) + {{region}} (6). This is a property of the
+# shipped pattern/payload set, not a value invented here.
+ALTERX_MAX_PERMUTATIONS_PER_INPUT = 696
+
+# Estimated bytes per generated FQDN (observed key length + storage overhead),
+# used only to reason about alterx's own dedupe backend choice.
+ALTERX_EST_KEY_BYTES = 72
+
+# projectdiscovery/utils/dedupe switches from an in-memory map to a disk-backed
+# LevelDB/hybrid map above this many estimated bytes. Staying below it keeps
+# generation in the fast, bounded regime instead of the disk-bound one that
+# caused the 30-minute timeout on large known lists.
+ALTERX_IN_MEMORY_DEDUPE_BYTES = 100 * 1024 * 1024
+
+
+def _derived_dynamic_max_input_lines():
+    # 100 MiB / (696 permutations/line * 72 B/key) ~= 2092, floored to the
+    # nearest 100 so the ceiling stays stable against cosmetic changes.
+    raw = ALTERX_IN_MEMORY_DEDUPE_BYTES // (
+        ALTERX_MAX_PERMUTATIONS_PER_INPUT * ALTERX_EST_KEY_BYTES
+    )
+    return max(100, (raw // 100) * 100)
+
+
+def _env_positive_int(name, default):
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# Per-domain ceiling on the number of known subdomains fed to alterx. The
+# default is derived from alterx's own in-memory dedupe threshold (never an
+# arbitrary large constant); override with WATCH_DYNAMIC_MAX_INPUT_LINES to
+# tune without a code change.
+DYNAMIC_MAX_INPUT_LINES = _env_positive_int(
+    "WATCH_DYNAMIC_MAX_INPUT_LINES", _derived_dynamic_max_input_lines()
+)
+DYNAMIC_MAX_CANDIDATES = DYNAMIC_MAX_INPUT_LINES * ALTERX_MAX_PERMUTATIONS_PER_INPUT
+
+_LABEL_RE = re.compile(r"^(?!-)[A-Za-z0-9_-]{1,63}(?<!-)$")
+
+
+def is_valid_hostname(name):
+    """Conservative hostname validation for DNS inputs and candidates.
+
+    Rejects empty/whitespace names, wildcards, URLs, and labels with invalid
+    characters, while accepting the underscore-bearing names DNS tooling emits.
+    """
+    if not name or len(name) > 253:
+        return False
+    labels = name.split(".")
+    if any(not label for label in labels):
+        return False
+    return all(_LABEL_RE.match(label) for label in labels)
+
+
+def bounded_deterministic_sample(sorted_items, limit):
+    """Return all items when len <= limit, else an evenly-spaced deterministic
+    sample (first and last included) preserving sorted order."""
+    n = len(sorted_items)
+    if limit <= 0 or n <= limit:
+        return list(sorted_items)
+    step = n / limit
+    return [sorted_items[int(i * step)] for i in range(limit)]
+
+
+def stream_valid_candidates(src_path, dst_path, max_candidates):
+    """Stream src -> dst line by line, dropping empty/invalid/duplicate lines and
+    stopping at max_candidates. Never buffers the whole file. Returns the number
+    of candidates written (deterministic: preserves source order)."""
+    seen = set()
+    count = 0
+    with open(src_path, "r", errors="ignore") as fin, open(dst_path, "w") as fout:
+        for raw in fin:
+            name = raw.strip()
+            if not name or not is_valid_hostname(name):
+                continue
+            if name in seen:
+                continue
+            seen.add(name)
+            fout.write(name + "\n")
+            count += 1
+            if count >= max_candidates:
+                break
+    return count
+
+
 # ====================== Resolution (puredns, same tuning as static.sh) ======================
 def run_puredns(candidates_file, out_file, threads=100, wildcard_tests=1, rate_limit_trusted=1000, wildcard_batch=100000):
     """
@@ -106,7 +211,7 @@ def run_puredns(candidates_file, out_file, threads=100, wildcard_tests=1, rate_l
                 env=tool_env(),
             )
     except subprocess.TimeoutExpired as exc:
-        raise ToolError(
+        raise ToolTimeout(
             f"puredns resolve timed out on {candidates_file} "
             f"(partial output discarded, not treated as 0 names)"
         ) from exc

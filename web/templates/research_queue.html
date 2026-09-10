@@ -1,0 +1,109 @@
+{# research_queue.html — Stage R19 ranked research queue (R18).
+
+   Deterministic CVE × program research-planning candidates combining R16
+   priority and R17 asset relevance. Every value is persisted/computed local
+   research intelligence rendered through Jinja autoescaping. This page never
+   asserts that any asset or program is vulnerable. #}
+{% extends "base.html" %}
+{% block title %}Research Queue — WATCH{% endblock %}
+{% block page %}Research Queue{% endblock %}
+
+{% from "macros.html" import pager, empty_state, research_banner with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Research Queue</h1>
+  <p class="page-sub">Ranked CVE &rarr; program research candidates — R16 priority combined with R17 asset relevance. Deterministic, read-only planning aid.</p>
+</div>
+
+{{ research_banner("RESEARCH PLANNING — NOT VERIFIED") }}
+
+<form method="get" action="/ui/research/queue" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="cve" value="{{ cve }}" placeholder="Filter by CVE…"
+         class="search-input" autocomplete="off">
+  <button type="submit" class="btn-primary">Filter</button>
+</form>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'queue items') }}
+
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Rank</th>
+        <th>CVE</th>
+        <th>Program</th>
+        <th>Research</th>
+        <th>Priority</th>
+        <th>Relevance</th>
+        <th>Queue score</th>
+        <th>Reasons</th>
+        <th>Blockers</th>
+        <th>Unknowns</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in results %}
+      <tr>
+        <td class="mono">{{ it.rank }}</td>
+        <td><a class="mono cve-link" href="{{ it.cve_url }}">{{ it.cve }}</a></td>
+        <td>
+          {% if it.program_url %}<a class="row-title" href="{{ it.program_url }}">{{ it.program }}</a>
+          {% else %}<span class="mono">{{ it.program or '—' }}</span>{% endif %}
+        </td>
+        <td class="text-xs">
+          {% set tid = (task_by_queue or {}).get(it.queue_id) %}
+          {% if tid %}
+            <a class="badge-link" href="/ui/research/tasks/{{ tid }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">Open task</a>
+          {% else %}
+            <form method="post" action="/ui/research/tasks" style="display:inline">
+              {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+              <input type="hidden" name="cve" value="{{ it.cve }}">
+              <input type="hidden" name="program" value="{{ it.program }}">
+              <input type="hidden" name="queue_id" value="{{ it.queue_id }}">
+              <input type="hidden" name="title" value="{{ it.cve }} -> {{ it.program }}">
+              <button type="submit" class="btn-ghost">Start Research</button>
+            </form>
+          {% endif %}
+        </td>
+        <td>
+          <span class="badge-sm">{{ it.priority_class }}</span>
+          <div class="mono text-xs text-muted">{{ it.priority_score }}</div>
+        </td>
+        <td>
+          <span class="badge-sm">{{ it.relevance }}</span>
+          <div class="mono text-xs text-muted">{{ it.relevance_score }}</div>
+        </td>
+        <td class="mono"><strong>{{ it.queue_score }}</strong></td>
+        <td class="text-xs">
+          {% if it.reasons %}<ul class="plain">{% for reason in it.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td class="text-xs">
+          {% if it.blockers %}{% for blocker in it.blockers %}<span class="badge-sm">{{ blocker }}</span> {% endfor %}
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td class="text-xs text-muted">
+          {% if it.unknown_factors %}<ul class="plain">{% for unknown in it.unknown_factors %}<li>{{ unknown }}</li>{% endfor %}</ul>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10" class="empty">
+        No deterministic CVE/program research candidates.
+        <div class="empty-hint">Queue items appear only where research priority and asset relevance deterministically overlap. Missing asset intelligence never creates a candidate.</div>
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'queue items') }}
+
+<p class="disclaimer-foot">
+  Research planning only — this queue never asserts that any asset or program is
+  vulnerable and performs no live validation. Unknowns and blockers are shown
+  deliberately.
+</p>
+{% endblock %}

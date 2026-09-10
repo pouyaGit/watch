@@ -1,0 +1,66 @@
+{# research_tasks.html — Stage R20 research workflow task list.
+
+   Researcher-managed state for R18 queue candidates. Statuses are TODO /
+   IN_PROGRESS / BLOCKED / DONE — never a vulnerability verdict. All values are
+   rendered through Jinja autoescaping. #}
+{% extends "base.html" %}
+{% block title %}Research Tasks — WATCH{% endblock %}
+{% block page %}Research Tasks{% endblock %}
+
+{% from "macros.html" import pager, research_banner with context %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Research Tasks</h1>
+  <p class="page-sub">Researcher workflow for queue candidates — TODO / IN_PROGRESS / BLOCKED / DONE.</p>
+</div>
+
+{{ research_banner("RESEARCH WORKFLOW — NOT VERIFIED") }}
+
+<form method="get" action="/ui/research/tasks" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <select name="status" class="filter-select">
+    <option value="">Status: any</option>
+    {% for s in ['TODO', 'IN_PROGRESS', 'BLOCKED', 'DONE'] %}
+      <option value="{{ s }}"{{ ' selected' if status == s }}>{{ s }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit" class="btn-primary">Filter</button>
+</form>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'tasks') }}
+
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Status</th><th>CVE</th><th>Program</th><th>Title</th><th>Task</th><th>Updated</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in results %}
+      <tr>
+        <td><span class="badge-sm">{{ t.status }}</span></td>
+        <td><a class="mono cve-link" href="{{ t.cve_url }}">{{ t.cve }}</a></td>
+        <td class="mono">{{ t.program }}</td>
+        <td class="td-title" title="{{ t.title }}">{{ t.title }}</td>
+        <td><a class="badge-link" href="{{ t.task_url }}">{{ t.task_id }}</a></td>
+        <td class="text-xs mono text-muted">{{ (t.updated_at or '')[:19] }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">
+        No research tasks yet.
+        <div class="empty-hint">Start one from the <a href="{{ queue_url }}">Research Queue</a> or a CVE detail page.</div>
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{{ pager(prev_url, next_url, page, total_pages, total, 'tasks') }}
+
+<p class="disclaimer-foot">
+  Research workflow only — DONE means "research completed", never "vulnerability
+  confirmed". No live validation is performed.
+</p>
+{% endblock %}

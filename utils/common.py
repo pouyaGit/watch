@@ -50,6 +50,24 @@ class ToolError(RuntimeError):
     """
 
 
+class ToolTimeout(ToolError):
+    """A required external tool exceeded its time budget.
+
+    Separate from a generic ToolError so callers can distinguish a hang from a
+    hard failure. It is still a ToolError, so existing fail-fast handling keeps
+    working unchanged.
+    """
+
+
+# Upper bound for one NS/DNS shell command (a per-domain bulk `dnsx` call over
+# the collected subdomains, or a single-label wildcard probe). The bulk call is
+# rate-limited to ~30 DNS requests/second, so the largest realistic domains need
+# many minutes; 1 hour leaves headroom for those while still bounding a hung
+# resolver or tool instead of blocking the pipeline forever. Adjust here (one
+# constant) if the resolver rate limit or typical domain size changes.
+NS_COMMAND_TIMEOUT = 3600
+
+
 def tool_env(extra=None):
     """Environment for Watch subprocesses with the canonical tool PATH first."""
     env = dict(os.environ)
@@ -127,17 +145,57 @@ def run_command_in_zsh_http(command):
         return []
     
 # NS zsh runner (shell=True)
+def _bounded_tail(text, limit=500):
+    """Return a single bounded tail of diagnostic text (never unbounded)."""
+    if not text:
+        return ""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return "..." + text[-limit:]
+
+
 def run_command_in_zsh_ns(command):
+    """Run an NS/DNS shell command; raise on failure instead of returning [].
+
+    Preserves the original successful behavior and the existing zsh/shell
+    command shape. The only change is failure handling: a non-zero exit now
+    raises ToolError and a hang raises ToolTimeout, so a broken dnsx can never
+    be mistaken for a successful "0 results" DNS run.
+    """
     env = os.environ.copy()
     env["PATH"] = WATCH_TOOL_PATH + ":" + env["PATH"] if env.get("PATH") else WATCH_TOOL_PATH
-    proc = subprocess.run(
-        command,
-        shell=True,
-        executable="/bin/zsh",
-        capture_output=True,
-        text=True,
-        env=env
-    )
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            executable="/bin/zsh",
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=NS_COMMAND_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ToolTimeout(
+            f"command timed out after {NS_COMMAND_TIMEOUT}s: "
+            f"{_bounded_tail(command, 200)}"
+        ) from exc
+    except OSError as exc:
+        raise ToolError(
+            f"command execution failed: {_bounded_tail(command, 200)}: {exc}"
+        ) from exc
+
+    if proc.returncode != 0:
+        detail = (
+            f"command failed (exit {proc.returncode}): "
+            f"{_bounded_tail(command, 200)}"
+        )
+        if proc.stderr:
+            detail += f" | stderr: {_bounded_tail(proc.stderr)}"
+        if proc.stdout:
+            detail += f" | stdout: {_bounded_tail(proc.stdout)}"
+        raise ToolError(detail)
+
     if proc.stderr:
         print(f"{colors.YELLOW}[{current_time()}] stderr: {proc.stderr.strip()}{colors.RESET}")
     return [line for line in proc.stdout.splitlines() if line.strip()]

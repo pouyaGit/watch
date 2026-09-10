@@ -21,9 +21,22 @@ Type=oneshot
 User=root
 WorkingDirectory=/opt/watch
 
+# systemd runs the service with a minimal PATH and never sources ~/.zshrc, so
+# the Go security tools must be exposed explicitly. This mirrors the heavy-job
+# PATH added in setup-weekly-jobs.sh (commit bedff46) and includes the real
+# install location /home/pouya_behnia/go/bin.
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/home/pouya_behnia/go/bin:/usr/local/bin:/usr/bin:/bin"
+
 # Core Pipeline and Heavy Jobs share the same lock.
 # Never allow them to run at the same time.
 ExecStart=/usr/bin/flock -n /run/watch-pipeline.lock /opt/watch/run-pipeline.sh
+
+# Real hard runtime bound. RuntimeMaxSec= is IGNORED for Type=oneshot, so the
+# supported mechanism is TimeoutStartSec=: for a oneshot service the start job
+# is not complete until ExecStart exits, and systemd terminates the unit if that
+# exceeds this value. Type=oneshot disables this timeout by default; 6h is
+# longer than the 5.5h heavy-job ceiling and leaves ~6h before the next 12h run.
+TimeoutStartSec=6h
 
 KillMode=control-group
 TimeoutStopSec=30s
@@ -77,8 +90,11 @@ echo "Service:"
 systemctl show watch.service \
     -p Type \
     -p User \
+    -p Environment \
     -p ExecStart \
     -p KillMode \
+    -p TimeoutStartUSec \
+    -p RuntimeMaxUSec \
     -p TimeoutStopUSec
 
 echo

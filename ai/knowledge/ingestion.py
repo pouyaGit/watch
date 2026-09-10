@@ -68,7 +68,11 @@ def _intelligence_document_fields(
     remain verbatim strings from explicit evidence.
     """
 
-    from ai.knowledge.intelligence import extract_research_intelligence
+    from ai.knowledge.intelligence import (
+        exploitability_projection,
+        extract_research_intelligence,
+        research_priority_projection,
+    )
 
     intelligence = extract_research_intelligence(
         cve_id,
@@ -97,6 +101,17 @@ def _intelligence_document_fields(
         "parameters": list(intelligence.parameters),
         "components": list(intelligence.components),
         "intelligence_evidence": evidence,
+        # Stage R15: additive deterministic exploitability projection derived
+        # from the same evidence stream.
+        "exploitability": exploitability_projection(intelligence.evidence),
+        # Stage R16: additive deterministic research-priority projection.
+        "research_priority": research_priority_projection(
+            intelligence.evidence,
+            vulnerability_types=intelligence.vulnerability_types,
+            cwes=intelligence.cwes,
+            components=intelligence.components,
+            parameters=intelligence.parameters,
+        ),
         "provenance": [
             {
                 "source_url": artifact_url or f"local://{cve_id}.cli.json",

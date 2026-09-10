@@ -18,11 +18,20 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
+from ai.knowledge.task_store import (
+    StaleTaskError,
+    TaskNotFound,
+    TaskStoreError,
+    TaskValidationError,
+)
+from backend import research_tasks
 from backend.deps import verify_api_key
 from backend.research_data import (
     NotFoundError,
     ResearchDataError,
+    cve_relevance,
     get_kb,
     get_overview,
     get_report,
@@ -32,6 +41,7 @@ from backend.research_data import (
     list_kb,
     list_reports,
     list_research,
+    list_research_queue,
     list_xss,
 )
 
@@ -42,6 +52,40 @@ _AUTH = [Depends(verify_api_key)]
 
 def _bad(exc: ResearchDataError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
+
+
+def _task_error(exc: TaskStoreError) -> HTTPException:
+    """Map research-workflow store errors onto HTTP status codes."""
+
+    if isinstance(exc, StaleTaskError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, TaskNotFound):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, TaskValidationError):
+        return HTTPException(status_code=400, detail=str(exc))
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+class ResearchTaskCreate(BaseModel):
+    """Validated task-create payload (bounded; no arbitrary paths)."""
+
+    cve: str
+    program: str
+    queue_id: str
+    title: str | None = None
+    notes: str | None = None
+    references: list[str] | None = None
+
+
+class ResearchTaskPatch(BaseModel):
+    """Validated task-update payload with optimistic-concurrency token."""
+
+    expected_version: int
+    status: str | None = None
+    notes: str | None = None
+    blocker: str | None = None
+    result_summary: str | None = None
+    references: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -72,10 +116,109 @@ def api_research_overview():
         raise _bad(exc)
 
 
+# ---------------------------------------------------------------------------
+# Research workflow tasks (Stage R20) — read/write, key-gated, local JSON only.
+# Declared before /api/research/{cve} so "tasks" is not captured as a CVE.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/research/tasks", dependencies=_AUTH)
+def api_research_tasks(
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
+    status: Optional[str] = Query(default=None),
+    cve: Optional[str] = Query(default=None),
+):
+    try:
+        return research_tasks.list_tasks(
+            limit=limit, offset=offset, status=status, cve=cve
+        )
+    except TaskStoreError as exc:
+        raise _task_error(exc)
+
+
+@router.post("/api/research/tasks", dependencies=_AUTH, status_code=201)
+def api_research_task_create(body: ResearchTaskCreate):
+    try:
+        task, created = research_tasks.create_task(
+            cve=body.cve,
+            program=body.program,
+            queue_id=body.queue_id,
+            title=body.title,
+            notes=body.notes,
+            references=body.references,
+        )
+    except TaskStoreError as exc:
+        raise _task_error(exc)
+    return {"created": created, "task": task.model_dump(mode="json")}
+
+
+@router.get("/api/research/tasks/{task_id}", dependencies=_AUTH)
+def api_research_task_detail(task_id: str):
+    try:
+        task = research_tasks.get_task(task_id)
+    except TaskStoreError as exc:
+        raise _task_error(exc)
+    return task.model_dump(mode="json")
+
+
+@router.patch("/api/research/tasks/{task_id}", dependencies=_AUTH)
+def api_research_task_update(task_id: str, body: ResearchTaskPatch):
+    try:
+        task = research_tasks.update_task(
+            task_id,
+            expected_version=body.expected_version,
+            status=body.status,
+            notes=body.notes,
+            blocker=body.blocker,
+            result_summary=body.result_summary,
+            references=body.references,
+        )
+    except TaskStoreError as exc:
+        raise _task_error(exc)
+    return task.model_dump(mode="json")
+
+
+@router.get("/api/research/queue", dependencies=_AUTH)
+def api_research_queue(
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
+    cve: Optional[str] = Query(default=None),
+):
+    """Ranked R18 research queue (research planning only). Read-only."""
+
+    try:
+        return list_research_queue(limit=limit, offset=offset, cve=cve)
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/queue/{cve}", dependencies=_AUTH)
+def api_research_queue_cve(cve: str):
+    """Ranked queue items for one CVE. Read-only."""
+
+    try:
+        return list_research_queue(limit=100, offset=0, cve=cve)
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
 @router.get("/api/research/{cve}", dependencies=_AUTH)
 def api_research_detail(cve: str):
     try:
         return get_research(cve)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="research artifact not found")
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/{cve}/relevance", dependencies=_AUTH)
+def api_research_relevance(cve: str):
+    """R17 asset/program relevance for one CVE (research relevance only)."""
+
+    try:
+        return cve_relevance(cve)
     except NotFoundError:
         raise HTTPException(status_code=404, detail="research artifact not found")
     except ResearchDataError as exc:

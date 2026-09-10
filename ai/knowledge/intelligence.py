@@ -1,4 +1,4 @@
-"""Deterministic vulnerability-intelligence extraction (Stage R12).
+"""Deterministic vulnerability-intelligence extraction (Stage R12-R15).
 
 Pure, offline, bounded rule engine. No LLM, no network, no subprocess,
 no target execution, no scoring, and no inference beyond explicit
@@ -8,6 +8,12 @@ Every extracted non-empty field carries bounded provenance:
 ``source_artifact``, ``source_url`` (when the evidence comes from a
 reference; otherwise the research artifact), a bounded verbatim
 ``evidence`` snippet, and a stable ``rule_id``/``rule_version`` pair.
+
+Stage R15 adds a deterministic **exploitability** projection
+(authentication/privilege/user-interaction requirements, exploit/public-PoC
+availability, active exploitation, complexity) plus structured CVSS metric
+extraction. It remains research-only and never executes or validates
+anything.
 """
 
 from __future__ import annotations
@@ -16,7 +22,104 @@ import re
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 
-INTELLIGENCE_RULE_VERSION = "r14-1"
+INTELLIGENCE_RULE_VERSION = "r15-1"
+
+# Stage R15 exploitability is a separate, additive rule family. Its claims
+# reuse the same provenance record shape and the same rule-version field.
+EXPLOITABILITY_CLAIM_FIELDS: tuple[str, ...] = (
+    "authentication_required",
+    "privilege_required",
+    "user_interaction_required",
+    "exploit_available",
+    "public_poc",
+    "active_exploitation",
+    "exploit_complexity",
+)
+_EXPLOITABILITY_FIELD_PREFIX = "exploitability."
+_EXPLOITABILITY_TRUEFALSE_FIELDS = EXPLOITABILITY_CLAIM_FIELDS[:-1]
+_EXPLOITABILITY_ALLOWED_VALUES: dict[str, frozenset[str]] = {
+    field: frozenset({"true", "false"})
+    for field in _EXPLOITABILITY_TRUEFALSE_FIELDS
+}
+_EXPLOITABILITY_ALLOWED_VALUES["exploit_complexity"] = frozenset({"low", "high"})
+
+_CVSS_STRUCTURAL_FIELDS: tuple[str, ...] = (
+    "attack_vector",
+    "attack_complexity",
+    "attack_requirements",
+    "privileges_required",
+    "user_interaction",
+)
+_CVSS_ALLOWED_VALUES: dict[str, frozenset[str]] = {
+    "attack_vector": frozenset({"N", "A", "L", "P"}),
+    "attack_complexity": frozenset({"L", "H"}),
+    "attack_requirements": frozenset({"N", "P"}),
+    "privileges_required": frozenset({"N", "L", "H"}),
+    "user_interaction": frozenset({"N", "R", "P", "A"}),
+}
+_CVSS_METRIC_TO_FIELD: dict[str, str] = {
+    "AV": "attack_vector",
+    "AC": "attack_complexity",
+    "AT": "attack_requirements",
+    "PR": "privileges_required",
+    "UI": "user_interaction",
+}
+
+# ---------------------------------------------------------------------------
+# Stage R16: deterministic research prioritization (research-only).
+#
+# A transparent, bounded 0-100 score over the persisted R12-R15 intelligence.
+# It never calculates a CVSS score, never executes anything, and never turns a
+# missing (unknown) value into a negative signal. Priority classes describe
+# research attention only: they are not "exploitable"/"verified"/"confirmed".
+# ---------------------------------------------------------------------------
+PRIORITY_RULE_VERSION = "r16-1"
+
+PRIORITY_CLASSES: tuple[str, ...] = (
+    "CRITICAL_RESEARCH",
+    "HIGH_RESEARCH",
+    "MEDIUM_RESEARCH",
+    "LOW_RESEARCH",
+    "INSUFFICIENT_DATA",
+)
+# (class, minimum score) evaluated highest-first.
+PRIORITY_THRESHOLDS: tuple[tuple[str, int], ...] = (
+    ("CRITICAL_RESEARCH", 70),
+    ("HIGH_RESEARCH", 50),
+    ("MEDIUM_RESEARCH", 30),
+)
+PRIORITY_MIN_SCORE = 0
+PRIORITY_MAX_SCORE = 100
+
+# Every point value has exactly one explicit rule.
+PRIORITY_WEIGHTS: dict[str, int] = {
+    # exploit availability (family cap 40)
+    "active_exploitation": 25,
+    "public_poc": 12,
+    "exploit_available": 8,
+    # access (family cap 30)
+    "no_authentication": 12,
+    "no_privileges": 10,
+    "no_user_interaction": 8,
+    # complexity (additive, may be negative)
+    "low_complexity": 10,
+    "high_complexity": -10,
+    # attack vector (additive, may be negative)
+    "attack_vector_network": 10,
+    "attack_vector_adjacent": 5,
+    "attack_vector_local": -5,
+    "attack_vector_physical": -10,
+    # research relevance (family cap 10)
+    "vulnerability_type": 3,
+    "affected_component": 4,
+    "affected_parameter": 3,
+    "cwe_mapped": 2,
+}
+PRIORITY_FAMILY_CAPS: dict[str, int] = {
+    "exploit_availability": 40,
+    "access": 30,
+    "research_relevance": 10,
+}
 
 # Keep both input scanning and verbatim snippets bounded. These caps are
 # time/space guards, not semantic truncation points in the rules.
@@ -78,6 +181,52 @@ class IntelligenceEvidence:
 
 
 @dataclass
+class CvssExploitability:
+    """Structured CVSS-derived exploitability metrics (never a score)."""
+
+    attack_vector: str = "unknown"
+    attack_complexity: str = "unknown"
+    attack_requirements: str = "unknown"
+    privileges_required: str = "unknown"
+    user_interaction: str = "unknown"
+    source: str = "unknown"
+
+
+@dataclass
+class Exploitability:
+    """Aggregated, conflict-resolved exploitability projection."""
+
+    authentication_required: str = "unknown"
+    privilege_required: str = "unknown"
+    user_interaction_required: str = "unknown"
+    exploit_available: str = "unknown"
+    public_poc: str = "unknown"
+    active_exploitation: str = "unknown"
+    exploit_complexity: str = "unknown"
+    cvss: CvssExploitability = dataclass_field(default_factory=CvssExploitability)
+    conflicts: list[str] = dataclass_field(default_factory=list)
+
+
+@dataclass
+class ResearchPriority:
+    """Deterministic, explainable research-priority projection.
+
+    ``priority`` is a research-attention class (never a verdict); ``score`` is
+    a bounded 0-100 sum of explicit rule points; every non-zero score carries
+    ``reasons``. ``negative_factors`` and ``unknown_factors`` are preserved so
+    unknown is never silently treated as false.
+    """
+
+    priority: str = "INSUFFICIENT_DATA"
+    score: int = 0
+    reasons: list[str] = dataclass_field(default_factory=list)
+    negative_factors: list[str] = dataclass_field(default_factory=list)
+    unknown_factors: list[str] = dataclass_field(default_factory=list)
+    evidence: list[IntelligenceEvidence] = dataclass_field(default_factory=list)
+    rule_version: str = PRIORITY_RULE_VERSION
+
+
+@dataclass
 class ExtractedIntelligence:
     """Deterministic extraction result, including bounded provenance."""
 
@@ -88,6 +237,8 @@ class ExtractedIntelligence:
     parameters: list[str] = dataclass_field(default_factory=list)
     # Stage R14: vulnerable component / file / endpoint evidence.
     components: list[str] = dataclass_field(default_factory=list)
+    # Stage R15: deterministic exploitability projection.
+    exploitability: Exploitability = dataclass_field(default_factory=Exploitability)
     evidence: list[IntelligenceEvidence] = dataclass_field(default_factory=list)
 
 # Maps an explicit textual vulnerability phrase to a normalized type.
@@ -360,6 +511,247 @@ _SOURCE_FILE_EXTENSION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# Stage R15: deterministic exploitability rules (research-only).
+#
+# Each rule maps an explicit phrase to one or more claims. ``negation_scope``
+# is ``None`` for wording that is already negative, ``"immediate"`` for
+# positive wording that must not fire directly after a negation in the same
+# clause, and ``"sentence"`` for positive wording that may be negated by a
+# phrase such as "no evidence ... active exploitation" earlier in the
+# sentence. Generic words ("exploit", "attack", "vulnerable") are never
+# sufficient on their own.
+# ---------------------------------------------------------------------------
+
+# (rule_id, ((claim_field, claim_value), ...), pattern, negation_scope)
+EXPLOITABILITY_TEXT_RULES: tuple[
+    tuple[str, tuple[tuple[str, str], ...], str, str | None], ...
+] = (
+    # --- authentication ---
+    (
+        "exploitability-auth-unauthenticated",
+        (("authentication_required", "false"),),
+        r"\bunauthenticated\b",
+        None,
+    ),
+    (
+        "exploitability-auth-not-required",
+        (("authentication_required", "false"),),
+        r"\bno authentication (?:is )?required\b"
+        r"|\bwithout (?:any )?authentication\b"
+        r"|\bauthentication (?:is )?not required\b"
+        r"|\bdoes not require authentication\b"
+        r"|\brequires no authentication\b"
+        r"|\bno credentials (?:are )?required\b"
+        r"|\bpre[-\s]?auth(?:entication)?\b",
+        None,
+    ),
+    (
+        "exploitability-auth-required",
+        (("authentication_required", "true"),),
+        r"\bauthentication (?:is )?required\b"
+        r"|\brequires authentication\b"
+        r"|\bauthenticated (?:user|attacker|administrator|account)\b"
+        r"|\brequires (?:valid )?credentials\b"
+        r"|\blogin (?:is )?required\b",
+        "immediate",
+    ),
+    # --- privileges ---
+    (
+        "exploitability-privileges-low",
+        (("privilege_required", "false"),),
+        r"\blow[-\s]privileg(?:e|ed|es)\b"
+        r"|\blow[-\s]privileged (?:user|attacker|account)\b"
+        r"|\bunprivileged\b"
+        r"|\bnon[-\s]?privileged\b"
+        r"|\bnon[-\s]?admin(?:istrator)?\b"
+        r"|\bwithout (?:any )?privileges\b"
+        r"|\bno privileges (?:are )?required\b"
+        r"|\brequires only low privileges\b",
+        None,
+    ),
+    (
+        "exploitability-privileges-admin",
+        (("privilege_required", "true"),),
+        r"\b(?:requires?|with)\s+(?:administrator|admin|root|elevated|high)\s+"
+        r"(?:privileges?|access|rights|permissions?)\b"
+        r"|\b(?:administrator|admin|root)\s+"
+        r"(?:privileges?|access|rights|account|user)\b"
+        r"|\b(?<!low-)(?<!non-)(?<!un)privileged\s+(?:account|user)\b"
+        r"|\brequires? (?:an )?administrator\b"
+        r"|\bhighly privileged\b",
+        "immediate",
+    ),
+    # --- user interaction ---
+    (
+        "exploitability-interaction-required",
+        (("user_interaction_required", "true"),),
+        r"\buser interaction (?:is )?required\b"
+        r"|\brequires user interaction\b"
+        r"|\bvictim interaction\b"
+        r"|\brequires (?:the )?(?:victim|user) to "
+        r"(?:click|visit|open|interact|browse)\b",
+        "immediate",
+    ),
+    (
+        "exploitability-interaction-none",
+        (("user_interaction_required", "false"),),
+        r"\bno user interaction\b"
+        r"|\bwithout user interaction\b"
+        r"|\buser interaction (?:is )?not required\b",
+        None,
+    ),
+    # --- exploit availability / public PoC ---
+    (
+        "exploitability-poc-public",
+        (("public_poc", "true"), ("exploit_available", "true")),
+        r"\bpublic(?:ly)? (?:poc|proof[-\s]?of[-\s]?concept)\b"
+        r"|\bproof[-\s]?of[-\s]?concept\b"
+        r"|\b(?:poc|proof[-\s]?of[-\s]?concept) (?:code )?(?:is )?"
+        r"(?:publicly )?(?:available|released|published|merged)\b",
+        "immediate",
+    ),
+    (
+        "exploitability-exploit-available",
+        (("exploit_available", "true"),),
+        r"\bexploit(?: code| script)? (?:is )?(?:publicly )?"
+        r"(?:available|released|published)\b"
+        r"|\bpublic exploit\b"
+        r"|\bweaponized exploit\b"
+        r"|\bexploit code available\b"
+        r"|\bexploit (?:has been )?(?:released|published)\b",
+        "immediate",
+    ),
+    (
+        "exploitability-exploit-none",
+        (("exploit_available", "false"), ("public_poc", "false")),
+        r"\bno (?:public |known |available )?(?:poc|proof[-\s]?of[-\s]?concept|exploit)\b"
+        r"|\bno exploit (?:code )?(?:is )?available\b"
+        r"|\bwithout a (?:public |known )?exploit\b"
+        r"|\bno known exploit code\b"
+        r"|\bno weaponized exploit\b",
+        None,
+    ),
+    # --- active exploitation ---
+    (
+        "exploitability-active-exploitation",
+        (("active_exploitation", "true"),),
+        r"\bexploited in the wild\b"
+        r"|\bactive(?:ly)? exploit(?:ed|ation)\b"
+        r"|\bexploitation (?:has been |was |is )?observed\b"
+        r"|\bknown exploited vulnerabilit(?:y|ies)\b"
+        r"|\bCISA KEV\b"
+        r"|\bKEV catalog(?:ue)?\b",
+        "sentence",
+    ),
+    (
+        "exploitability-no-active-exploitation",
+        (("active_exploitation", "false"),),
+        r"\bno (?:evidence|reports?|indications?|signs?)\b[^.\n]{0,120}?"
+        r"\b(?:active exploitation|exploited in the wild|exploitation in the wild)\b"
+        r"|\bnot (?:been )?exploited in the wild\b"
+        r"|\bno (?:known |observed |confirmed )?(?:active )?exploitation\b"
+        r"|\bexploitation (?:has not|hasn't) been observed\b"
+        r"|\bno exploitation (?:has been |was |is )?observed\b",
+        None,
+    ),
+    # --- complexity ---
+    (
+        "exploitability-complexity-low",
+        (("exploit_complexity", "low"),),
+        r"\blow (?:exploit |attack )?complexity\b"
+        r"|\bexploit(?:ation)? (?:is )?(?:trivial|simple|easy)\b",
+        "immediate",
+    ),
+    (
+        "exploitability-complexity-high",
+        (("exploit_complexity", "high"),),
+        r"\bhigh (?:exploit |attack )?complexity\b|\bcomplex to exploit\b",
+        "immediate",
+    ),
+)
+
+_EXPLOITABILITY_TEXT_PATTERNS = tuple(
+    (rule_id, claims, re.compile(pattern, re.IGNORECASE), scope)
+    for rule_id, claims, pattern, scope in EXPLOITABILITY_TEXT_RULES
+)
+
+# CVSS vectors: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/..." (3.x) and the CVSS 4.0
+# form with AT:. Only the listed structural metrics are parsed; no score is
+# ever calculated.
+_CVSS_VECTOR_RE = re.compile(
+    r"CVSS:[0-9](?:\.[0-9])?(?:\s*/\s*[A-Za-z]{1,4}\s*:\s*[A-Za-z0-9.]+)+",
+    re.IGNORECASE,
+)
+_CVSS_METRIC_RE = re.compile(r"([A-Za-z]{1,4})\s*:\s*([A-Za-z0-9.]+)")
+
+_NEGATION_TOKEN_RE = re.compile(
+    r"\b(?:no|non|not|never|without|none|cannot|isn't|aren't|doesn't|don't|"
+    r"won't|neither|nor)\b",
+    re.IGNORECASE,
+)
+_PHRASE_NEGATION_RE = re.compile(
+    r"\bno\s+(?:evidence|reports?|indications?|signs?|proof)\b",
+    re.IGNORECASE,
+)
+_CLAUSE_BREAK_RE = re.compile(r"[.!?;:\n]")
+
+# Structured research flags (explicit booleans) mapped onto claims.
+_STRUCTURED_RESEARCH_FLAGS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("public_exploit", ("public_poc", "exploit_available")),
+    ("actively_exploited", ("active_exploitation",)),
+)
+
+
+def _is_negated(text: str, start: int, scope: str | None) -> bool:
+    """Return True when positive wording at ``start`` sits in a negation.
+
+    ``immediate`` looks only at the short clause right before the match
+    ("no user interaction required"); ``sentence`` also honours phrase
+    negation anywhere in the sentence ("no evidence ... active exploitation").
+    """
+
+    if scope is None:
+        return False
+    immediate_prefix = text[max(0, start - 20):start]
+    immediate_clause = _CLAUSE_BREAK_RE.split(immediate_prefix)[-1]
+    if _NEGATION_TOKEN_RE.search(immediate_clause):
+        return True
+    if scope == "sentence":
+        sentence = _CLAUSE_BREAK_RE.split(text[:start])[-1]
+        return bool(
+            _NEGATION_TOKEN_RE.search(sentence)
+            or _PHRASE_NEGATION_RE.search(sentence)
+        )
+    return False
+
+
+def _tristate_bool(value: object) -> str | None:
+    """Deterministically map an explicit structured boolean to a tri-state."""
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "yes"):
+            return "true"
+        if normalized in ("false", "no"):
+            return "false"
+    return None
+
+
+def _parse_cvss_metrics(vector: str) -> dict[str, str]:
+    """Parse the supported structural metrics out of a CVSS vector string."""
+
+    metrics: dict[str, str] = {}
+    for match in _CVSS_METRIC_RE.finditer(vector):
+        key = match.group(1).upper()
+        value = match.group(2).upper()
+        field = _CVSS_METRIC_TO_FIELD.get(key)
+        if field and value in _CVSS_ALLOWED_VALUES[field]:
+            metrics[key] = value
+    return metrics
+
 
 
 def _ordered_unique(values: list[str]) -> list[str]:
@@ -584,6 +976,7 @@ def _record(
     source_url: str | None,
     source_type: str,
     rule_id: str,
+    rule_version: str = INTELLIGENCE_RULE_VERSION,
 ) -> None:
     result.evidence.append(
         IntelligenceEvidence(
@@ -594,8 +987,646 @@ def _record(
             source_type=source_type,
             evidence=_evidence_window(text, start, end),
             rule_id=rule_id,
+            rule_version=rule_version,
         )
     )
+
+
+def _record_exploitability_claim(
+    result: ExtractedIntelligence,
+    *,
+    claim_field: str,
+    claim_value: str,
+    text: str,
+    start: int,
+    end: int,
+    source_artifact: str,
+    source_url: str | None,
+    source_type: str,
+    rule_id: str,
+) -> None:
+    """Record one exploitability claim into the shared evidence stream."""
+
+    _record(
+        result,
+        field=_EXPLOITABILITY_FIELD_PREFIX + claim_field,
+        value=claim_value,
+        text=text,
+        start=start,
+        end=end,
+        source_artifact=source_artifact,
+        source_url=source_url,
+        source_type=source_type,
+        rule_id=rule_id,
+        rule_version=INTELLIGENCE_RULE_VERSION,
+    )
+
+
+def _extract_cvss_claims(
+    result: ExtractedIntelligence,
+    vector: str,
+    *,
+    kind: str,
+    source_artifact: str,
+    source_url: str | None,
+    text: str,
+    start: int,
+    end: int,
+) -> None:
+    """Record structured/prose CVSS metrics and their mapped claims.
+
+    ``kind`` is ``"structured"`` (an explicit machine-readable field) or
+    ``"prose"`` (a vector embedded in reference text); the merge step prefers
+    structured provenance for the corresponding field.
+    """
+
+    metrics = _parse_cvss_metrics(vector)
+    if not metrics:
+        return
+    for key, value in metrics.items():
+        structural = _CVSS_METRIC_TO_FIELD[key]
+        _record_exploitability_claim(
+            result,
+            claim_field=f"cvss.{structural}",
+            claim_value=value,
+            text=text,
+            start=start,
+            end=end,
+            source_artifact=source_artifact,
+            source_url=source_url,
+            source_type=kind,
+            rule_id=f"exploitability-cvss-{kind}-{structural}",
+        )
+    if "PR" in metrics:
+        _record_exploitability_claim(
+            result,
+            claim_field="privilege_required",
+            claim_value="false" if metrics["PR"] == "N" else "true",
+            text=text,
+            start=start,
+            end=end,
+            source_artifact=source_artifact,
+            source_url=source_url,
+            source_type=kind,
+            rule_id=f"exploitability-cvss-{kind}-privilege-required",
+        )
+    if "UI" in metrics:
+        _record_exploitability_claim(
+            result,
+            claim_field="user_interaction_required",
+            claim_value="false" if metrics["UI"] == "N" else "true",
+            text=text,
+            start=start,
+            end=end,
+            source_artifact=source_artifact,
+            source_url=source_url,
+            source_type=kind,
+            rule_id=f"exploitability-cvss-{kind}-user-interaction",
+        )
+    if "AC" in metrics:
+        _record_exploitability_claim(
+            result,
+            claim_field="exploit_complexity",
+            claim_value="low" if metrics["AC"] == "L" else "high",
+            text=text,
+            start=start,
+            end=end,
+            source_artifact=source_artifact,
+            source_url=source_url,
+            source_type=kind,
+            rule_id=f"exploitability-cvss-{kind}-exploit-complexity",
+        )
+
+
+def _structured_cvss_vector(payload: dict[str, object]) -> str | None:
+    """Return the first explicit CVSS vector present in the payload."""
+
+    for container_key in ("cve", "metadata"):
+        container = payload.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for key in (
+            "cvss_vector",
+            "cvss_v3_vector",
+            "cvss_v31_vector",
+            "cvss_v4_vector",
+            "cvss40_vector",
+        ):
+            value = container.get(key)
+            if not isinstance(value, str):
+                continue
+            match = _CVSS_VECTOR_RE.search(value)
+            if match:
+                return match.group(0)
+    return None
+
+
+def _extract_structured_cvss(
+    result: ExtractedIntelligence, payload: dict[str, object], source_artifact: str
+) -> None:
+    vector = _structured_cvss_vector(payload)
+    if not vector:
+        return
+    _extract_cvss_claims(
+        result,
+        vector,
+        kind="structured",
+        source_artifact=source_artifact,
+        source_url=None,
+        text=vector,
+        start=0,
+        end=len(vector),
+    )
+
+
+def _extract_structured_research_flags(
+    result: ExtractedIntelligence, payload: dict[str, object], source_artifact: str
+) -> None:
+    """Map explicit research booleans (public_exploit/actively_exploited)."""
+
+    research = payload.get("research")
+    if not isinstance(research, dict):
+        return
+    for flag, claim_fields in _STRUCTURED_RESEARCH_FLAGS:
+        state = _tristate_bool(research.get(flag))
+        if state is None:
+            continue
+        text = f"research.{flag}={state}"
+        for claim_field in claim_fields:
+            _record_exploitability_claim(
+                result,
+                claim_field=claim_field,
+                claim_value=state,
+                text=text,
+                start=0,
+                end=len(text),
+                source_artifact=source_artifact,
+                source_url=None,
+                source_type="structured",
+                rule_id=f"exploitability-structured-{flag.replace('_', '-')}",
+            )
+
+
+def _extract_exploitability_from_text(
+    result: ExtractedIntelligence,
+    bounded: str,
+    attributor: "_Attributor",
+    *,
+    source_artifact: str,
+    source_url: str | None,
+    source_type: str,
+) -> None:
+    """Deterministic prose exploitability rules for one bounded text."""
+
+    for rule_id, claims, pattern, scope in _EXPLOITABILITY_TEXT_PATTERNS:
+        for match in pattern.finditer(bounded):
+            if _is_negated(bounded, match.start(), scope):
+                continue
+            if not attributor.accepts(bounded, match):
+                continue
+            for claim_field, claim_value in claims:
+                _record_exploitability_claim(
+                    result,
+                    claim_field=claim_field,
+                    claim_value=claim_value,
+                    text=bounded,
+                    start=match.start(),
+                    end=match.end(),
+                    source_artifact=source_artifact,
+                    source_url=source_url,
+                    source_type=source_type,
+                    rule_id=rule_id,
+                )
+    # Prose CVSS vectors found inside reference/research text.
+    for match in _CVSS_VECTOR_RE.finditer(bounded):
+        if not attributor.accepts(bounded, match):
+            continue
+        _extract_cvss_claims(
+            result,
+            match.group(0),
+            kind="prose",
+            source_artifact=source_artifact,
+            source_url=source_url,
+            text=bounded,
+            start=match.start(),
+            end=match.end(),
+        )
+
+
+def _dedupe_exploitability_evidence(result: ExtractedIntelligence) -> None:
+    """Keep the first deterministic evidence record per exploitability claim."""
+
+    seen: set[tuple] = set()
+    kept: list[IntelligenceEvidence] = []
+    for item in result.evidence:
+        if item.field.startswith(_EXPLOITABILITY_FIELD_PREFIX):
+            key = (
+                item.field,
+                item.value,
+                item.source_artifact,
+                item.source_url or "",
+                item.source_type,
+                item.evidence,
+                item.rule_id,
+                item.rule_version,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+        kept.append(item)
+    result.evidence[:] = kept
+
+
+def _distinct_allowed(items: list, allowed: frozenset[str]) -> list[str]:
+    values: list[str] = []
+    for item in items:
+        value = getattr(item, "value", "")
+        if value in allowed and value not in values:
+            values.append(value)
+    return values
+
+
+def _resolve_claim(items: list, allowed: frozenset[str]) -> tuple[str, bool]:
+    """Resolve one claim: structured provenance wins, then prose.
+
+    Returns ``(value, conflicted)``. Prose true/false disagreement (with no
+    structured source) resolves to ``"unknown"`` while the conflict is kept.
+    """
+
+    structured = [
+        item for item in items
+        if (getattr(item, "source_type", "") or "") == "structured"
+    ]
+    structured_ids = {id(item) for item in structured}
+    prose = [item for item in items if id(item) not in structured_ids]
+
+    structured_values = _distinct_allowed(structured, allowed)
+    if len(structured_values) == 1:
+        return structured_values[0], False
+    if len(structured_values) > 1:
+        return "unknown", True
+
+    prose_values = _distinct_allowed(prose, allowed)
+    if len(prose_values) == 1:
+        return prose_values[0], False
+    if len(prose_values) > 1:
+        return "unknown", True
+    return "unknown", False
+
+
+def summarize_exploitability(evidence: object) -> Exploitability:
+    """Deterministically aggregate exploitability claims from evidence.
+
+    The evidence records are the single source of truth; this projection is
+    recomputable and order-independent. Structured (CVSS/explicit boolean)
+    provenance is preferred for the field it describes; conflicting prose
+    evidence is preserved in ``conflicts`` and resolves to ``"unknown"``.
+    """
+
+    groups: dict[str, list] = {}
+    for item in evidence or []:
+        field = getattr(item, "field", "") or ""
+        if field.startswith(_EXPLOITABILITY_FIELD_PREFIX):
+            groups.setdefault(field, []).append(item)
+
+    kwargs: dict[str, str] = {}
+    conflicts: list[str] = []
+    for field in EXPLOITABILITY_CLAIM_FIELDS:
+        allowed = _EXPLOITABILITY_ALLOWED_VALUES[field]
+        items = groups.get(_EXPLOITABILITY_FIELD_PREFIX + field, [])
+        value, _ = _resolve_claim(items, allowed)
+        kwargs[field] = value
+        if len(_distinct_allowed(items, allowed)) > 1:
+            conflicts.append(field)
+
+    cvss_kwargs: dict[str, str] = {}
+    cvss_kinds: set[str] = set()
+    for field in _CVSS_STRUCTURAL_FIELDS:
+        allowed = _CVSS_ALLOWED_VALUES[field]
+        items = groups.get(
+            f"{_EXPLOITABILITY_FIELD_PREFIX}cvss.{field}", []
+        )
+        value, _ = _resolve_claim(items, allowed)
+        cvss_kwargs[field] = value
+        if len(_distinct_allowed(items, allowed)) > 1:
+            conflicts.append(f"cvss.{field}")
+        cvss_kinds.update(
+            getattr(item, "source_type", "") or "" for item in items
+        )
+    if "structured" in cvss_kinds:
+        cvss_source = "structured"
+    elif "prose" in cvss_kinds:
+        cvss_source = "prose"
+    else:
+        cvss_source = "unknown"
+
+    return Exploitability(
+        cvss=CvssExploitability(source=cvss_source, **cvss_kwargs),
+        conflicts=sorted(set(conflicts)),
+        **kwargs,
+    )
+
+
+def _evidence_record_dict(item: object) -> dict[str, object]:
+    return {
+        "field": getattr(item, "field", ""),
+        "value": getattr(item, "value", ""),
+        "source_artifact": getattr(item, "source_artifact", ""),
+        "source_url": getattr(item, "source_url", None),
+        "source_type": getattr(item, "source_type", ""),
+        "evidence": getattr(item, "evidence", ""),
+        "rule_id": getattr(item, "rule_id", ""),
+        "rule_version": getattr(item, "rule_version", ""),
+    }
+
+
+def exploitability_projection(evidence: object) -> dict[str, object]:
+    """Build the serialized exploitability dict for the knowledge schema.
+
+    Used by ingestion (and available to the store) so the tri-state fields,
+    CVSS metrics, conflicts and evidence all derive from one deterministic
+    aggregation over the shared evidence stream.
+    """
+
+    summary = summarize_exploitability(evidence)
+    records = sorted(
+        (
+            item
+            for item in (evidence or [])
+            if (getattr(item, "field", "") or "").startswith(
+                _EXPLOITABILITY_FIELD_PREFIX
+            )
+        ),
+        key=lambda item: (
+            getattr(item, "field", ""),
+            getattr(item, "value", ""),
+            getattr(item, "rule_id", ""),
+            getattr(item, "source_url", "") or "",
+            getattr(item, "evidence", ""),
+        ),
+    )
+    return {
+        "authentication_required": summary.authentication_required,
+        "privilege_required": summary.privilege_required,
+        "user_interaction_required": summary.user_interaction_required,
+        "exploit_available": summary.exploit_available,
+        "public_poc": summary.public_poc,
+        "active_exploitation": summary.active_exploitation,
+        "exploit_complexity": summary.exploit_complexity,
+        "cvss": {
+            "attack_vector": summary.cvss.attack_vector,
+            "attack_complexity": summary.cvss.attack_complexity,
+            "attack_requirements": summary.cvss.attack_requirements,
+            "privileges_required": summary.cvss.privileges_required,
+            "user_interaction": summary.cvss.user_interaction,
+            "source": summary.cvss.source,
+        },
+        "conflicts": list(summary.conflicts),
+        "exploitability_evidence": [
+            _evidence_record_dict(item) for item in records
+        ],
+    }
+
+
+def _priority_evidence(
+    evidence: object, fields: set[str]
+) -> list[IntelligenceEvidence]:
+    """Deterministic evidence references backing the contributing signals."""
+
+    wanted = set(fields)
+    records = [
+        item
+        for item in (evidence or [])
+        if getattr(item, "field", "") in wanted
+    ]
+    records.sort(
+        key=lambda item: (
+            getattr(item, "field", ""),
+            getattr(item, "value", ""),
+            getattr(item, "source_artifact", ""),
+            getattr(item, "source_url", "") or "",
+            getattr(item, "source_type", ""),
+            getattr(item, "evidence", ""),
+            getattr(item, "rule_id", ""),
+            getattr(item, "rule_version", ""),
+        )
+    )
+    seen: set[tuple] = set()
+    kept: list[IntelligenceEvidence] = []
+    for item in records:
+        key = (
+            getattr(item, "field", ""),
+            getattr(item, "value", ""),
+            getattr(item, "source_url", None),
+            getattr(item, "evidence", ""),
+            getattr(item, "rule_id", ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(item)
+    return kept
+
+
+def summarize_research_priority(
+    evidence: object,
+    *,
+    vulnerability_types: object = (),
+    cwes: object = (),
+    components: object = (),
+    parameters: object = (),
+) -> ResearchPriority:
+    """Deterministically prioritize research attention from persisted evidence.
+
+    Pure, order-independent, and idempotent: it reads the R15 exploitability
+    projection derived from the same evidence stream plus the R12-R14 list
+    fields. Missing (unknown) values never score and never become negative.
+    The score is clamped to [PRIORITY_MIN_SCORE, PRIORITY_MAX_SCORE].
+    """
+
+    exploitability = summarize_exploitability(evidence)
+    av = exploitability.cvss.attack_vector
+
+    score = 0
+    reasons: list[str] = []
+    negatives: list[str] = []
+    contributing: set[str] = set()
+
+    # --- Exploit availability family (capped) ---
+    exploit_points = 0
+    if exploitability.active_exploitation == "true":
+        exploit_points += PRIORITY_WEIGHTS["active_exploitation"]
+        reasons.append("active exploitation reported")
+        contributing.add("exploitability.active_exploitation")
+    if exploitability.public_poc == "true":
+        exploit_points += PRIORITY_WEIGHTS["public_poc"]
+        reasons.append("public proof-of-concept available")
+        contributing.add("exploitability.public_poc")
+    if exploitability.exploit_available == "true":
+        exploit_points += PRIORITY_WEIGHTS["exploit_available"]
+        reasons.append("exploit availability reported")
+        contributing.add("exploitability.exploit_available")
+    score += min(
+        exploit_points, PRIORITY_FAMILY_CAPS["exploit_availability"]
+    )
+
+    # --- Access family (capped) ---
+    access_points = 0
+    if exploitability.authentication_required == "false":
+        access_points += PRIORITY_WEIGHTS["no_authentication"]
+        reasons.append("no authentication required")
+        contributing.add("exploitability.authentication_required")
+    if exploitability.privilege_required == "false":
+        access_points += PRIORITY_WEIGHTS["no_privileges"]
+        reasons.append("no privileges required")
+        contributing.add("exploitability.privilege_required")
+    if exploitability.user_interaction_required == "false":
+        access_points += PRIORITY_WEIGHTS["no_user_interaction"]
+        reasons.append("no user interaction required")
+        contributing.add("exploitability.user_interaction_required")
+    score += min(access_points, PRIORITY_FAMILY_CAPS["access"])
+
+    # --- Exploit complexity ---
+    if exploitability.exploit_complexity == "low":
+        score += PRIORITY_WEIGHTS["low_complexity"]
+        reasons.append("low exploit complexity")
+        contributing.add("exploitability.exploit_complexity")
+    elif exploitability.exploit_complexity == "high":
+        score += PRIORITY_WEIGHTS["high_complexity"]
+        negatives.append("high exploit complexity")
+        contributing.add("exploitability.exploit_complexity")
+
+    # --- Attack vector ---
+    if av == "N":
+        score += PRIORITY_WEIGHTS["attack_vector_network"]
+        reasons.append("network attack vector")
+        contributing.add("exploitability.cvss.attack_vector")
+    elif av == "A":
+        score += PRIORITY_WEIGHTS["attack_vector_adjacent"]
+        reasons.append("adjacent attack vector")
+        contributing.add("exploitability.cvss.attack_vector")
+    elif av == "L":
+        score += PRIORITY_WEIGHTS["attack_vector_local"]
+        negatives.append("local attack vector")
+        contributing.add("exploitability.cvss.attack_vector")
+    elif av == "P":
+        score += PRIORITY_WEIGHTS["attack_vector_physical"]
+        negatives.append("physical attack vector")
+        contributing.add("exploitability.cvss.attack_vector")
+
+    # --- Research relevance family (capped) ---
+    relevance_points = 0
+    if vulnerability_types:
+        relevance_points += PRIORITY_WEIGHTS["vulnerability_type"]
+        reasons.append("vulnerability type identified")
+        contributing.add("vulnerability_type")
+    if components:
+        relevance_points += PRIORITY_WEIGHTS["affected_component"]
+        reasons.append("affected component identified")
+        contributing.add("component")
+    if parameters:
+        relevance_points += PRIORITY_WEIGHTS["affected_parameter"]
+        reasons.append("affected parameter identified")
+        contributing.add("parameter")
+    if cwes:
+        relevance_points += PRIORITY_WEIGHTS["cwe_mapped"]
+        reasons.append("CWE mapped")
+        contributing.add("cwe")
+    score += min(
+        relevance_points, PRIORITY_FAMILY_CAPS["research_relevance"]
+    )
+
+    # --- Unknown factors (never negative, never false) ---
+    unknown_signals = (
+        (exploitability.active_exploitation, "active exploitation status unknown"),
+        (exploitability.public_poc, "public proof-of-concept status unknown"),
+        (exploitability.exploit_available, "exploit availability status unknown"),
+        (exploitability.authentication_required, "authentication requirement unknown"),
+        (exploitability.privilege_required, "privilege requirement unknown"),
+        (exploitability.user_interaction_required, "user interaction requirement unknown"),
+        (exploitability.exploit_complexity, "exploit complexity unknown"),
+        (av, "attack vector unknown"),
+    )
+    unknown_factors = [
+        label for value, label in unknown_signals if value == "unknown"
+    ]
+
+    score = max(PRIORITY_MIN_SCORE, min(PRIORITY_MAX_SCORE, score))
+
+    sufficient = bool(
+        any(
+            value != "unknown"
+            for value in (
+                exploitability.active_exploitation,
+                exploitability.public_poc,
+                exploitability.exploit_available,
+                exploitability.authentication_required,
+                exploitability.privilege_required,
+                exploitability.user_interaction_required,
+                exploitability.exploit_complexity,
+                av,
+            )
+        )
+        or vulnerability_types
+        or cwes
+        or components
+        or parameters
+    )
+    if not sufficient:
+        return ResearchPriority(
+            priority="INSUFFICIENT_DATA",
+            score=0,
+            reasons=[],
+            negative_factors=[],
+            unknown_factors=unknown_factors,
+            evidence=[],
+        )
+
+    priority = "LOW_RESEARCH"
+    for name, threshold in PRIORITY_THRESHOLDS:
+        if score >= threshold:
+            priority = name
+            break
+
+    return ResearchPriority(
+        priority=priority,
+        score=score,
+        reasons=reasons,
+        negative_factors=negatives,
+        unknown_factors=unknown_factors,
+        evidence=_priority_evidence(evidence, contributing),
+    )
+
+
+def research_priority_projection(
+    evidence: object,
+    *,
+    vulnerability_types: object = (),
+    cwes: object = (),
+    components: object = (),
+    parameters: object = (),
+) -> dict[str, object]:
+    """Serialize the research-priority projection for the knowledge schema."""
+
+    summary = summarize_research_priority(
+        evidence,
+        vulnerability_types=vulnerability_types,
+        cwes=cwes,
+        components=components,
+        parameters=parameters,
+    )
+    return {
+        "priority": summary.priority,
+        "score": summary.score,
+        "reasons": list(summary.reasons),
+        "negative_factors": list(summary.negative_factors),
+        "unknown_factors": list(summary.unknown_factors),
+        "evidence": [
+            _evidence_record_dict(item) for item in summary.evidence
+        ],
+        "rule_version": summary.rule_version,
+    }
+
 
 def _texts_from_research(payload: dict[str, object]) -> dict[str, str]:
     """Collect explicit research text without manufacturing prose."""
@@ -854,6 +1885,18 @@ def _extract_types_from_text(
         source_type=source_type,
     )
 
+    # Stage R15: deterministic exploitability prose rules (same attribution
+    # gating, so a neighboring CVE's claims are never credited here).
+    _extract_exploitability_from_text(
+        result,
+        bounded,
+        attributor,
+        source_artifact=source_artifact,
+        source_url=source_url,
+        source_type=source_type,
+    )
+
+
 def _extract_components_from_text(
     result: ExtractedIntelligence,
     bounded: str,
@@ -1066,6 +2109,9 @@ def extract_research_intelligence(
         source_url=None,
         source_type="research",
     )
+    # Stage R15: explicit structured CVSS metrics and research booleans.
+    _extract_structured_cvss(result, payload_map, source_artifact)
+    _extract_structured_research_flags(result, payload_map, source_artifact)
     if isinstance(payload, dict):
         payload_cve = payload_map.get("cve")
         payload_cve_id = (
@@ -1116,13 +2162,21 @@ def extract_research_intelligence(
     _dedupe_intelligence(result)
     result.parameters = _ordered_unique(result.parameters)
     result.components = _ordered_unique(result.components)
+    # Stage R15: exploitability evidence is deduped and aggregated into the
+    # additive projection. The evidence stream remains the single source of
+    # truth, so the projection is order-independent and recomputable.
+    _dedupe_exploitability_evidence(result)
+    result.exploitability = summarize_exploitability(result.evidence)
     result.evidence.sort(
         key=lambda item: (
             item.field,
             item.value,
-            item.rule_id,
+            item.source_artifact,
             item.source_url or "",
+            item.source_type,
             item.evidence,
+            item.rule_id,
+            item.rule_version,
         )
     )
     return result

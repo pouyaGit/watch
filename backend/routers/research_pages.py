@@ -20,11 +20,18 @@ All pages are behind verify_api_key (same as the existing UI routes).
 Nothing here writes, executes, fetches or renders untrusted HTML.
 """
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
+from ai.knowledge.task_store import (
+    ALLOWED_TRANSITIONS,
+    StaleTaskError,
+    TaskNotFound,
+    TaskStoreError,
+)
+from backend import research_tasks
 from backend import research_data as rdata
 from backend.deps import API_KEY, build_url, verify_api_key
 from backend.research_data import NotFoundError, ResearchDataError, severity_bucket
@@ -81,6 +88,8 @@ def _ctx(request: Request, **extra):
         "dns_url": build_url("/ui/dns-bruteforce/status"),
         "docs_url": build_url("/docs"),
         "research_url": build_url("/ui/research"),
+        "queue_url": build_url("/ui/research/queue"),
+        "research_tasks_url": build_url("/ui/research/tasks"),
         "xss_url": build_url("/ui/xss"),
         "kb_url": build_url("/ui/kb"),
         "reports_url": build_url("/ui/reports"),
@@ -118,6 +127,28 @@ def _error_page(request, active: str, code: int, title: str, hint: str):
         _ctx(request, active=active, page_title="Error", code=code, title=title, hint=hint),
         status_code=code,
     )
+
+
+# Bounded, dependency-free urlencoded form parsing (python-multipart is not
+# installed; Starlette's Request.form() requires it even for urlencoded, so the
+# small workflow forms are parsed directly here with a hard size cap).
+_MAX_FORM_BYTES = 65536
+_MAX_FORM_FIELDS = 50
+
+
+async def _form(request: Request) -> dict:
+    body = await request.body()
+    if len(body) > _MAX_FORM_BYTES:
+        raise HTTPException(status_code=413, detail="form too large")
+    content_type = request.headers.get("content-type", "")
+    if "application/x-www-form-urlencoded" not in content_type:
+        return {}
+    parsed = parse_qs(
+        body.decode("utf-8", errors="ignore"),
+        keep_blank_values=True,
+        max_num_fields=_MAX_FORM_FIELDS,
+    )
+    return {key: (values[0] if values else "") for key, values in parsed.items()}
 
 
 # ------------------------------------------------------------------ research
@@ -169,9 +200,179 @@ def ui_research(
             clear_url=_ui_link("/ui/research"),
             stats=stats,
             overview=overview,
+            intel=rdata.research_intelligence_stats(),
             **_pagination(data["total"], page, limit, "/ui/research",
                           **filters, sort=sort, direction=direction),
         ),
+    )
+
+
+@router.get("/ui/research/queue", response_class=HTMLResponse, dependencies=_UI_AUTH)
+def ui_research_queue(
+    request: Request,
+    cve: Optional[str] = None,
+    page: int = 1,
+    limit: int = PAGE_SIZE_DEFAULT,
+):
+    """Stage R19: ranked R18 research queue (research planning only)."""
+
+    page, limit = _page_params(page, limit)
+    filters = {"cve": cve}
+    try:
+        data = rdata.list_research_queue(
+            limit=limit, offset=(page - 1) * limit, cve=cve
+        )
+    except ResearchDataError:
+        return _error_page(request, "research-queue", 400, "Invalid filter",
+                           "The CVE filter is malformed.")
+    for item in data["items"]:
+        item["cve_url"] = build_url(f"/ui/research/{item['cve']}")
+        item["program_url"] = (
+            build_url(f"/ui/program/{item['program']}")
+            if item.get("program")
+            else None
+        )
+    try:
+        task_by_queue = research_tasks.task_by_queue()
+    except TaskStoreError:
+        task_by_queue = {}
+    return templates.TemplateResponse(
+        request,
+        "research_queue.html",
+        _ctx(
+            request,
+            active="research-queue",
+            page_title="Research Queue",
+            results=data["items"],
+            cve=cve or "",
+            task_by_queue=task_by_queue,
+            **_pagination(data["total"], page, limit, "/ui/research/queue",
+                          **filters),
+        ),
+    )
+
+
+# ------------------------------------------------------------------ tasks
+
+
+def _render_research_task(
+    request: Request, task_id: str, *, error=None, code: int = 200
+):
+    task = research_tasks.get_task(task_id).model_dump(mode="json")
+    task["cve_url"] = build_url(f"/ui/research/{task['cve']}")
+    task["program_url"] = build_url(f"/ui/program/{task['program']}")
+    task["queue_url"] = build_url("/ui/research/queue", cve=task["cve"])
+    return templates.TemplateResponse(
+        request,
+        "research_task_detail.html",
+        _ctx(
+            request,
+            active="research-tasks",
+            page_title=task["task_id"],
+            task=task,
+            error=error,
+            next_statuses=sorted(
+                ALLOWED_TRANSITIONS.get(task["status"], frozenset())
+            ),
+        ),
+        status_code=code,
+    )
+
+
+@router.get("/ui/research/tasks", response_class=HTMLResponse, dependencies=_UI_AUTH)
+def ui_research_tasks(
+    request: Request,
+    status: Optional[str] = None,
+    page: int = 1,
+    limit: int = PAGE_SIZE_DEFAULT,
+):
+    page, limit = _page_params(page, limit)
+    filters = {"status": status}
+    try:
+        data = research_tasks.list_tasks(
+            limit=limit, offset=(page - 1) * limit, status=status
+        )
+    except TaskStoreError:
+        return _error_page(request, "research-tasks", 400, "Invalid filter",
+                           "The status filter is malformed.")
+    for item in data["items"]:
+        item["cve_url"] = build_url(f"/ui/research/{item['cve']}")
+        item["task_url"] = build_url(f"/ui/research/tasks/{item['task_id']}")
+    return templates.TemplateResponse(
+        request,
+        "research_tasks.html",
+        _ctx(
+            request,
+            active="research-tasks",
+            page_title="Research Tasks",
+            results=data["items"],
+            status=status or "",
+            **_pagination(data["total"], page, limit, "/ui/research/tasks",
+                          **filters),
+        ),
+    )
+
+
+@router.get("/ui/research/tasks/{task_id}", response_class=HTMLResponse,
+            dependencies=_UI_AUTH)
+def ui_research_task_detail(request: Request, task_id: str):
+    try:
+        return _render_research_task(request, task_id)
+    except TaskNotFound:
+        return _error_page(request, "research-tasks", 404,
+                           "Research task not found",
+                           "No persisted research task exists for this id.")
+    except TaskStoreError:
+        return _error_page(request, "research-tasks", 400, "Invalid task id",
+                           "Expected an id like rt-0123456789abcdef.")
+
+
+@router.post("/ui/research/tasks", dependencies=_UI_AUTH)
+async def ui_research_task_create(request: Request):
+    fields = await _form(request)
+    try:
+        research_tasks.create_task(
+            cve=fields.get("cve", ""),
+            program=fields.get("program", ""),
+            queue_id=fields.get("queue_id", ""),
+            title=fields.get("title") or None,
+        )
+    except TaskStoreError as exc:
+        return _error_page(request, "research-tasks", 400,
+                           "Unable to start research", str(exc))
+    return RedirectResponse(_ui_link("/ui/research/tasks"), status_code=303)
+
+
+@router.post("/ui/research/tasks/{task_id}", dependencies=_UI_AUTH)
+async def ui_research_task_update(request: Request, task_id: str):
+    fields = await _form(request)
+    try:
+        research_tasks.update_task(
+            task_id,
+            expected_version=fields.get("expected_version"),
+            status=fields.get("status") or None,
+            notes=fields.get("notes", ""),
+            blocker=fields.get("blocker", ""),
+            result_summary=fields.get("result_summary", ""),
+        )
+    except StaleTaskError as exc:
+        try:
+            return _render_research_task(request, task_id, error=str(exc), code=409)
+        except TaskStoreError:
+            return _error_page(request, "research-tasks", 409,
+                               "Stale research task", str(exc))
+    except TaskNotFound:
+        return _error_page(request, "research-tasks", 404,
+                           "Research task not found",
+                           "No persisted research task exists for this id.")
+    except TaskStoreError as exc:
+        try:
+            return _render_research_task(request, task_id, error=str(exc), code=400)
+        except TaskStoreError:
+            return _error_page(request, "research-tasks", 400,
+                               "Invalid update", str(exc))
+    return RedirectResponse(
+        _ui_link(f"/ui/research/tasks/{task_id}"), status_code=303
     )
 
 
@@ -191,10 +392,40 @@ def ui_research_detail(request: Request, cve: str):
     detail["sev_bucket"] = severity_bucket(detail.get("severity"))
     detail["nuclei"] = rdata.nuclei_summary(cve)
     detail["report_url"] = build_url(f"/ui/reports/{cve}") if rdata.has_report(cve) else None
+    try:
+        intel = rdata.cve_intelligence(cve)
+    except ResearchDataError:
+        intel = {"cve": cve, "available": False, "relevance": [], "queue": []}
+    for row in intel.get("relevance") or []:
+        row["program_url"] = (
+            build_url(f"/ui/program/{row['program']}")
+            if row.get("program")
+            else None
+        )
+    for item in intel.get("queue") or []:
+        item["program_url"] = (
+            build_url(f"/ui/program/{item['program']}")
+            if item.get("program")
+            else None
+        )
+    try:
+        tasks = research_tasks.list_tasks(limit=100, cve=cve)["items"]
+    except TaskStoreError:
+        tasks = []
+    task_by_queue = {}
+    for task in tasks:
+        task["task_url"] = build_url(f"/ui/research/tasks/{task['task_id']}")
+        task["program_url"] = (
+            build_url(f"/ui/program/{task['program']}")
+            if task.get("program")
+            else None
+        )
+        task_by_queue[task["queue_id"]] = task["task_id"]
     return templates.TemplateResponse(
         request,
         "research_detail.html",
-        _ctx(request, active="research", page_title=cve, r=detail, cve=cve),
+        _ctx(request, active="research", page_title=cve, r=detail, cve=cve,
+             intel=intel, tasks=tasks, task_by_queue=task_by_queue),
     )
 
 

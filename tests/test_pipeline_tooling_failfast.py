@@ -210,7 +210,11 @@ class TestRunAlterx(unittest.TestCase):
 
         with mock.patch("shutil.which", return_value=None):
             with self.assertRaises(ToolError) as ctx:
-                dynamic.run_alterx(Path("/tmp/known.txt"), Path("/tmp/out.txt"))
+                dynamic.run_alterx(
+                    Path("/tmp/known.txt"),
+                    Path("/tmp/out.txt"),
+                    Path("/tmp/candidates.txt"),
+                )
         self.assertIn("alterx", str(ctx.exception))
 
 

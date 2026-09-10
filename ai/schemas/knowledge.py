@@ -43,6 +43,114 @@ class KnowledgeIntelligenceEvidence(BaseModel):
     rule_version: str
 
 
+class KnowledgeCvssExploitability(BaseModel):
+    """Structured CVSS-derived exploitability metrics (never a score).
+
+    Values are the raw CVSS metric letters, or ``"unknown"`` when no
+    structured/prose vector supplied them. No score is ever computed.
+    """
+
+    attack_vector: str = "unknown"
+    attack_complexity: str = "unknown"
+    attack_requirements: str = "unknown"
+    privileges_required: str = "unknown"
+    user_interaction: str = "unknown"
+    # Which provenance class produced the structured fields.
+    source: str = "unknown"
+
+
+class KnowledgeExploitability(BaseModel):
+    """Stage R15: additive, evidence-backed exploitability projection.
+
+    Every value is a deterministic tri-state (``"true"``/``"false"``/
+    ``"unknown"``) or ``"unknown"``; exploit_complexity additionally allows
+    ``"low"``/``"high"``. ``conflicts`` records claim fields with genuinely
+    conflicting evidence (aggregate value then resolves to ``"unknown"``
+    unless a structured source wins). Never a verdict, never a finding.
+    """
+
+    authentication_required: str = "unknown"
+    privilege_required: str = "unknown"
+    user_interaction_required: str = "unknown"
+    exploit_available: str = "unknown"
+    public_poc: str = "unknown"
+    active_exploitation: str = "unknown"
+    exploit_complexity: str = "unknown"
+
+    cvss: KnowledgeCvssExploitability = Field(
+        default_factory=KnowledgeCvssExploitability
+    )
+    conflicts: list[str] = Field(default_factory=list)
+    exploitability_evidence: list[KnowledgeIntelligenceEvidence] = Field(
+        default_factory=list
+    )
+
+
+class KnowledgeResearchPriority(BaseModel):
+    """Stage R16: additive, explainable research-priority projection.
+
+    ``priority`` is a research-attention class
+    (CRITICAL_RESEARCH/HIGH_RESEARCH/MEDIUM_RESEARCH/LOW_RESEARCH/
+    INSUFFICIENT_DATA) — never "exploitable"/"verified"/"confirmed".
+    ``score`` is a bounded 0-100 sum of explicit rules. Deterministic and
+    backward compatible: every field has a safe default.
+    """
+
+    priority: str = "INSUFFICIENT_DATA"
+    score: int = 0
+    reasons: list[str] = Field(default_factory=list)
+    negative_factors: list[str] = Field(default_factory=list)
+    unknown_factors: list[str] = Field(default_factory=list)
+    evidence: list[KnowledgeIntelligenceEvidence] = Field(default_factory=list)
+    rule_version: str = "r16-1"
+
+
+class KnowledgeAssetRelevance(BaseModel):
+    """Stage R17: additive, explainable asset/program relevance projection.
+
+    ``relevance`` is a research-relevance class
+    (HIGH/MEDIUM/LOW/NONE/UNKNOWN) — never "vulnerable"/"exploitable"/
+    "verified"/"confirmed". ``score`` is a bounded 0-100 sum of explicit
+    deterministic match rules. Defaults to UNKNOWN so pre-R17 documents stay
+    readable.
+    """
+
+    relevance: str = "UNKNOWN"
+    score: int = 0
+    reasons: list[str] = Field(default_factory=list)
+    matched_assets: list[str] = Field(default_factory=list)
+    matched_programs: list[str] = Field(default_factory=list)
+    unknown_factors: list[str] = Field(default_factory=list)
+    evidence: list[KnowledgeIntelligenceEvidence] = Field(default_factory=list)
+    rule_version: str = "r17-1"
+
+
+class KnowledgeResearchQueueItem(BaseModel):
+    """Stage R18: additive deterministic research-queue item (CVE x program).
+
+    RESEARCH ATTENTION ONLY — never a target-vulnerability statement. Combines
+    the R16 research-priority score and the R17 asset-relevance score into a
+    bounded 0-100 ``queue_score`` with explicit reasons, blockers, and unknown
+    factors. Standalone (not attached to a document): one item per
+    deterministic CVE/program candidate.
+    """
+
+    queue_id: str
+    cve: str
+    program: str
+    priority_class: str = "INSUFFICIENT_DATA"
+    priority_score: int = 0
+    relevance: str = "UNKNOWN"
+    relevance_score: int = 0
+    queue_score: int = 0
+    rank: int = 0
+    reasons: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    unknown_factors: list[str] = Field(default_factory=list)
+    evidence: list[KnowledgeIntelligenceEvidence] = Field(default_factory=list)
+    rule_version: str = "r18-1"
+
+
 class KnowledgeProvenance(BaseModel):
     """One source identity and its independently attributable claims."""
 
@@ -165,6 +273,24 @@ class KnowledgeDocument(BaseModel):
     # as a verdict by any agent.
     intelligence_evidence: list[KnowledgeIntelligenceEvidence] = Field(
         default_factory=list
+    )
+
+    # Stage R15: additive deterministic exploitability projection. Defaults
+    # to all-unknown + empty evidence, so pre-R15 documents stay readable.
+    exploitability: KnowledgeExploitability = Field(
+        default_factory=KnowledgeExploitability
+    )
+
+    # Stage R16: additive deterministic research-priority projection.
+    # Defaults to INSUFFICIENT_DATA, so pre-R16 documents stay readable.
+    research_priority: KnowledgeResearchPriority = Field(
+        default_factory=KnowledgeResearchPriority
+    )
+
+    # Stage R17: additive deterministic asset/program relevance projection.
+    # Defaults to UNKNOWN, so pre-R17 documents stay readable.
+    asset_relevance: KnowledgeAssetRelevance = Field(
+        default_factory=KnowledgeAssetRelevance
     )
 
     provenance: list[KnowledgeProvenance] = Field(default_factory=list)

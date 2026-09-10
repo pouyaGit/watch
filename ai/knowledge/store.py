@@ -12,7 +12,9 @@ from ai.schemas.knowledge import (
     KnowledgeAttributedValue,
     KnowledgeConfidenceAttribution,
     KnowledgeDocument,
+    KnowledgeExploitability,
     KnowledgeProvenance,
+    KnowledgeResearchPriority,
     KnowledgeSourceClaims,
 )
 
@@ -694,19 +696,43 @@ class KnowledgeStore:
         if existing is not None:
             provenance = self._merged_provenance(existing, document)
             aggregate = self._build_aggregate(provenance)
+            projection = self._compatibility_projection(
+                existing,
+                provenance,
+                aggregate,
+            )
+            merged_evidence = self._merged_intelligence_evidence(
+                existing,
+                document,
+            )
+            # Stage R16: additive projections are recomputed from the merged
+            # evidence so a re-ingest upgrades documents created before R15/R16
+            # (deterministic function of evidence -> still idempotent).
+            from ai.knowledge.intelligence import (
+                exploitability_projection,
+                research_priority_projection,
+            )
+
+            exploitability = KnowledgeExploitability.model_validate(
+                exploitability_projection(merged_evidence)
+            )
+            research_priority = KnowledgeResearchPriority.model_validate(
+                research_priority_projection(
+                    merged_evidence,
+                    vulnerability_types=projection.get(
+                        "vulnerability_types", []
+                    ),
+                    cwes=projection.get("cwes", []),
+                    components=projection.get("components", []),
+                    parameters=projection.get("parameters", []),
+                )
+            )
             stored = existing.model_copy(
                 update={
-                    **self._compatibility_projection(
-                        existing,
-                        provenance,
-                        aggregate,
-                    ),
-                    "intelligence_evidence": (
-                        self._merged_intelligence_evidence(
-                            existing,
-                            document,
-                        )
-                    ),
+                    **projection,
+                    "intelligence_evidence": merged_evidence,
+                    "exploitability": exploitability,
+                    "research_priority": research_priority,
                     "indexed_at": min(
                         existing.indexed_at,
                         document.indexed_at,

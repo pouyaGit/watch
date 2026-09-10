@@ -42,6 +42,8 @@ def _ctx(request: Request, **extra):
         "dns_url": build_url("/ui/dns-bruteforce/status"),
         "docs_url": build_url("/docs"),
         "research_url": build_url("/ui/research"),
+        "queue_url": build_url("/ui/research/queue"),
+        "research_tasks_url": build_url("/ui/research/tasks"),
         "xss_url": build_url("/ui/xss"),
         "kb_url": build_url("/ui/kb"),
         "reports_url": build_url("/ui/reports"),

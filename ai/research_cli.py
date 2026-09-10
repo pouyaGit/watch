@@ -885,6 +885,284 @@ def run_kb(args: argparse.Namespace) -> int:
     return 2
 
 
+def _document_cve(document) -> str:
+    for tag in document.tags:
+        if tag.startswith("cve:"):
+            return tag[4:]
+    return ""
+
+
+def _priority_for_document(document):
+    """Recompute R16 research priority from a persisted KB document."""
+
+    from ai.knowledge.intelligence import summarize_research_priority
+
+    return summarize_research_priority(
+        document.intelligence_evidence,
+        vulnerability_types=document.vulnerability_types,
+        cwes=document.cwes,
+        components=document.components,
+        parameters=document.parameters,
+    )
+
+
+def run_priority(args: argparse.Namespace, store=None) -> int:
+    """Deterministic, read-only research prioritization (Stage R16).
+
+    Recomputes the priority projection from persisted intelligence for each
+    CVE synthesis document. No writes, no network, no LLM, no execution.
+    """
+
+    store = store if store is not None else _kb_store()
+    try:
+        if getattr(args, "cve", None):
+            documents = store.retrieve(tags=[f"cve:{args.cve}"])
+        else:
+            documents = store.retrieve()
+    except ValueError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    rows = []
+    for document in documents:
+        # A CVE's own priority lives on its synthesis document; per-reference
+        # documents are excluded from the ranking.
+        if not document.source_url.endswith(".cli.json"):
+            continue
+        priority = _priority_for_document(document)
+        rows.append(
+            (
+                _document_cve(document) or document.knowledge_id,
+                document,
+                priority,
+            )
+        )
+    rows.sort(key=lambda row: (-row[2].score, row[0]))
+
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                [
+                    {
+                        "cve": cve,
+                        "knowledge_id": document.knowledge_id,
+                        "priority": priority.priority,
+                        "score": priority.score,
+                        "reasons": list(priority.reasons),
+                        "negative_factors": list(priority.negative_factors),
+                        "unknown_factors": list(priority.unknown_factors),
+                        "rule_version": priority.rule_version,
+                    }
+                    for cve, document, priority in rows
+                ],
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    if not rows:
+        print("PRIORITY: no matching CVE synthesis documents")
+        return 0
+
+    for cve, _document, priority in rows:
+        print(f"{cve} | score={priority.score} | {priority.priority}")
+        if priority.reasons:
+            print(f"    reasons: {'; '.join(priority.reasons)}")
+        if priority.negative_factors:
+            print(f"    negative: {'; '.join(priority.negative_factors)}")
+        if priority.unknown_factors:
+            print(f"    unknown: {'; '.join(priority.unknown_factors)}")
+    print(f"PRIORITY DOCS: {len(rows)}")
+    return 0
+
+
+def _programs_dir_default(programs_dir):
+    if programs_dir is not None:
+        return programs_dir
+    return Path(__file__).resolve().parent.parent / "programs"
+
+
+def run_relevance(
+    args: argparse.Namespace,
+    store=None,
+    research_dir=None,
+    programs_dir=None,
+) -> int:
+    """Deterministic, read-only asset/program relevance (Stage R17).
+
+    Uses the local KnowledgeStore + local research payloads + local program
+    definitions. No writes, no network, no LLM, no active validation.
+    """
+
+    from ai.knowledge.queue import (
+        local_cve_context,
+        relevance_inputs,
+        vulnerability_profile,
+    )
+    from ai.knowledge.relevance import assess_asset_relevance, load_asset_snapshot
+
+    store = store if store is not None else _kb_store()
+    research_dir = research_dir if research_dir is not None else RESEARCH_DIR
+    programs_dir = _programs_dir_default(programs_dir)
+    cve_filter = getattr(args, "cve", None)
+    override_assets = getattr(args, "assets", None)
+
+    try:
+        contexts = local_cve_context(
+            store, research_dir, programs_dir, cve=cve_filter
+        )
+    except ValueError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    rows = []
+    for context in contexts:
+        cve = context["cve"]
+        if cve_filter and cve and cve != cve_filter:
+            continue
+        profile = vulnerability_profile(
+            context["document"], context["payload"], cve
+        )
+        assets = (
+            load_asset_snapshot(override_assets)
+            if override_assets
+            else context["assets"]
+        )
+        relevance = assess_asset_relevance(
+            assets=assets, **relevance_inputs(profile)
+        )
+        rows.append(
+            (cve or context["document"].knowledge_id, context["document"], relevance)
+        )
+    rows.sort(key=lambda row: (-row[2].score, row[0]))
+
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                [
+                    {
+                        "cve": cve,
+                        "priority": document.research_priority.priority,
+                        "relevance": relevance.relevance,
+                        "score": relevance.score,
+                        "reasons": list(relevance.reasons),
+                        "matched_assets": list(relevance.matched_assets),
+                        "matched_programs": list(relevance.matched_programs),
+                        "unknown_factors": list(relevance.unknown_factors),
+                        "rule_version": relevance.rule_version,
+                    }
+                    for cve, document, relevance in rows
+                ],
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    if not rows:
+        print("RELEVANCE: no matching CVE synthesis documents")
+        return 0
+
+    for cve, document, relevance in rows:
+        print(
+            f"{cve} | priority={document.research_priority.priority} | "
+            f"relevance={relevance.relevance} | score={relevance.score}"
+        )
+        if relevance.matched_programs:
+            print(f"    programs: {'; '.join(relevance.matched_programs)}")
+        if relevance.matched_assets:
+            print(f"    assets: {'; '.join(relevance.matched_assets)}")
+        if relevance.reasons:
+            print(f"    reasons: {'; '.join(relevance.reasons)}")
+        if relevance.unknown_factors:
+            print(f"    unknown: {'; '.join(relevance.unknown_factors)}")
+    print(f"RELEVANCE DOCS: {len(rows)}")
+    return 0
+
+
+def run_queue(
+    args: argparse.Namespace,
+    store=None,
+    research_dir=None,
+    programs_dir=None,
+) -> int:
+    """Deterministic, read-only research queue (Stage R18).
+
+    Combines R16 priority with R17 asset relevance per CVE x program. No
+    writes, no network, no LLM, no active validation. Items are research
+    attention only; they never assert a target is vulnerable.
+    """
+
+    from ai.knowledge.queue import build_local_research_queue
+
+    store = store if store is not None else _kb_store()
+    research_dir = research_dir if research_dir is not None else RESEARCH_DIR
+    programs_dir = _programs_dir_default(programs_dir)
+
+    try:
+        items = build_local_research_queue(
+            store, research_dir, programs_dir, cve=getattr(args, "cve", None)
+        )
+    except ValueError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    limit = getattr(args, "limit", None)
+    if limit is not None and limit >= 0:
+        items = items[:limit]
+
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                [
+                    {
+                        "rank": item.rank,
+                        "queue_id": item.queue_id,
+                        "cve": item.cve,
+                        "program": item.program,
+                        "priority_class": item.priority_class,
+                        "priority_score": item.priority_score,
+                        "relevance": item.relevance,
+                        "relevance_score": item.relevance_score,
+                        "queue_score": item.queue_score,
+                        "reasons": list(item.reasons),
+                        "blockers": list(item.blockers),
+                        "unknown_factors": list(item.unknown_factors),
+                        "rule_version": item.rule_version,
+                    }
+                    for item in items
+                ],
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    if not items:
+        print("QUEUE: no deterministic CVE/program candidates")
+        return 0
+
+    for item in items:
+        print(
+            f"#{item.rank}  {item.cve} -> {item.program}  "
+            f"queue_score={item.queue_score}  "
+            f"(priority={item.priority_class}/{item.priority_score}, "
+            f"relevance={item.relevance}/{item.relevance_score})"
+        )
+        if item.reasons:
+            print(f"    reasons: {'; '.join(item.reasons)}")
+        if item.blockers:
+            print(f"    blockers: {'; '.join(item.blockers)}")
+        if item.unknown_factors:
+            print(f"    unknown: {'; '.join(item.unknown_factors)}")
+    print(f"QUEUE ITEMS: {len(items)}")
+    return 0
+
+
 def run_kb_ingest(
     args: argparse.Namespace, store=None, research_dir=None
 ) -> int:
@@ -1083,6 +1361,78 @@ def build_parser() -> argparse.ArgumentParser:
         "--references-only",
         action="store_true",
         help="ingest only the references archive",
+    )
+
+    # Stage R16: deterministic, read-only research prioritization.
+    priority = sub.add_parser(
+        "priority",
+        help="deterministic research prioritization over the local "
+        "KnowledgeStore (read-only, no network, no LLM)",
+    )
+    priority.add_argument(
+        "--cve",
+        default=None,
+        help="rank one CVE, e.g. CVE-2026-1557",
+    )
+    priority.add_argument(
+        "--all",
+        action="store_true",
+        help="rank every CVE synthesis document (default when --cve is absent)",
+    )
+    priority.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the ranking as JSON",
+    )
+
+    # Stage R17: deterministic, read-only asset/program relevance.
+    relevance = sub.add_parser(
+        "relevance",
+        help="deterministic asset/program relevance over the local "
+        "KnowledgeStore (read-only, no network, no LLM, no validation)",
+    )
+    relevance.add_argument(
+        "--cve",
+        default=None,
+        help="evaluate one CVE, e.g. CVE-2026-1557",
+    )
+    relevance.add_argument(
+        "--all",
+        action="store_true",
+        help="evaluate every CVE synthesis document (default when --cve absent)",
+    )
+    relevance.add_argument(
+        "--assets",
+        default=None,
+        help="path to a local asset-snapshot JSON (overrides local programs)",
+    )
+    relevance.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the results as JSON",
+    )
+
+    # Stage R18: deterministic, read-only research queue.
+    queue = sub.add_parser(
+        "queue",
+        help="deterministic research queue combining R16 priority and R17 "
+        "relevance (read-only, no network, no LLM, no validation)",
+    )
+    queue.add_argument(
+        "--cve",
+        default=None,
+        help="limit to one CVE, e.g. CVE-2026-1557",
+    )
+    queue.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="show at most this many ranked items",
+    )
+    queue.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the queue as JSON",
     )
 
     # Stage R13: re-fetch persisted reference archives and update the
@@ -1446,6 +1796,12 @@ def main(argv: list[str] | None = None) -> int:
         return run_batch(args)
     if args.command == "kb":
         return run_kb(args)
+    if args.command == "priority":
+        return run_priority(args)
+    if args.command == "relevance":
+        return run_relevance(args)
+    if args.command == "queue":
+        return run_queue(args)
     if args.command == "report":
         return run_report(args)
     if args.command == "references":

@@ -30,6 +30,7 @@ RESEARCH_DIR = PROJECT_ROOT / "ai_data" / "research"
 REPORTS_DIR = PROJECT_ROOT / "ai_data" / "reports"
 XSS_DIR = PROJECT_ROOT / "ai_data" / "research" / "xss"
 XSS_LLM_DIR = XSS_DIR / "llm"
+PROGRAMS_DIR = PROJECT_ROOT / "programs"
 NUCLEI_DIRS = {
     "generated": PROJECT_ROOT / "ai_data" / "nuclei" / "generated",
     "results": PROJECT_ROOT / "ai_data" / "nuclei" / "results",
@@ -865,3 +866,267 @@ def get_overview() -> dict:
     }
     _OVERVIEW_CACHE["overview"] = (now, value)
     return value
+
+
+# ---------------------------------------------------------------------------
+# Stage R19: R15-R18 research intelligence (queue + per-CVE projections).
+#
+# Read-only views over the local KnowledgeStore + local research payloads +
+# local program definitions, computed by the R16/R17/R18 engines
+# (``ai.knowledge.queue`` / ``ai.knowledge.relevance``). No Mongo, no network,
+# no writes. The whole snapshot is capped and cached for the same 10s TTL as
+# the existing overview so pages/APIs do not re-read the corpus per request.
+# ---------------------------------------------------------------------------
+
+_INTEL_CACHE_TTL = 10.0
+_MAX_LIST_ITEMS = 12
+_MAX_FIELD_CHARS = 240
+
+
+def _clip(value: object, limit: int = _MAX_FIELD_CHARS) -> str:
+    text = str(value if value is not None else "")
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _compact_list(values: object) -> list[str]:
+    items = [str(v) for v in (values or []) if str(v).strip()][:_MAX_LIST_ITEMS]
+    return [_clip(v) for v in items]
+
+
+def _compact_queue_item(item: dict) -> dict:
+    """Bounded queue row for the UI/API (no unbounded evidence bodies)."""
+
+    return {
+        "rank": item.get("rank"),
+        "queue_id": item.get("queue_id"),
+        "cve": item.get("cve"),
+        "program": item.get("program"),
+        "priority_class": item.get("priority_class"),
+        "priority_score": item.get("priority_score"),
+        "relevance": item.get("relevance"),
+        "relevance_score": item.get("relevance_score"),
+        "queue_score": item.get("queue_score"),
+        "reasons": _compact_list(item.get("reasons")),
+        "blockers": _compact_list(item.get("blockers")),
+        "unknown_factors": _compact_list(item.get("unknown_factors")),
+        "rule_version": item.get("rule_version"),
+    }
+
+
+def _research_intelligence_snapshot() -> dict:
+    """Cached deterministic queue + priority counts over local artifacts."""
+
+    now = _time.monotonic()
+    cache_key = (
+        "research_intelligence",
+        str(RESEARCH_DIR),
+        str(PROGRAMS_DIR),
+    )
+    hit = _OVERVIEW_CACHE.get(cache_key)
+    if hit and (now - hit[0]) < _INTEL_CACHE_TTL:
+        return hit[1]
+
+    from ai.knowledge.queue import (
+        build_research_queue,
+        local_cve_context,
+        queue_item_projection,
+        vulnerability_profile,
+    )
+
+    try:
+        contexts = local_cve_context(_kb_store(), RESEARCH_DIR, PROGRAMS_DIR)
+    except (OSError, ValueError):
+        contexts = []
+
+    priority_counts: dict[str, int] = {}
+    cve_priority: dict[str, dict] = {}
+    entries = []
+    for context in contexts:
+        document = context["document"]
+        priority = getattr(document, "research_priority", None)
+        label = getattr(priority, "priority", "INSUFFICIENT_DATA")
+        priority_counts[label] = priority_counts.get(label, 0) + 1
+        cve_priority[context["cve"]] = {
+            "priority": label,
+            "score": int(getattr(priority, "score", 0) or 0),
+        }
+        entries.append(
+            {
+                "vulnerability": vulnerability_profile(
+                    document, context["payload"], context["cve"]
+                ),
+                "assets": context["assets"],
+            }
+        )
+
+    items = build_research_queue(entries)
+    queue = [
+        _compact_queue_item(queue_item_projection(item)) for item in items
+    ]
+    value = {
+        "queue": queue,
+        "queue_items": len(queue),
+        "priority_counts": dict(sorted(priority_counts.items())),
+        "cves": len(contexts),
+        "cves_with_relevance": len({item["cve"] for item in queue}),
+        "cve_priority": dict(sorted(cve_priority.items())),
+    }
+    _OVERVIEW_CACHE[cache_key] = (now, value)
+    return value
+
+
+def research_intelligence_stats() -> dict:
+    """Compact counts for the research overview page."""
+
+    snapshot = _research_intelligence_snapshot()
+    counts = snapshot["priority_counts"]
+    return {
+        "critical": counts.get("CRITICAL_RESEARCH", 0),
+        "high": counts.get("HIGH_RESEARCH", 0),
+        "medium": counts.get("MEDIUM_RESEARCH", 0),
+        "low": counts.get("LOW_RESEARCH", 0),
+        "insufficient": counts.get("INSUFFICIENT_DATA", 0),
+        "queue_items": snapshot["queue_items"],
+        "cves_with_relevance": snapshot["cves_with_relevance"],
+        "cves": snapshot["cves"],
+    }
+
+
+def list_research_queue(
+    limit: int = DEFAULT_LIMIT,
+    offset: int = 0,
+    cve: str | None = None,
+) -> dict:
+    """Capped, deterministic R18 queue slice (rank order preserved)."""
+
+    limit = clamp_limit(limit)
+    offset = max(int(offset or 0), 0)
+    items = _research_intelligence_snapshot()["queue"]
+    if cve:
+        cve = normalize_cve(cve)
+        items = [item for item in items if item["cve"] == cve]
+    total = len(items)
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "items": items[offset : offset + limit],
+    }
+
+
+def cve_intelligence(cve: str) -> dict:
+    """R15-R18 intelligence for one CVE (read-only, fail-soft).
+
+    Never invents data: when the CVE has no local matched KB synthesis
+    document the projection is returned with ``available=False`` and empty
+    sections.
+    """
+
+    from ai.knowledge.queue import (
+        build_research_queue,
+        local_cve_context,
+        queue_item_projection,
+        relevance_inputs,
+        vulnerability_profile,
+    )
+    from ai.knowledge.relevance import assess_asset_relevance
+
+    cve = normalize_cve(cve)
+    now = _time.monotonic()
+    cache_key = ("cve_intel", cve, str(RESEARCH_DIR), str(PROGRAMS_DIR))
+    hit = _OVERVIEW_CACHE.get(cache_key)
+    if hit and (now - hit[0]) < _INTEL_CACHE_TTL:
+        return hit[1]
+    empty = {
+        "cve": cve,
+        "available": False,
+        "knowledge_id": None,
+        "exploitability": {},
+        "cvss": {},
+        "priority": {},
+        "relevance": [],
+        "queue": [],
+        "research_only": True,
+    }
+    try:
+        contexts = local_cve_context(
+            _kb_store(), RESEARCH_DIR, PROGRAMS_DIR, cve=cve
+        )
+    except (OSError, ValueError):
+        contexts = []
+    if not contexts:
+        _OVERVIEW_CACHE[cache_key] = (now, empty)
+        return empty
+
+    context = contexts[0]
+    document = context["document"]
+    profile = vulnerability_profile(document, context["payload"], cve)
+
+    groups: dict[str, list] = {}
+    for record in context["assets"]:
+        if record.program:
+            groups.setdefault(record.program, []).append(record)
+    relevance_rows = []
+    for program in sorted(groups):
+        relevance = assess_asset_relevance(
+            assets=groups[program], **relevance_inputs(profile)
+        )
+        relevance_rows.append(
+            {
+                "program": program,
+                "relevance": relevance.relevance,
+                "score": relevance.score,
+                "reasons": _compact_list(relevance.reasons),
+                "matched_assets": _compact_list(relevance.matched_assets),
+                "unknown_factors": _compact_list(relevance.unknown_factors),
+            }
+        )
+
+    items = build_research_queue(
+        [{"vulnerability": profile, "assets": context["assets"]}]
+    )
+    exploitability = (
+        document.exploitability.model_dump(mode="json")
+        if getattr(document, "exploitability", None) is not None
+        else {}
+    )
+    priority = (
+        document.research_priority.model_dump(mode="json")
+        if getattr(document, "research_priority", None) is not None
+        else {}
+    )
+    result = {
+        "cve": cve,
+        "available": True,
+        "knowledge_id": getattr(document, "knowledge_id", None),
+        "exploitability": exploitability,
+        "cvss": (exploitability or {}).get("cvss", {}),
+        "priority": {
+            **priority,
+            "reasons": _compact_list(priority.get("reasons")),
+            "negative_factors": _compact_list(priority.get("negative_factors")),
+            "unknown_factors": _compact_list(priority.get("unknown_factors")),
+        },
+        "relevance": relevance_rows,
+        "queue": [
+            _compact_queue_item(queue_item_projection(item)) for item in items
+        ],
+        "research_only": True,
+    }
+    _OVERVIEW_CACHE[cache_key] = (now, result)
+    return result
+
+
+def cve_relevance(cve: str) -> dict:
+    """R17 relevance slice for one CVE (read-only)."""
+
+    intelligence = cve_intelligence(cve)
+    return {
+        "cve": intelligence["cve"],
+        "available": intelligence["available"],
+        "relevance": intelligence["relevance"],
+        "rule_version": "r17-1",
+        "research_only": True,
+    }

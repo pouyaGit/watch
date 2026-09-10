@@ -41,6 +41,28 @@
     <div class="stat-value ok">{{ overview.reports | fmtnum }}</div></a>
 </div>
 
+{# R19 research intelligence strip: R16 priority classes + R18 queue #}
+{% if intel %}
+<div class="kpi-grid kpi-5 mb-6">
+  <div class="stat-card">
+    <div class="stat-label">Critical Research</div>
+    <div class="stat-value text-err">{{ intel.critical | fmtnum }}</div></div>
+  <div class="stat-card">
+    <div class="stat-label">High Research</div>
+    <div class="stat-value accent2">{{ intel.high | fmtnum }}</div></div>
+  <div class="stat-card">
+    <div class="stat-label">Medium Research</div>
+    <div class="stat-value">{{ intel.medium | fmtnum }}</div></div>
+  <div class="stat-card">
+    <div class="stat-label">Low Research</div>
+    <div class="stat-value text-muted">{{ intel.low | fmtnum }}</div></div>
+  <a href="{{ queue_url }}" class="stat-card stat-link">
+    <div class="stat-label">Research Queue</div>
+    <div class="stat-value accent2">{{ intel.queue_items | fmtnum }}</div>
+    <div class="stat-sub">{{ intel.cves_with_relevance | fmtnum }} CVE(s) with asset relevance</div></a>
+</div>
+{% endif %}
+
 {# search + filters #}
 <form method="get" action="/ui/research" class="search-bar">
   {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}

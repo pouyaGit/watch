@@ -1,0 +1,121 @@
+{# research_task_detail.html — Stage R20 single research task workflow.
+
+   Researcher-managed notes/blocker/result. Every value is escaped by Jinja
+   autoescaping. DONE means "research completed", never "vulnerability
+   confirmed". Optimistic concurrency via a hidden expected_version. #}
+{% extends "base.html" %}
+{% block title %}{{ task.task_id }} — Research Task — WATCH{% endblock %}
+{% block page %}Research Task{% endblock %}
+
+{% from "macros.html" import research_banner, empty_state with context %}
+
+{% block content %}
+<a class="back-link" href="{{ research_tasks_url }}">← Research Tasks</a>
+
+{{ research_banner("RESEARCH WORKFLOW — NOT VERIFIED") }}
+
+{% if error %}
+<div class="error-panel" role="alert">
+  <div class="error-code">Update rejected</div>
+  <div class="error-title">{{ error }}</div>
+  <div class="error-hint">Reload the page and retry with the current version.</div>
+</div>
+{% endif %}
+
+<div class="panel mb-6">
+  <div class="panel-body rd-head">
+    <div class="rd-head-left">
+      <div class="mono rd-cve">{{ task.cve }} &rarr; {{ task.program }}</div>
+      <div class="detail-title">{{ task.title }}</div>
+    </div>
+    <div class="rd-head-right">
+      <span class="badge-sm">{{ task.status }}</span>
+      <a class="btn-ghost" href="{{ task.cve_url }}">CVE detail →</a>
+      {% if task.program_url %}<a class="btn-ghost" href="{{ task.program_url }}">Program →</a>{% endif %}
+    </div>
+  </div>
+  <div class="panel-body rd-metarow">
+    <span class="dm-item"><span class="dm-k">Task</span>
+      <span class="mono text-xs">{{ task.task_id }}</span></span>
+    <span class="dm-item"><span class="dm-k">Queue</span>
+      <span class="mono text-xs">{{ task.queue_id }}</span></span>
+    <span class="dm-item"><span class="dm-k">Version</span>
+      <span class="mono">{{ task.version }}</span></span>
+    <span class="dm-item"><span class="dm-k">Updated</span>
+      <span class="mono text-xs">{{ (task.updated_at or '')[:19] }}</span></span>
+    {% if task.completed_at %}
+    <span class="dm-item"><span class="dm-k">Completed</span>
+      <span class="mono text-xs">{{ (task.completed_at or '')[:19] }}</span></span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="detail-grid">
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Research Task</h2><span class="badge-sm">researcher-managed</span></div>
+    <div class="panel-body">
+      <form method="post" action="/ui/research/tasks/{{ task.task_id }}">
+        {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+        <input type="hidden" name="expected_version" value="{{ task.version }}">
+        <label class="section-label" for="status">Status</label>
+        <select id="status" name="status" class="filter-select">
+          <option value="{{ task.status }}" selected>{{ task.status }} (current)</option>
+          {% for s in next_statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+        </select>
+        <label class="section-label mt-3" for="notes">Notes</label>
+        <textarea id="notes" name="notes" class="search-input" rows="5" style="width:100%">{{ task.notes }}</textarea>
+        <label class="section-label mt-3" for="blocker">Blocker (required for BLOCKED)</label>
+        <input id="blocker" type="text" name="blocker" class="search-input" style="width:100%" value="{{ task.blocker }}">
+        <label class="section-label mt-3" for="result_summary">Result summary (required for DONE)</label>
+        <textarea id="result_summary" name="result_summary" class="search-input" rows="3" style="width:100%">{{ task.result_summary }}</textarea>
+        <div class="mt-3"><button type="submit" class="btn-primary">Update research task</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Status</h2></div>
+    <div class="panel-body">
+      <table class="kv">
+        <tr><th>Status</th><td><span class="badge-sm">{{ task.status }}</span></td></tr>
+        <tr><th>Blocked by</th><td>{% if task.blocker %}{{ task.blocker }}{% else %}<span class="text-muted">—</span>{% endif %}</td></tr>
+        <tr><th>Result</th><td>{% if task.result_summary %}{{ task.result_summary }}{% else %}<span class="text-muted">—</span>{% endif %}</td></tr>
+      </table>
+      <p class="text-xs text-muted mt-3">DONE means the researcher finished investigating — not that a vulnerability is confirmed.</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>References</h2></div>
+    <div class="panel-body">
+      {% if task.references %}
+      <ul class="plain ref-list">{% for ref in task.references %}<li class="mono text-xs">{{ ref }}</li>{% endfor %}</ul>
+      {% else %}
+        {{ empty_state("No references recorded.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Audit History</h2><span class="badge-sm">bounded</span></div>
+    <div class="panel-body">
+      {% if task.history %}
+      <ul class="plain">
+        {% for h in task.history %}
+        <li class="text-sm mono">{{ h.at }} · {{ h.previous_status or '—' }} → {{ h.new_status }} · v{{ h.version }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+        {{ empty_state("No audit history.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+</div>
+
+<p class="disclaimer-foot">
+  Research workflow only. DONE means "research completed", never "vulnerability
+  confirmed". No live validation, no target contact, no execution.
+</p>
+{% endblock %}
