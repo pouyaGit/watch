@@ -94,6 +94,7 @@ def _ctx(request: Request, **extra):
         "research_tasks_url": build_url("/ui/research/tasks"),
         "leads_url": build_url("/ui/research/leads"),
         "plans_url": build_url("/ui/research/plans"),
+        "agent_url": build_url("/ui/research/agent"),
         "xss_url": build_url("/ui/xss"),
         "kb_url": build_url("/ui/kb"),
         "reports_url": build_url("/ui/reports"),
@@ -550,6 +551,67 @@ def ui_research_plan_detail(request: Request, plan_id: str):
         request,
         "research_plan_detail.html",
         _ctx(request, active="research-plans", page_title=plan["plan_id"], plan=plan),
+    )
+
+
+@router.get("/ui/research/agent", response_class=HTMLResponse, dependencies=_UI_AUTH)
+def ui_research_agent(request: Request):
+    """Stage R23: autonomous research agent status + runs (read-only)."""
+
+    from backend import research_agent as ra
+
+    status = ra.agent_status()
+    runs = ra.list_runs(limit=50)
+    for run in runs:
+        run["run_url"] = build_url(f"/ui/research/agent/{run['run_id']}")
+    results = ra.list_results(limit=50)
+    for result in results:
+        result["cve_url"] = build_url(f"/ui/research/{result.get('cve_id')}")
+        result["run_url"] = build_url(
+            f"/ui/research/agent/{result.get('run_id')}"
+        )
+    return templates.TemplateResponse(
+        request,
+        "research_agent.html",
+        _ctx(
+            request,
+            active="research-agent",
+            page_title="Research Agent",
+            status=status,
+            runs=runs,
+            results=results,
+        ),
+    )
+
+
+@router.get("/ui/research/agent/{run_id}", response_class=HTMLResponse,
+            dependencies=_UI_AUTH)
+def ui_research_agent_run(request: Request, run_id: str):
+    """Stage R23: one research agent run (read-only)."""
+
+    from backend import research_agent as ra
+
+    run = ra.get_run(run_id)
+    if run is None:
+        return _error_page(request, "research-agent", 404,
+                           "Research agent run not found",
+                           "No stored research agent run exists for this id.")
+    results = [
+        item for item in ra.list_results(limit=1000)
+        if item.get("run_id") == run_id
+    ]
+    for item in results:
+        item["cve_url"] = build_url(f"/ui/research/{item.get('cve_id')}")
+    return templates.TemplateResponse(
+        request,
+        "research_agent_run.html",
+        _ctx(
+            request,
+            active="research-agent",
+            page_title=run_id,
+            run=run,
+            results=results,
+        ),
     )
 
 

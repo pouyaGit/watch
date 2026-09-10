@@ -1338,6 +1338,208 @@ def run_kb_ingest(
 
 
 # ---------------------------------------------------------------------------
+# Stage R23: autonomous research agent CLI.
+#
+# Research-only, bounded, fail-soft. `dry-run` performs zero network and zero
+# LLM activity; `run` enforces the scheduler window/enabled policy unless
+# --force is given. No target interaction, no Nuclei, no findings.
+# ---------------------------------------------------------------------------
+
+
+def _build_llm_provider():
+    """Build the existing OpenRouter provider (never a new provider).
+
+    Honors WATCH_LLM_PROVIDER / WATCH_LLM_MODEL when present while leaving the
+    existing OPENROUTER_* configuration authoritative (the provider falls back
+    to OPENROUTER_MODEL/OPENROUTER_API_KEY when WATCH_LLM_MODEL is unset).
+    """
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    provider = (
+        os.getenv("WATCH_LLM_PROVIDER", "").strip()
+        or os.getenv("AI_PROVIDER", "").strip()
+        or "openrouter"
+    )
+    if provider != "openrouter":
+        raise RuntimeError(
+            f"unsupported WATCH_LLM_PROVIDER: {provider!r} "
+            "(only the existing 'openrouter' provider is supported)"
+        )
+    from ai.llm.openrouter import OpenRouterProvider
+
+    model = os.getenv("WATCH_LLM_MODEL", "").strip() or None
+    return OpenRouterProvider(model=model) if model else OpenRouterProvider()
+
+
+def _build_research_agent(config):
+    from ai.research_agent.agent import ResearchAgent
+    from ai.research_agent.sources import ResearchSourceCollector
+
+    sources = ResearchSourceCollector(
+        research_dir=config.research_dir,
+        max_sources=config.max_sources,
+    )
+    llm = _build_llm_provider() if config.llm else None
+    kb_store = None
+    if config.kb_ingest:
+        from ai.knowledge.store import KnowledgeStore
+
+        kb_store = KnowledgeStore()
+    return ResearchAgent(
+        sources=sources,
+        llm=llm,
+        llm_enabled=config.llm,
+        network_enabled=config.network,
+        agent_dir=config.agent_dir,
+        research_dir=config.research_dir,
+        kb_ingest=config.kb_ingest,
+        kb_store=kb_store,
+    )
+
+
+def run_agent_status(args: argparse.Namespace) -> int:
+    from ai.research_agent.scheduler import ResearchScheduler, SchedulerConfig
+
+    config = SchedulerConfig.from_env()
+    scheduler = ResearchScheduler(config)
+    info = scheduler.status()
+    if getattr(args, "json", False):
+        print(json.dumps(info, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    print("Research Agent")
+    print("==============")
+    print()
+    print(f"Enabled: {str(info['enabled']).lower()}")
+    print(f"Window: {info['window']}")
+    print(f"In window: {str(info['in_window']).lower()}")
+    print(f"Max runtime: {info['max_minutes']}m")
+    print(f"Max plans: {info['max_plans']}")
+    print(f"Network: {'enabled' if info['network'] else 'disabled'}")
+    print(f"LLM: {'enabled' if info['llm'] else 'disabled'}")
+    print(f"Next run: {info['next_run']}")
+    print()
+    print(f"Eligible plans ({info['eligible_count']}):")
+    for index, plan in enumerate(info["eligible_plans"], start=1):
+        print(f"  #{index} {plan.get('cve_id')} -> {plan.get('program')}")
+    return 0
+
+
+def run_agent_dry_run(args: argparse.Namespace) -> int:
+    """Preview eligible plans with ZERO network and ZERO LLM activity."""
+    from ai.research_agent.scheduler import ResearchScheduler, SchedulerConfig
+
+    config = SchedulerConfig.from_env()
+    # No agent is constructed: no provider, no fetcher.
+    scheduler = ResearchScheduler(config)
+    preview = scheduler.preview(
+        plan_id=getattr(args, "plan", None),
+        limit=getattr(args, "limit", None),
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(preview, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    print("Research Agent")
+    print("==============")
+    print()
+    print(f"Enabled: {str(preview['enabled']).lower()}")
+    print(f"Window: {preview['window']}")
+    print(f"Network: {'enabled' if preview['network'] else 'disabled'}")
+    print(f"LLM: {'enabled' if preview['llm'] else 'disabled'}")
+    print()
+    print("Eligible plans:")
+    if not preview["plans"]:
+        print("  (none)")
+    for index, plan in enumerate(preview["plans"], start=1):
+        print(f"  #{index} {plan.get('cve_id')} -> {plan.get('program')}")
+    print()
+    print("MODE: dry-run (no network, no LLM, no writes)")
+    return 0
+
+
+def run_agent_run(args: argparse.Namespace) -> int:
+    from ai.research_agent.scheduler import ResearchScheduler, SchedulerConfig
+
+    config = SchedulerConfig.from_env()
+    network = None
+    if getattr(args, "no_network", False):
+        network = False
+    elif getattr(args, "network", False):
+        network = True
+
+    scheduler = ResearchScheduler(config, agent=_build_research_agent(config))
+    record = scheduler.run_once(
+        plan_id=getattr(args, "plan", None),
+        limit=getattr(args, "limit", None),
+        force=bool(getattr(args, "force", False)),
+        dry_run=False,
+        network=network,
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    print(f"RUN: {record['run_id']}")
+    print(f"STATUS: {record['status']}")
+    if record.get("skipped"):
+        print(f"SKIPPED: {record['skipped']}")
+    print(f"Plans selected: {record['plans_selected']}")
+    print(f"Plans processed: {record['plans_processed']}")
+    for item in record.get("results", []):
+        print(
+            f"  {item.get('plan_id')} {item.get('cve_id')} -> "
+            f"{item.get('program')} [{item.get('status')}] "
+            f"evidence={item.get('evidence')} sources={item.get('sources')}"
+        )
+    for failure in record.get("failures", []):
+        print(f"  failure: {failure}")
+    print("MODE: research-only (no target interaction, no Nuclei, no findings)")
+    return 0
+
+
+def run_agent_report(args: argparse.Namespace) -> int:
+    from ai.research_agent import storage
+    from ai.research_agent.scheduler import SchedulerConfig
+
+    config = SchedulerConfig.from_env()
+    results = storage.list_results(base=config.agent_dir)
+    plan_id = getattr(args, "plan", None)
+    if plan_id:
+        results = [r for r in results if r.get("plan_id") == plan_id]
+    if getattr(args, "json", False):
+        print(json.dumps(results, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if not results:
+        print("RESEARCH AGENT RESULTS: none")
+        return 0
+    print("Research Agent Results")
+    print("======================")
+    for result in results:
+        print(
+            f"{result.get('result_id')} | {result.get('cve_id')} -> "
+            f"{result.get('program')} | {result.get('status')} | "
+            f"evidence={len(result.get('evidence') or [])} "
+            f"sources={len(result.get('sources') or [])}"
+        )
+        if result.get("report_path"):
+            print(f"  report: {result['report_path']}")
+    print(f"RESULTS: {len(results)}")
+    return 0
+
+
+def run_agent(args: argparse.Namespace) -> int:
+    command = getattr(args, "agent_command", None)
+    if command == "status":
+        return run_agent_status(args)
+    if command == "run":
+        return run_agent_run(args)
+    if command == "dry-run":
+        return run_agent_dry_run(args)
+    if command == "report":
+        return run_agent_report(args)
+    return 2
+
+
+# ---------------------------------------------------------------------------
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1604,6 +1806,76 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="emit the leads as JSON",
+    )
+
+    # Stage R23: autonomous research scheduler/agent (research-only).
+    agent = sub.add_parser(
+        "agent",
+        help="autonomous research agent over R22 plans (bounded, "
+        "research-only; disabled by default)",
+    )
+    agent_sub = agent.add_subparsers(dest="agent_command", required=True)
+
+    agent_status = agent_sub.add_parser(
+        "status", help="show scheduler configuration and eligible plans"
+    )
+    agent_status.add_argument(
+        "--json", action="store_true", help="emit status as JSON"
+    )
+
+    agent_run = agent_sub.add_parser(
+        "run",
+        help="run one bounded research pass (respects enabled/window "
+        "unless --force)",
+    )
+    agent_run.add_argument(
+        "--plan", default=None, help="run only this plan id, e.g. r22-..."
+    )
+    agent_run.add_argument(
+        "--limit", type=int, default=None, help="process at most this many plans"
+    )
+    agent_run.add_argument(
+        "--force",
+        action="store_true",
+        help="ignore disabled/window policy for a manual run",
+    )
+    agent_run.add_argument(
+        "--network",
+        action="store_true",
+        help="enable bounded public research fetching for this run",
+    )
+    agent_run.add_argument(
+        "--no-network",
+        action="store_true",
+        help="force offline for this run (overrides --network)",
+    )
+    agent_run.add_argument(
+        "--json", action="store_true", help="emit the run record as JSON"
+    )
+
+    agent_dry = agent_sub.add_parser(
+        "dry-run",
+        help="preview eligible plans with zero network/LLM activity",
+    )
+    agent_dry.add_argument(
+        "--plan", default=None, help="preview only this plan id"
+    )
+    agent_dry.add_argument(
+        "--limit", type=int, default=None, help="preview at most this many plans"
+    )
+    agent_dry.add_argument(
+        "--json", action="store_true", help="emit the preview as JSON"
+    )
+
+    agent_report = agent_sub.add_parser(
+        "report",
+        help="show stored research results (read-only)",
+    )
+    agent_report.add_argument(
+        "--plan", default=None, help="filter to one plan id"
+    )
+    agent_report.add_argument(
+        "--json", action="store_true", help="emit results as JSON"
     )
 
     # Stage R13: re-fetch persisted reference archives and update the
@@ -1985,6 +2257,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_queue(args)
     if args.command == "leads":
         return run_leads(args)
+    if args.command == "agent":
+        return run_agent(args)
     if args.command == "report":
         return run_report(args)
     if args.command == "references":

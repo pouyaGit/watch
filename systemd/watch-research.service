@@ -1,0 +1,58 @@
+[Unit]
+Description=Watch Autonomous Research Agent (research-only, bounded)
+Documentation=file:/opt/watch/agent-reports/stage-r23-autonomous-research-scheduler.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pouya_behnia
+WorkingDirectory=/opt/watch
+EnvironmentFile=/opt/watch/.env
+
+# Private runtime dir for the lock files (owned by the service user).
+RuntimeDirectory=watch-research
+RuntimeDirectoryMode=0750
+
+# Explicit PATH (no reliance on the systemd default PATH).
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Scheduler policy supplied by the service (never by code defaults alone):
+# the scheduler is disabled by default, so an activated timer must opt in
+# explicitly. LLM stays at its safe default (disabled, deterministic/offline
+# mode); enable WATCH_RESEARCH_LLM=true only as a deliberate follow-up once
+# autonomous LLM spend is approved (OPENROUTER_* creds already in .env).
+Environment="WATCH_RESEARCH_ENABLED=true"
+Environment="WATCH_RESEARCH_NETWORK=true"
+
+# The application ALSO enforces an flock(2) lock; this outer flock prevents
+# two service instances from starting at once without conflicting with the
+# app lock (different path).
+Environment="WATCH_RESEARCH_LOCK=/run/watch-research/research.lock"
+ExecStart=/usr/bin/flock -n /run/watch-research/service.lock \
+    /opt/watch/venv/bin/python3 -m ai.research_cli agent run
+
+# Hard upper bound (matches the conservative 300m budget + startup margin).
+# Type=oneshot => bound the start phase (RuntimeMaxSec has no effect here).
+TimeoutStartSec=330min
+TimeoutStopSec=30s
+KillMode=control-group
+
+# Least privilege: no root, no production service control, no Docker socket,
+# no SSH keys, no credentials beyond the research provider config in .env.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/opt/watch/ai_data /opt/watch/logs /run/watch-research
+
+# Conservative resource bounds on a 4 vCPU / 12GB VM.
+MemoryMax=1G
+CPUQuota=150%
+
+[Install]
+WantedBy=multi-user.target

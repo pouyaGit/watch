@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Watch Autonomous Research Agent hourly (exact window enforced by the service)
+Documentation=file:/opt/watch/agent-reports/stage-r23-autonomous-research-scheduler.md
+
+[Timer]
+Unit=watch-research.service
+OnCalendar=hourly
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

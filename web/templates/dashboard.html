@@ -183,6 +183,38 @@
 </div>
 {% endif %}
 
+{# ----- RESEARCH AGENT (R23, read-only) ----- #}
+<div class="section-label">Research Agent
+  <span class="rl-note">autonomous research window — never target interaction</span>
+  <a class="badge-link" style="float:right;margin-top:-4px" href="{{ agent_url }}">Open →</a>
+</div>
+{% if agent_summary %}
+<div class="kpi-grid kpi-4 kpi-research mb-6">
+  <a href="{{ agent_url }}" class="stat-card stat-link">
+    <div class="stat-label">Enabled</div>
+    <div class="stat-value {{ 'ok' if agent_summary.enabled else '' }}">{{ 'YES' if agent_summary.enabled else 'NO' }}</div>
+    <div class="stat-sub">{{ agent_summary.window }}</div></a>
+  <a href="{{ agent_url }}" class="stat-card stat-link">
+    <div class="stat-label">In window</div>
+    <div class="stat-value">{{ 'YES' if agent_summary.in_window else 'NO' }}</div>
+    <div class="stat-sub">next: {{ agent_summary.next_run or '—' }}</div></a>
+  <a href="{{ agent_url }}" class="stat-card stat-link">
+    <div class="stat-label">Last run</div>
+    <div class="stat-value">{{ agent_summary.last_run.status if agent_summary.last_run else 'NEVER' }}</div>
+    <div class="stat-sub">{% if agent_summary.last_run %}{{ agent_summary.last_run.plans_processed | fmtnum }} plan(s) processed{% else %}no runs yet{% endif %}</div></a>
+  <a href="{{ agent_url }}" class="stat-card stat-link">
+    <div class="stat-label">Research results</div>
+    <div class="stat-value accent2">{{ agent_summary.results.total | fmtnum }}</div>
+    <div class="stat-sub">eligible plans: {{ agent_summary.eligible_count | fmtnum }}</div></a>
+</div>
+{% else %}
+<div class="panel mb-6">
+  <div class="panel-body">
+    {{ empty_state("Research agent status unavailable", "The scheduler/result store is not readable; the rest of the dashboard is unaffected.", compact=True) }}
+  </div>
+</div>
+{% endif %}
+
 {# ----- SYSTEM HEALTH (secondary, htmx live) ----- #}
 <div class="section-label">System Health</div>
 <div class="kpi-grid kpi-4 kpi-secondary mb-6"

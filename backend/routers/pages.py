@@ -60,6 +60,7 @@ def _ctx(request: Request, **extra):
         "reports_url": build_url("/ui/reports"),
         "leads_url":   build_url("/ui/research/leads"),
         "plans_url":   build_url("/ui/research/plans"),
+        "agent_url":   build_url("/ui/research/agent"),
         "stats_link":  build_url("/api/stats/by-program"),
         "fresh_link":  build_url("/ui/http/fresh"),
     }
@@ -121,6 +122,11 @@ def dashboard(request: Request):
         plans_summary = research_execution.plans_summary()
     except Exception:
         plans_summary = None
+    try:
+        from backend import research_agent as research_agent_view
+        agent_summary = research_agent_view.agent_status()
+    except Exception:  # never let the recon dashboard fail on research agent
+        agent_summary = None
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -139,6 +145,7 @@ def dashboard(request: Request):
             task_summary=task_summary,
             leads_summary=leads_summary,
             plans_summary=plans_summary,
+            agent_summary=agent_summary,
         ),
     )
 

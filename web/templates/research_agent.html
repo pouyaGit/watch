@@ -1,0 +1,103 @@
+{# research_agent.html — Stage R23 autonomous research agent (read-only).
+   Research-only, bounded. Never target interaction. #}
+{% extends "base.html" %}
+{% block title %}Research Agent — WATCH{% endblock %}
+{% block page %}Research Agent{% endblock %}
+
+{% from "macros.html" import research_banner, empty_state with context %}
+
+{% block content %}
+<a class="back-link" href="{{ research_url }}">← Research / CVEs</a>
+
+<div class="page-head">
+  <h1 class="page-title">Research Agent</h1>
+  <p class="page-sub">Time-bounded autonomous research over R22 execution plans. Public research only — no target interaction, no active validation.</p>
+</div>
+
+{{ research_banner("RESEARCH ONLY — NOT A PRODUCTION FINDING") }}
+
+<div class="kpi-grid kpi-4 mb-6">
+  <div class="stat-card"><div class="stat-label">Enabled</div>
+    <div class="stat-value {{ 'ok' if status.enabled }}">{{ 'YES' if status.enabled else 'NO' }}</div>
+    <div class="stat-sub">{{ status.window }}</div></div>
+  <div class="stat-card"><div class="stat-label">In window</div>
+    <div class="stat-value">{{ 'YES' if status.in_window else 'NO' }}</div>
+    <div class="stat-sub">next: {{ status.next_run or '—' }}</div></div>
+  <div class="stat-card"><div class="stat-label">Research results</div>
+    <div class="stat-value accent2">{{ status.results.total | fmtnum }}</div>
+    <div class="stat-sub">eligible plans: {{ status.eligible_count | fmtnum }}</div></div>
+  <div class="stat-card"><div class="stat-label">Last run</div>
+    <div class="stat-value">{{ status.last_run.status if status.last_run else 'NEVER' }}</div>
+    <div class="stat-sub">{% if status.last_run %}{{ status.last_run.plans_processed | fmtnum }} plan(s){% else %}no runs yet{% endif %}</div></div>
+</div>
+
+<div class="panel mb-6">
+  <div class="panel-head"><h2>Window &amp; bounds</h2><span class="badge-sm">conservative defaults</span></div>
+  <div class="panel-body">
+    <table class="kv">
+      <tr><th>Timezone</th><td class="mono">{{ status.timezone }}</td></tr>
+      <tr><th>Window</th><td class="mono">{{ status.window }}</td></tr>
+      <tr><th>Max runtime</th><td class="mono">{{ status.max_minutes }}m</td></tr>
+      <tr><th>Max plans</th><td class="mono">{{ status.max_plans }}</td></tr>
+      <tr><th>Network</th><td class="mono">{{ 'enabled' if status.network else 'disabled' }}</td></tr>
+      <tr><th>LLM</th><td class="mono">{{ 'enabled' if status.llm else 'disabled' }}</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="panel mb-6">
+  <div class="panel-head"><h2>Runs</h2></div>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr><th>Run</th><th>Started</th><th>Status</th><th>Selected</th><th>Processed</th><th>Failures</th></tr></thead>
+      <tbody>
+        {% for run in runs %}
+        <tr>
+          <td><a class="badge-link" href="{{ run.run_url }}">{{ run.run_id }}</a></td>
+          <td class="text-xs mono">{{ run.started_at }}</td>
+          <td><span class="badge-sm">{{ run.status }}</span></td>
+          <td class="num">{{ run.plans_selected | fmtnum }}</td>
+          <td class="num">{{ run.plans_processed | fmtnum }}</td>
+          <td class="num">{{ (run.failures | length) if run.failures else 0 }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty">
+          No research agent runs yet.
+          <div class="empty-hint">The agent is disabled by default; runs appear once the timer fires inside the configured window.</div>
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel mb-6">
+  <div class="panel-head"><h2>Research results</h2><span class="badge-sm">research only</span></div>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr><th>Result</th><th>CVE</th><th>Program</th><th>Status</th><th>Evidence</th><th>Sources</th><th>Report</th></tr></thead>
+      <tbody>
+        {% for result in results %}
+        <tr>
+          <td class="mono text-xs">{{ result.result_id }}</td>
+          <td><a class="mono cve-link" href="{{ result.cve_url }}">{{ result.cve_id }}</a></td>
+          <td class="mono">{{ result.program }}</td>
+          <td><span class="badge-sm">{{ result.status }}</span></td>
+          <td class="num">{{ (result.evidence | length) if result.evidence else 0 }}</td>
+          <td class="num">{{ (result.sources | length) if result.sources else 0 }}</td>
+          <td class="text-xs mono">{{ result.report_path or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="empty">No research results stored.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="disclaimer-foot">
+  The research agent consults public research sources only. It never contacts,
+  scans, or validates the target/program; it never runs Nuclei; and a result is
+  never a confirmed vulnerability or production finding.
+</p>
+{% endblock %}

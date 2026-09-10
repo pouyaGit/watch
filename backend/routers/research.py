@@ -272,6 +272,22 @@ def api_research_plan_detail(plan_id: str):
         raise _bad(exc)
 
 
+@router.get("/api/research/agent/status", dependencies=_AUTH)
+def api_research_agent_status():
+    """Stage R23: read-only autonomous research agent status."""
+    from backend import research_agent as ra
+
+    return ra.agent_status()
+
+
+@router.get("/api/research/agent/runs", dependencies=_AUTH)
+def api_research_agent_runs(limit: int = Query(default=50)):
+    """Stage R23: read-only autonomous research agent runs."""
+    from backend import research_agent as ra
+
+    return {"items": ra.list_runs(limit=limit), "total": len(ra.list_runs(limit=1000))}
+
+
 @router.get("/api/research/{cve}", dependencies=_AUTH)
 def api_research_detail(cve: str):
     try:

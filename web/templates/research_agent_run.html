@@ -1,0 +1,78 @@
+{# research_agent_run.html — Stage R23 one research agent run (read-only). #}
+{% extends "base.html" %}
+{% block title %}{{ run.run_id }} — Research Agent Run — WATCH{% endblock %}
+{% block page %}Research Agent Run{% endblock %}
+
+{% from "macros.html" import research_banner, empty_state with context %}
+
+{% block content %}
+<a class="back-link" href="{{ agent_url }}">← Research Agent</a>
+
+{{ research_banner("RESEARCH ONLY — NOT A PRODUCTION FINDING") }}
+
+<div class="panel mb-6">
+  <div class="panel-body rd-head">
+    <div class="rd-head-left">
+      <div class="mono">{{ run.run_id }}</div>
+      <div class="detail-title"><span class="badge-sm">{{ run.status }}</span> {{ run.window }}</div>
+    </div>
+    <div class="rd-head-right">
+      <span class="badge-sm">{{ 'dry-run' if run.dry_run else 'live' }}</span>
+      {% if run.forced %}<span class="badge-sm">forced</span>{% endif %}
+      {% if run.skipped %}<span class="badge-sm">skipped: {{ run.skipped }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="panel-body rd-metarow">
+    <span class="dm-item"><span class="dm-k">Started</span>
+      <span class="mono text-xs">{{ run.started_at }}</span></span>
+    <span class="dm-item"><span class="dm-k">Completed</span>
+      <span class="mono text-xs">{{ run.completed_at }}</span></span>
+    <span class="dm-item"><span class="dm-k">Plans selected</span>
+      <span class="mono text-xs">{{ run.plans_selected }}</span></span>
+    <span class="dm-item"><span class="dm-k">Plans processed</span>
+      <span class="mono text-xs">{{ run.plans_processed }}</span></span>
+    <span class="dm-item"><span class="dm-k">Network</span>
+      <span class="mono text-xs">{{ 'on' if run.network else 'off' }}</span></span>
+  </div>
+</div>
+
+<div class="panel mb-6">
+  <div class="panel-head"><h2>Run results</h2></div>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr><th>Plan</th><th>Result</th><th>CVE</th><th>Program</th><th>Status</th><th>Evidence</th><th>Sources</th></tr></thead>
+      <tbody>
+        {% for result in results %}
+        <tr>
+          <td class="mono text-xs">{{ result.plan_id }}</td>
+          <td class="mono text-xs">{{ result.result_id }}</td>
+          <td><a class="mono cve-link" href="{{ result.cve_url }}">{{ result.cve_id }}</a></td>
+          <td class="mono">{{ result.program }}</td>
+          <td><span class="badge-sm">{{ result.status }}</span></td>
+          <td class="num">{{ (result.evidence | length) if result.evidence else 0 }}</td>
+          <td class="num">{{ (result.sources | length) if result.sources else 0 }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="empty">No results were stored for this run.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if run.failures %}
+<div class="panel mb-6">
+  <div class="panel-head"><h2>Failures</h2><span class="badge-sm">fail-soft</span></div>
+  <div class="panel-body">
+    <ul class="plain">
+      {% for failure in run.failures %}<li class="text-sm text-muted">— {{ failure }}</li>{% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
+
+<p class="disclaimer-foot">
+  Research planning only. This run never contacted a target, never ran Nuclei,
+  and never produced a production finding.
+</p>
+{% endblock %}
