@@ -581,7 +581,10 @@ class IntelligenceIngestionTests(unittest.TestCase):
             document = self.fx.store.get_by_id(kid)
             self.assertEqual(document.xss_types, [])
             self.assertEqual(document.contexts, [])
-            self.assertEqual(document.parameters, [])
+            # Stage R14: "Unsanitized src parameter." is an explicit
+            # parameter claim; it is XSS-independent intelligence and
+            # does not imply any XSS dimension.
+            self.assertEqual(document.parameters, ["src"])
             self.assertEqual(document.cwes, [])
             # Path Traversal (CWE-22) is explicit in the synthesis text.
             self.assertIn(

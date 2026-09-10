@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 
-INTELLIGENCE_RULE_VERSION = "r12-2"
+INTELLIGENCE_RULE_VERSION = "r14-1"
 
 # Keep both input scanning and verbatim snippets bounded. These caps are
 # time/space guards, not semantic truncation points in the rules.
@@ -39,7 +39,8 @@ _NON_PARAMETER_NAMES = frozenset(
         "rendered", "reflected", "echoed", "encoded", "decoded", "sanitized",
         "validated", "vulnerable", "exploited", "triggered", "inserted",
         "injected", "escaped", "unescaped", "processed", "displayed",
-        "executed", "occurs", "called", "named",
+        "executed", "occurs", "called", "named", "comes",
+        "get", "post", "put", "patch", "delete", "url", "uri", "query",
         "should", "since", "some", "such", "supplied", "than", "that",
         "the", "their", "them", "then", "there", "these", "they", "this",
         "those", "to", "true", "underlying", "unknown", "until", "used",
@@ -85,6 +86,8 @@ class ExtractedIntelligence:
     xss_types: list[str] = dataclass_field(default_factory=list)
     contexts: list[str] = dataclass_field(default_factory=list)
     parameters: list[str] = dataclass_field(default_factory=list)
+    # Stage R14: vulnerable component / file / endpoint evidence.
+    components: list[str] = dataclass_field(default_factory=list)
     evidence: list[IntelligenceEvidence] = dataclass_field(default_factory=list)
 
 # Maps an explicit textual vulnerability phrase to a normalized type.
@@ -250,6 +253,114 @@ _PARAMETER_PATTERNS = tuple(
     for rule_id, pattern in PARAMETER_RULES
 )
 
+# ---------------------------------------------------------------------------
+# Stage R14: parameter + component/file/endpoint evidence rules.
+# Still deterministic, bounded, and conservative: every rule requires
+# explicit parameter/component wording, generic nouns are rejected by
+# the blocklist/validator, and file/endpoint candidates must carry
+# vulnerability-oriented context in their bounded window.
+# ---------------------------------------------------------------------------
+
+# Explicit "the value is the parameter" label forms:
+#   vulnerable parameter: id        vulnerable parameter is "id"
+#   parameter name = user_id        parameter name: search
+PARAMETER_LABEL_RULES: tuple[tuple[str, str], ...] = (
+    (
+        "parameter-vulnerable-labeled",
+        rf"\bvulnerable\s+(?:parameter|argument|field)s?\s*"
+        rf"(?:is\s*[:=]?|name\s*[:=]?|[:=])\s*[`'\x22\u2018\u2019\u201c\u201d]?"
+        rf"({_PARAMETER_RE})",
+    ),
+    (
+        "parameter-name-labeled",
+        rf"\b(?:parameter|argument|field)\s+name\s*"
+        rf"(?:is\s*[:=]?|[:=])\s*[`'\x22\u2018\u2019\u201c\u201d]?"
+        rf"({_PARAMETER_RE})",
+    ),
+)
+
+# Bare "<name> parameter" form ("id parameter of view_each_faculty.php").
+# The blocklist + validator reject sentence words ("of the parameter",
+# "a parameter", "this parameter"), so this stays conservative.
+PARAMETER_BARE_RULE: tuple[str, str] = (
+    "parameter-name-bare",
+    rf"\b[`'\x22\u2018\u2019\u201c\u201d]?({_PARAMETER_RE})"
+    rf"[`'\x22\u2018\u2019\u201c\u201d]?\s+"
+    rf"(?:parameters?|arguments?|fields?)\b",
+)
+
+_PARAMETER_LABEL_PATTERNS = tuple(
+    (rule_id, re.compile(pattern, re.IGNORECASE))
+    for rule_id, pattern in PARAMETER_LABEL_RULES
+)
+
+# Forward "parameter <name>" form ("parameter id", "GET parameter id",
+# 'parameter "id"'). Singular keyword only: plural discussion ("has
+# parameters and arguments everywhere") is generic prose, not a claim.
+# "parameter name ..." is excluded by lookahead so the label rule owns it.
+PARAMETER_FORWARD_RULE: tuple[str, str] = (
+    "parameter-name-forward",
+    rf"\b(?:parameter|argument|field)\s+"
+    rf"(?!name\b)[`'\x22\u2018\u2019\u201c\u201d]?({_PARAMETER_RE})",
+)
+
+_PARAMETER_FORWARD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (PARAMETER_FORWARD_RULE[0],
+     re.compile(PARAMETER_FORWARD_RULE[1], re.IGNORECASE)),
+)
+
+# Vulnerability-oriented context required before ANY component/file/
+# endpoint candidate may be extracted. A filename in a plain project
+# listing or a code block with no vulnerability wording yields nothing.
+VULN_CONTEXT_PATTERN = re.compile(
+    r"\b(?:vulnerab\w*|affected|injection|xss|sql\s+injection|sqli|"
+    r"arbitrary\s+file|traversal|endpoint|parameter|exploit\w*|"
+    r"security\s+issue|insecure|unauthorized|disclosure)\b",
+    re.IGNORECASE,
+)
+
+# Source-file candidates: relative paths or bare files with a known
+# source extension. Bounded character classes, no nested quantifiers.
+_COMPONENT_FILE_PATTERN = re.compile(
+    r"\b[A-Za-z0-9_\-./]{1,150}\."
+    r"(?:php\d?|jsp|jspx|asp|aspx|ascx|cgi|pl|pm|py|rb|erb|html?|htm|"
+    r"js|ts|jsx|tsx|java|cs|go|sh|bat|sql|conf|ini|xml|json)\b",
+    re.IGNORECASE,
+)
+
+# Explicitly labeled URL paths / API endpoints:
+#   endpoint /api/users      the affected endpoint is /api/foo
+#   url: /admin/login.php    path /admin/export.php
+_COMPONENT_ENDPOINT_RULES: tuple[tuple[str, str], ...] = (
+    (
+        "component-endpoint-named",
+        r"\b(?:endpoint|url|uri|route|path|script|page|file|component)s?\s+"
+        r"(?:is\s+|are\s+|of\s+|:|=)?\s*[`'\x22\u2018\u2019\u201c\u201d]?"
+        r"(/[A-Za-z0-9_\-./]{1,150})",
+    ),
+)
+
+_COMPONENT_LABEL_RULES: tuple[tuple[str, str], ...] = (
+    (
+        "component-vulnerable-labeled",
+        r"\b(?:vulnerable|affected|insecure)\s+"
+        r"(?:file|component|endpoint|script|page|url|path|plugin)s?\s*"
+        r"(?:is\s*[:=]?|name\s*[:=]?|[:=])\s*[`'\x22\u2018\u2019\u201c\u201d]?"
+        r"([A-Za-z0-9_\-./]{1,150})",
+    ),
+)
+
+_MAX_COMPONENT_CHARS = 150
+
+# File extensions that mark a candidate as a component/file rather than
+# a parameter-like token.
+_SOURCE_FILE_EXTENSION_RE = re.compile(
+    r"\.(?:php\d?|jsp|jspx|asp|aspx|ascx|cgi|pl|pm|py|rb|erb|html?|htm|"
+    r"js|ts|jsx|tsx|java|cs|go|sh|bat|sql|conf|ini|xml|json)$",
+    re.IGNORECASE,
+)
+
+
 
 def _ordered_unique(values: list[str]) -> list[str]:
     """Return values once each, preserving deterministic first-seen order."""
@@ -269,7 +380,7 @@ def _normalize_parameter_name(name: str | None) -> str | None:
     if not name:
         return None
     normalized = name.strip().strip("`'\"‘’“”").strip().lower()
-    normalized = normalized.rstrip("=:,;")
+    normalized = normalized.rstrip("=:,;.")
     if not re.fullmatch(_PARAMETER_RE, normalized, re.IGNORECASE):
         return None
     if normalized in _NON_PARAMETER_NAMES:
@@ -277,6 +388,79 @@ def _normalize_parameter_name(name: str | None) -> str | None:
     if normalized.startswith(("http", "www", "cve-", "file-")):
         return None
     return normalized
+
+
+# Generic words that are only acceptable as parameters when an explicit
+# label names them ("vulnerable parameter: input"); bare "<word> is a
+# parameter"-style adjacency must not promote them on its own. (The R12
+# _NON_PARAMETER_NAMES blocklist still applies to every candidate.)
+_BARE_ADJACENCY_GENERIC_NAMES = frozenset(
+    {"input", "request", "response", "value", "data", "content",
+     "text", "string", "code"}
+)
+
+
+def _validate_component_value(value: str | None) -> str | None:
+    """Validate/normalize a candidate component, file, or endpoint.
+
+    Deterministic normalization keeps meaningful path distinctions:
+    a leading slash is stripped only when it is not the sole marker of
+    a labeled endpoint (bare files keep no slash), and case is folded
+    for source files. Rejected: URLs, query strings, HTML fragments,
+    whitespace/punctuation-heavy strings, and oversized captures.
+    """
+
+    if not value:
+        return None
+    candidate = value.strip().strip("`'\"‘’“”").strip()
+    if not candidate or len(candidate) > _MAX_COMPONENT_CHARS:
+        return None
+    # URLs are components never; keep only the path of an absolute URL.
+    scheme_match = re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", candidate)
+    if scheme_match:
+        rest = candidate[scheme_match.end():]
+        path_start = rest.find("/")
+        if path_start < 0:
+            return None
+        candidate = rest[path_start:]
+        candidate = candidate.split("?", 1)[0].split("#", 1)[0]
+    elif candidate.startswith(("http://", "https://")):
+        return None
+    if candidate.startswith("//"):
+        return None
+    had_leading_slash = candidate.startswith("/")
+    candidate = candidate.split("?", 1)[0].split("#", 1)[0]
+    if " " in candidate or "\t" in candidate or "\n" in candidate:
+        return None
+    if "<" in candidate or ">" in candidate or '"' in candidate:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_\-./]{1,150}", candidate):
+        return None
+    if not _SOURCE_FILE_EXTENSION_RE.search(candidate) and not had_leading_slash:
+        # Bare token without a source extension and without a leading
+        # slash: not recognizable as a file or endpoint — reject.
+        return None
+    # Strip leading slashes for dedup ("/api/users" == "api/users");
+    # deeper path structure is preserved.
+    candidate = candidate.lstrip("/")
+    if not candidate:
+        return None
+    lowered = candidate.lower()
+    if lowered in _NON_PARAMETER_NAMES:
+        return None
+    if lowered.startswith(("http", "www.", "cve-", "mailto")):
+        return None
+    return lowered
+
+
+def _normalize_component_key(value: str) -> str:
+    """Deterministic dedup key: leading-slash and case-insensitive."""
+
+    return value.strip().strip("/").lower()
+
+
+def _normalize_parameter_key(value: str) -> str:
+    return value.strip().lower()
 
 
 def _mentions_cve_id(text: str, cve_id: str) -> bool:
@@ -573,7 +757,10 @@ def _extract_types_from_text(
                 source_type=source_type,
                 rule_id=rule_id,
             )
-    for rule_id, pattern in _PARAMETER_PATTERNS:
+    # Stage R14: explicit parameter label forms ("vulnerable parameter:
+    # id", "parameter name = user_id"). These are the strongest forms and
+    # may legitimately name otherwise-generic words like "input".
+    for rule_id, pattern in _PARAMETER_LABEL_PATTERNS:
         for match in pattern.finditer(bounded):
             name = _normalize_parameter_name(match.group(1))
             if name is None:
@@ -593,6 +780,207 @@ def _extract_types_from_text(
                 source_type=source_type,
                 rule_id=rule_id,
             )
+    # Stage R14: bare "<name> parameter" adjacency ("id parameter of
+    # view_each_faculty.php"). Generic adjacency words (input, request,
+    # user, page, ...) are accepted only when the surrounding window
+    # carries an explicit parameter label naming them, so ordinary
+    # prose like "the input parameter was reflected" stays out.
+    bare_rule_id, bare_pattern_str = PARAMETER_BARE_RULE
+    bare_pattern = re.compile(bare_pattern_str, re.IGNORECASE)
+    for match in bare_pattern.finditer(bounded):
+        name = _normalize_parameter_name(match.group(1))
+        if name is None:
+            continue
+        if name in _BARE_ADJACENCY_GENERIC_NAMES:
+            window_start = max(0, match.start() - MAX_EVIDENCE_WINDOW_CHARS)
+            window_end = min(len(bounded), match.end() + MAX_EVIDENCE_WINDOW_CHARS)
+            window = bounded[window_start:window_end].lower()
+            labeled = re.search(
+                r"(?:vulnerable|affected)\s+(?:parameter|argument|field)s?\b|"
+                r"(?:parameter|argument|field)\s+name\b",
+                window,
+                re.IGNORECASE,
+            )
+            if not labeled:
+                continue
+        if not attributor.accepts(bounded, match):
+            continue
+        result.parameters.append(name)
+        _record(
+            result,
+            field="parameter",
+            value=name,
+            text=bounded,
+            start=match.start(),
+            end=match.end(),
+            source_artifact=source_artifact,
+            source_url=source_url,
+            source_type=source_type,
+            rule_id=bare_rule_id,
+        )
+    # Stage R14: forward "parameter <name>" form ("parameter id",
+    # "GET parameter id", 'parameter "id"'). Blocklist rejects the
+    # sentence words that usually follow ("of", "is", "was", "name").
+    for rule_id, pattern in _PARAMETER_FORWARD_PATTERNS:
+        for match in pattern.finditer(bounded):
+            name = _normalize_parameter_name(match.group(1))
+            if name is None:
+                continue
+            if not attributor.accepts(bounded, match):
+                continue
+            result.parameters.append(name)
+            _record(
+                result,
+                field="parameter",
+                value=name,
+                text=bounded,
+                start=match.start(),
+                end=match.end(),
+                source_artifact=source_artifact,
+                source_url=source_url,
+                source_type=source_type,
+                rule_id=rule_id,
+            )
+
+    # Stage R14: vulnerable component / file / endpoint evidence.
+    # Every candidate must sit inside a vulnerability-oriented context
+    # window, so unrelated project-file listings yield nothing.
+    _extract_components_from_text(
+        result,
+        bounded,
+        attributor,
+        source_artifact=source_artifact,
+        source_url=source_url,
+        source_type=source_type,
+    )
+
+def _extract_components_from_text(
+    result: ExtractedIntelligence,
+    bounded: str,
+    attributor: _Attributor,
+    *,
+    source_artifact: str,
+    source_url: str | None,
+    source_type: str,
+) -> None:
+    """Stage R14: deterministic vulnerable component/file/endpoint rules.
+
+    Each candidate must (a) pass ``_validate_component_value``, (b) sit
+    within a vulnerability-oriented context window, and (c) be accepted
+    by the attribution engine, so unrelated filenames, CVE-silent pages
+    without product linkage, and neighboring-CVE evidence are excluded
+    exactly as in R12.
+    """
+
+    def _record_component(
+        value: str, start: int, end: int, rule_id: str
+    ) -> None:
+        result.components.append(value)
+        _record(
+            result,
+            field="component",
+            value=value,
+            text=bounded,
+            start=start,
+            end=end,
+            source_artifact=source_artifact,
+            source_url=source_url,
+            source_type=source_type,
+            rule_id=rule_id,
+        )
+
+    def _context_ok(match: re.Match[str]) -> bool:
+        window_start = max(0, match.start() - MAX_EVIDENCE_WINDOW_CHARS)
+        window_end = min(len(bounded), match.end() + MAX_EVIDENCE_WINDOW_CHARS)
+        return bool(
+            VULN_CONTEXT_PATTERN.search(bounded[window_start:window_end])
+        )
+
+    # Explicit vulnerable-file/component labels ("vulnerable file:
+    # foo.php", "affected component is /admin/login.php").
+    for rule_id, pattern_str in _COMPONENT_LABEL_RULES:
+        pattern = re.compile(pattern_str, re.IGNORECASE)
+        for match in pattern.finditer(bounded):
+            value = _validate_component_value(match.group(1))
+            if value is None or not _context_ok(match):
+                continue
+            if not attributor.accepts(bounded, match):
+                continue
+            _record_component(value, match.start(), match.end(), rule_id)
+
+    # Explicitly labeled endpoints/paths ("endpoint /api/users",
+    # "the affected endpoint is /api/foo", "url: /admin/login.php").
+    for rule_id, pattern_str in _COMPONENT_ENDPOINT_RULES:
+        pattern = re.compile(pattern_str, re.IGNORECASE)
+        for match in pattern.finditer(bounded):
+            value = _validate_component_value(match.group(1))
+            if value is None or not _context_ok(match):
+                continue
+            if not attributor.accepts(bounded, match):
+                continue
+            _record_component(value, match.start(), match.end(), rule_id)
+
+    # Bare source-file candidates ("id parameter of view_each_faculty.php",
+    # "in the foo.php file"): extracted only when a vulnerability-
+    # oriented word occurs in the bounded window around the candidate.
+    # Exploit-tooling filenames shipped with PoC repositories ("poc.sh",
+    # "exploit.py", "payload.py") describe the proof-of-concept, not the
+    # vulnerable component, and are rejected on the bare path only.
+    _exploit_tooling = re.compile(
+        r"^(?:poc|exploit|payload)(?:[-_.][A-Za-z0-9_\-]+)*$"
+    )
+    for match in _COMPONENT_FILE_PATTERN.finditer(bounded):
+        value = _validate_component_value(match.group(0))
+        if value is None or not _context_ok(match):
+            continue
+        stem = value.rsplit(".", 1)[0].rsplit("/", 1)[-1]
+        if _exploit_tooling.fullmatch(stem):
+            continue
+        if not attributor.accepts(bounded, match):
+            continue
+        _record_component(
+            value, match.start(), match.end(), "component-file-context"
+        )
+
+
+def _dedupe_intelligence(result: ExtractedIntelligence) -> None:
+    """Deterministic dedup of parameters and components.
+
+    Equivalent forms converge ("id" / "'id'" / "\"id\""; "/foo.php" /
+    "foo.php"). The first evidence record per normalized key survives;
+    later duplicate records for the same value are removed so repeated
+    ingestion stays byte-identical and first-seen ordering is stable.
+    """
+
+    def _dedupe(values: list[str], field: str, key_fn) -> list[str]:
+        seen: set[str] = set()
+        kept: list[str] = []
+        for value in values:
+            key = key_fn(value)
+            if key in seen:
+                continue
+            seen.add(key)
+            kept.append(value)
+        allowed = {key_fn(value) for value in kept}
+        first_by_key: set[str] = set()
+        kept_evidence = []
+        for item in result.evidence:
+            if item.field == field:
+                key = key_fn(item.value)
+                if key not in allowed or key in first_by_key:
+                    continue
+                first_by_key.add(key)
+            kept_evidence.append(item)
+        result.evidence[:] = kept_evidence
+        return kept
+
+    result.parameters = _dedupe(
+        result.parameters, "parameter", _normalize_parameter_key
+    )
+    result.components = _dedupe(
+        result.components, "component", _normalize_component_key
+    )
+
 
 def _reference_sources(
     records: object,
@@ -720,6 +1108,14 @@ def extract_research_intelligence(
     result.xss_types = _ordered_unique(result.xss_types)
     result.contexts = _ordered_unique(result.contexts)
     result.parameters = _ordered_unique(result.parameters)
+    result.components = _ordered_unique(result.components)
+    # Stage R14: cross-source deterministic dedup for parameters and
+    # components. First-seen source order wins; the surviving evidence
+    # record per normalized key is deterministic because reference
+    # sources are iterated in sorted order.
+    _dedupe_intelligence(result)
+    result.parameters = _ordered_unique(result.parameters)
+    result.components = _ordered_unique(result.components)
     result.evidence.sort(
         key=lambda item: (
             item.field,

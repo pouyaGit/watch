@@ -382,6 +382,7 @@ class KnowledgeStore:
             vulnerability_types=document.vulnerability_types,
             cwes=document.cwes,
             parameters=document.parameters,
+            components=document.components,
             evidence_quality=document.evidence_quality,
             confidence=document.confidence,
             tags=document.tags,
@@ -592,6 +593,7 @@ class KnowledgeStore:
             ),
             cwes=self._aggregate_values(provenance, "cwes"),
             parameters=self._aggregate_values(provenance, "parameters"),
+            components=self._aggregate_values(provenance, "components"),
             tags=self._aggregate_values(provenance, "tags"),
             source_confidence=sorted(
                 confidence,
@@ -626,6 +628,7 @@ class KnowledgeStore:
             "vulnerability_types": values(aggregate.vulnerability_types),
             "cwes": values(aggregate.cwes),
             "parameters": values(aggregate.parameters),
+            "components": values(aggregate.components),
             "tags": values(aggregate.tags),
             "evidence_quality": primary_claim.evidence_quality if primary_claim else document.evidence_quality,
             "confidence": primary_claim.confidence if primary_claim else document.confidence,

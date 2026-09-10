@@ -23,6 +23,8 @@ class KnowledgeSourceClaims(BaseModel):
     vulnerability_types: list[str] = Field(default_factory=list)
     cwes: list[str] = Field(default_factory=list)
     parameters: list[str] = Field(default_factory=list)
+    # Stage R14: vulnerable component/file/endpoint evidence.
+    components: list[str] = Field(default_factory=list)
     evidence_quality: str = "UNKNOWN"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     tags: list[str] = Field(default_factory=list)
@@ -91,6 +93,8 @@ class KnowledgeAggregate(BaseModel):
     vulnerability_types: list[KnowledgeAttributedValue] = Field(default_factory=list)
     cwes: list[KnowledgeAttributedValue] = Field(default_factory=list)
     parameters: list[KnowledgeAttributedValue] = Field(default_factory=list)
+    # Stage R14: vulnerable component/file/endpoint evidence.
+    components: list[KnowledgeAttributedValue] = Field(default_factory=list)
     tags: list[KnowledgeAttributedValue] = Field(default_factory=list)
     source_confidence: list[KnowledgeConfidenceAttribution] = Field(
         default_factory=list
@@ -133,6 +137,8 @@ class KnowledgeDocument(BaseModel):
     vulnerability_types: list[str] = Field(default_factory=list)
     cwes: list[str] = Field(default_factory=list)
     parameters: list[str] = Field(default_factory=list)
+    # Stage R14: vulnerable component/file/endpoint evidence.
+    components: list[str] = Field(default_factory=list)
 
     content: str
 

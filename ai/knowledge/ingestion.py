@@ -95,6 +95,7 @@ def _intelligence_document_fields(
         "xss_types": list(intelligence.xss_types),
         "contexts": list(intelligence.contexts),
         "parameters": list(intelligence.parameters),
+        "components": list(intelligence.components),
         "intelligence_evidence": evidence,
         "provenance": [
             {
@@ -109,6 +110,7 @@ def _intelligence_document_fields(
                         "xss_types": list(intelligence.xss_types),
                         "contexts": list(intelligence.contexts),
                         "parameters": list(intelligence.parameters),
+                        "components": list(intelligence.components),
                         "tags": sorted(
                             {
                                 f"{CVE_TAG_PREFIX}{cve_id}",
