@@ -109,6 +109,43 @@
 </div>
 {% endif %}
 
+{# ----- RESEARCH LEADS (compact actionable projection, R21) ----- #}
+<div class="section-label">Research Leads
+  <span class="rl-note">deterministic R15–R20 projection — not verified</span>
+</div>
+{% if leads_summary %}
+<div class="kpi-grid kpi-4 kpi-research mb-6">
+  <a href="{{ leads_url }}" class="stat-card stat-link">
+    <div class="stat-label">Actionable leads</div>
+    <div class="stat-value ok">{{ leads_summary.actionable | fmtnum }}</div>
+    <div class="stat-sub">recommend research now</div></a>
+  <a href="{{ leads_url }}" class="stat-card stat-link">
+    <div class="stat-label">Blocked leads</div>
+    <div class="stat-value warn">{{ leads_summary.blocked | fmtnum }}</div>
+    <div class="stat-sub">need asset/evidence review</div></a>
+  <a href="{{ leads_url }}" class="stat-card stat-link">
+    <div class="stat-label">Research completed</div>
+    <div class="stat-value">{{ leads_summary.completed | fmtnum }}</div>
+    <div class="stat-sub">of {{ leads_summary.total | fmtnum }} total</div></a>
+  <a href="{{ leads_url }}" class="stat-card stat-link">
+    <div class="stat-label">Top Research Leads</div>
+    <div class="stat-value accent2">{% if leads_summary.top %}{{ leads_summary.top | length }}{% else %}0{% endif %}</div>
+    <div class="stat-sub">
+      {% for top in leads_summary.top %}{{ top.cve_id }} → {{ top.program }}{% if not loop.last %} · {% endif %}{% endfor %}
+      {% if not leads_summary.top %}none yet{% endif %}
+    </div></a>
+</div>
+<div class="quick-actions">
+  <a class="quick-action" href="{{ leads_url }}"><span class="qa-icon">☣</span>View Research Leads</a>
+</div>
+{% else %}
+<div class="panel mb-6">
+  <div class="panel-body">
+    {{ empty_state("No research leads yet", "Leads are generated deterministically from R18 queue candidates.", compact=True) }}
+  </div>
+</div>
+{% endif %}
+
 {# ----- SYSTEM HEALTH (secondary, htmx live) ----- #}
 <div class="section-label">System Health</div>
 <div class="kpi-grid kpi-4 kpi-secondary mb-6"

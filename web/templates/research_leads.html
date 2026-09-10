@@ -1,0 +1,85 @@
+{# research_leads.html — Stage R21 actionable research leads (read-only).
+   Deterministic projection of R15-R20 intelligence. Leads are research
+   planning only: they never assert vulnerability/exploitation/finding. #}
+{% extends "base.html" %}
+{% block title %}Research Leads — WATCH{% endblock %}
+{% block page %}Research Leads{% endblock %}
+
+{% from "macros.html" import empty_state, research_banner with context %}
+
+{% block content %}
+<a class="back-link" href="{{ research_url }}">← Research / CVEs</a>
+
+<div class="page-head">
+  <h1 class="page-title">Research Leads</h1>
+  <p class="page-sub">Deterministic R15–R20 projection: why a researcher should investigate a CVE against a program. Research planning only.</p>
+</div>
+
+{{ research_banner("RESEARCH LEAD — NOT VERIFIED") }}
+
+<div class="kpi-grid kpi-4 mb-6">
+  <div class="stat-card"><div class="stat-label">Leads</div>
+    <div class="stat-value">{{ summary.total | fmtnum }}</div></div>
+  <div class="stat-card"><div class="stat-label">Actionable</div>
+    <div class="stat-value ok">{{ summary.actionable | fmtnum }}</div></div>
+  <div class="stat-card"><div class="stat-label">Blocked</div>
+    <div class="stat-value warn">{{ summary.blocked | fmtnum }}</div></div>
+  <div class="stat-card"><div class="stat-label">Research completed</div>
+    <div class="stat-value">{{ summary.completed | fmtnum }}</div></div>
+</div>
+
+<form method="get" action="/ui/research/leads" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="cve" value="{{ cve }}" placeholder="CVE…"
+         class="search-input" autocomplete="off">
+  <input type="search" name="program" value="{{ program }}" placeholder="Program…"
+         class="search-input" autocomplete="off">
+  <select name="status" class="filter-select">
+    <option value="">Status: any</option>
+    {% for s in ['RESEARCH_LEAD', 'RESEARCH_BLOCKED', 'RESEARCH_COMPLETED'] %}
+      <option value="{{ s }}"{{ ' selected' if status == s }}>{{ s }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit" class="btn-primary">Filter</button>
+</form>
+
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Lead</th><th>CVE</th><th>Program</th><th>Priority</th>
+        <th>Relevance</th><th>Status</th><th>Next step</th><th>Why</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lead in results %}
+      <tr>
+        <td><a class="badge-link" href="{{ lead.lead_url }}">{{ lead.lead_id }}</a></td>
+        <td><a class="mono cve-link" href="{{ lead.cve_url }}">{{ lead.cve_id }}</a></td>
+        <td class="mono">{{ lead.program }}</td>
+        <td><span class="badge-sm">{{ lead.priority_level }}</span>
+            <div class="mono text-xs text-muted">{{ lead.priority_score }}</div></td>
+        <td><span class="badge-sm">{{ lead.relevance_level }}</span>
+            <div class="mono text-xs text-muted">{{ lead.relevance_score }}</div></td>
+        <td><span class="badge-sm">{{ lead.status }}</span></td>
+        <td class="text-xs">{{ lead.recommended_next_step }}</td>
+        <td class="text-xs">
+          {% for r in lead.reasons[:4] %}<span class="badge-sm" title="{{ r.code }}">{{ r.text }}</span> {% endfor %}
+          {% if lead.reasons | length > 4 %}<span class="text-muted text-xs">+{{ lead.reasons | length - 4 }}</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="empty">
+        No research leads.
+        <div class="empty-hint">Leads are generated deterministically from R18 queue candidates (positive priority × asset relevance only).</div>
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="disclaimer-foot">
+  Research planning only — a lead is never a confirmed vulnerability, exploit,
+  or production finding. Unknown/blocked signals are shown deliberately.
+</p>
+{% endblock %}

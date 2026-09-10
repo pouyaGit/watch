@@ -17,6 +17,7 @@
 
 {# ---------- cross-navigation ---------- #}
 <div class="quick-actions">
+  {% if lead %}<a class="quick-action" href="{{ lead.lead_url }}"><span class="qa-icon">☣</span>Research lead ({{ lead.status }})</a>{% endif %}
   <a class="quick-action" href="{{ queue_cve_url }}"><span class="qa-icon">≡</span>Queue candidates</a>
   <a class="quick-action" href="{{ tasks_cve_url }}"><span class="qa-icon">✎</span>Research tasks{% if cve_task_count %} ({{ cve_task_count }}){% endif %}</a>
   {% if xss_search_url %}<a class="quick-action" href="{{ xss_search_url }}"><span class="qa-icon">✕</span>XSS candidates</a>{% endif %}

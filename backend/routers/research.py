@@ -203,6 +203,35 @@ def api_research_queue_cve(cve: str):
         raise _bad(exc)
 
 
+@router.get("/api/research/leads", dependencies=_AUTH)
+def api_research_leads(
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
+    cve: Optional[str] = Query(default=None),
+    program: Optional[str] = Query(default=None),
+):
+    """Stage R21 research leads (read-only, deterministic, key-gated)."""
+    from backend import research_leads
+
+    try:
+        return research_leads.list_leads(limit=limit, offset=offset, cve=cve, program=program)
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/leads/{lead_id}", dependencies=_AUTH)
+def api_research_lead_detail(lead_id: str):
+    """One Stage R21 research lead by deterministic id (read-only)."""
+    from backend import research_leads
+
+    try:
+        return research_leads.get_lead(lead_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="research lead not found")
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
 @router.get("/api/research/{cve}", dependencies=_AUTH)
 def api_research_detail(cve: str):
     try:

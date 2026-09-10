@@ -1163,6 +1163,67 @@ def run_queue(
     return 0
 
 
+def run_leads(
+    args: argparse.Namespace,
+    store=None,
+    research_dir=None,
+    programs_dir=None,
+) -> int:
+    """Deterministic, read-only research leads (Stage R21).
+
+    Projects existing R15-R20 intelligence into actionable research leads.
+    No network, no LLM, no subprocess, no active validation. A lead is
+    research planning only — never a confirmed finding.
+    """
+
+    from backend import research_leads
+
+    limit = getattr(args, "limit", None)
+    if limit is None or limit < 0:
+        limit = research_leads.MAX_LEADS
+    try:
+        data = research_leads.list_leads(
+            limit=limit,
+            offset=0,
+            cve=getattr(args, "cve", None),
+            program=getattr(args, "program", None),
+        )
+    except ValueError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    leads = data["items"]
+    if not leads:
+        print("RESEARCH LEADS: none (no R18 queue candidates match)")
+        return 0
+
+    if getattr(args, "json", False):
+        print(json.dumps(leads, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    print("Research Leads")
+    print("==============")
+    print()
+    for index, lead in enumerate(leads, start=1):
+        print(f"#{index} {lead['cve_id']} → {lead['program']}")
+        print(f"Priority: {lead['priority_score']} / {lead['priority_level']}")
+        print(f"Relevance: {lead['relevance_score']} / {lead['relevance_level']}")
+        print(f"Status: {lead['status']}")
+        print(f"Lead id: {lead['lead_id']}")
+        print("Why investigate:")
+        for reason in lead["reasons"]:
+            print(f"  ✓ {reason['text']} ({reason['code']})")
+        if lead["blockers"]:
+            print("Blockers:")
+            for blocker in lead["blockers"]:
+                print(f"  ✗ {blocker}")
+        print("Next action:")
+        print(f"  {lead['recommended_next_step']}")
+        print()
+    print(f"RESEARCH LEADS: {len(leads)}")
+    return 0
+
+
 def run_kb_ingest(
     args: argparse.Namespace, store=None, research_dir=None
 ) -> int:
@@ -1433,6 +1494,34 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="emit the queue as JSON",
+    )
+
+    # Stage R21: deterministic, read-only actionable research leads.
+    leads = sub.add_parser(
+        "leads",
+        help="deterministic actionable research leads projecting R15-R20 "
+        "intelligence (read-only, no network, no LLM, no validation)",
+    )
+    leads.add_argument(
+        "--cve",
+        default=None,
+        help="limit leads to one CVE, e.g. CVE-2026-1557",
+    )
+    leads.add_argument(
+        "--program",
+        default=None,
+        help="limit leads to one program, e.g. dell",
+    )
+    leads.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="show at most this many leads",
+    )
+    leads.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the leads as JSON",
     )
 
     # Stage R13: re-fetch persisted reference archives and update the
@@ -1802,6 +1891,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_relevance(args)
     if args.command == "queue":
         return run_queue(args)
+    if args.command == "leads":
+        return run_leads(args)
     if args.command == "report":
         return run_report(args)
     if args.command == "references":

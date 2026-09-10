@@ -58,6 +58,7 @@ def _ctx(request: Request, **extra):
         "xss_url":     build_url("/ui/xss"),
         "kb_url":      build_url("/ui/kb"),
         "reports_url": build_url("/ui/reports"),
+        "leads_url":   build_url("/ui/research/leads"),
         "stats_link":  build_url("/api/stats/by-program"),
         "fresh_link":  build_url("/ui/http/fresh"),
     }
@@ -91,6 +92,11 @@ def dashboard(request: Request):
         task_summary = research_tasks.task_summary()
     except Exception:
         task_summary = None
+    try:
+        from backend import research_leads
+        leads_summary = research_leads.leads_summary()
+    except Exception:  # never let the recon dashboard fail on research leads
+        leads_summary = None
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -107,6 +113,7 @@ def dashboard(request: Request):
             research_overview=research_overview,
             research_intel=research_intel,
             task_summary=task_summary,
+            leads_summary=leads_summary,
         ),
     )
 

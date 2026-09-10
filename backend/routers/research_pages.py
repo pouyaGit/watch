@@ -92,6 +92,7 @@ def _ctx(request: Request, **extra):
         "research_url": build_url("/ui/research"),
         "queue_url": build_url("/ui/research/queue"),
         "research_tasks_url": build_url("/ui/research/tasks"),
+        "leads_url": build_url("/ui/research/leads"),
         "xss_url": build_url("/ui/xss"),
         "kb_url": build_url("/ui/kb"),
         "reports_url": build_url("/ui/reports"),
@@ -381,6 +382,80 @@ async def ui_research_task_update(request: Request, task_id: str):
     )
 
 
+# ------------------------------------------------------------------ leads
+
+
+@router.get("/ui/research/leads", response_class=HTMLResponse, dependencies=_UI_AUTH)
+def ui_research_leads(
+    request: Request,
+    cve: Optional[str] = None,
+    program: Optional[str] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    limit: int = PAGE_SIZE_DEFAULT,
+):
+    """Stage R21: deterministic actionable research leads (research only)."""
+
+    page, limit = _page_params(page, limit)
+    filters = {"cve": cve, "program": program, "status": status}
+    from backend import research_leads
+
+    try:
+        data = research_leads.list_leads(
+            limit=limit, offset=(page - 1) * limit, cve=cve, program=program
+        )
+    except ResearchDataError:
+        return _error_page(request, "research-leads", 400, "Invalid filter",
+                           "The CVE/program filter is malformed.")
+    items = data["items"]
+    if status:
+        items = [item for item in items if item["status"] == status]
+    for item in items:
+        item["cve_url"] = build_url(f"/ui/research/{item['cve_id']}")
+        item["lead_url"] = build_url(f"/ui/research/leads/{item['lead_id']}")
+    summary = research_leads.leads_summary()
+    return templates.TemplateResponse(
+        request,
+        "research_leads.html",
+        _ctx(
+            request,
+            active="research-leads",
+            page_title="Research Leads",
+            results=items,
+            cve=cve or "",
+            program=program or "",
+            status=status or "",
+            summary=summary,
+        ),
+    )
+
+
+@router.get("/ui/research/leads/{lead_id}", response_class=HTMLResponse,
+            dependencies=_UI_AUTH)
+def ui_research_lead_detail(request: Request, lead_id: str):
+    """Stage R21: one research lead (research only)."""
+
+    from backend import research_leads
+
+    try:
+        lead = research_leads.get_lead(lead_id)
+    except NotFoundError:
+        return _error_page(request, "research-leads", 404,
+                           "Research lead not found",
+                           "No research lead exists for this id.")
+    except ResearchDataError:
+        return _error_page(request, "research-leads", 400,
+                           "Invalid lead id",
+                           "Expected an id like rl-0123456789abcdef.")
+    lead["cve_url"] = build_url(f"/ui/research/{lead['cve_id']}")
+    lead["lead_url"] = build_url(f"/ui/research/leads/{lead['lead_id']}")
+    return templates.TemplateResponse(
+        request,
+        "research_lead_detail.html",
+        _ctx(request, active="research-leads", page_title=lead["lead_id"], lead=lead),
+    )
+
+
 @router.get("/ui/research/{cve}", response_class=HTMLResponse, dependencies=_UI_AUTH)
 def ui_research_detail(request: Request, cve: str):
     try:
@@ -451,12 +526,23 @@ def ui_research_detail(request: Request, cve: str):
         "xss_search_url": _ui_link("/ui/xss", q=cve) if xss_related else None,
         "cve_task_count": len(tasks),
     }
+    # Stage R21: expose the relevant research lead for this CVE (if any). A
+    # lead exists only when an R18 queue candidate exists for some program.
+    from backend import research_leads
+    lead = None
+    try:
+        lead_items = research_leads.list_leads(limit=100, cve=cve)["items"]
+        if lead_items:
+            lead = lead_items[0]
+            lead["lead_url"] = build_url(f"/ui/research/leads/{lead['lead_id']}")
+    except Exception:
+        lead = None
     return templates.TemplateResponse(
         request,
         "research_detail.html",
         _ctx(request, active="research", page_title=cve, r=detail, cve=cve,
              intel=intel, tasks=tasks, task_by_queue=task_by_queue,
-             **cross_nav),
+             lead=lead, **cross_nav),
     )
 
 

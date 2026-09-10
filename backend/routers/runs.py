@@ -47,6 +47,7 @@ def _ctx(request: Request, **extra):
         "xss_url": build_url("/ui/xss"),
         "kb_url": build_url("/ui/kb"),
         "reports_url": build_url("/ui/reports"),
+        "leads_url": build_url("/ui/research/leads"),
         "stats_link": build_url("/api/stats/by-program"),
         "fresh_link": build_url("/ui/http/fresh"),
     }

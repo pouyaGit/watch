@@ -1,0 +1,101 @@
+{# research_lead_detail.html — Stage R21 one research lead (read-only).
+   Deterministic R15-R20 projection. Research planning only. #}
+{% extends "base.html" %}
+{% block title %}{{ lead.lead_id }} — Research Lead — WATCH{% endblock %}
+{% block page %}Research Lead{% endblock %}
+
+{% from "macros.html" import research_banner, empty_state with context %}
+
+{% block content %}
+<a class="back-link" href="{{ leads_url }}">← Research Leads</a>
+
+{{ research_banner("RESEARCH LEAD — NOT VERIFIED") }}
+
+<div class="panel mb-6">
+  <div class="panel-body rd-head">
+    <div class="rd-head-left">
+      <div class="mono">{{ lead.lead_id }}</div>
+      <div class="detail-title"><a class="mono cve-link" href="{{ lead.cve_url }}">{{ lead.cve_id }}</a> → {{ lead.program }}</div>
+    </div>
+    <div class="rd-head-right">
+      <span class="badge-sm">{{ lead.status }}</span>
+      <a class="btn-ghost" href="{{ lead.cve_url }}">CVE detail →</a>
+    </div>
+  </div>
+  <div class="panel-body rd-metarow">
+    <span class="dm-item"><span class="dm-k">Queue</span>
+      <span class="mono text-xs">{{ lead.queue_id }}</span></span>
+    <span class="dm-item"><span class="dm-k">Task</span>
+      {% if lead.task_id %}<span class="mono text-xs">{{ lead.task_id }}</span>
+      {% else %}<span class="text-muted">none</span>{% endif %}</span>
+    <span class="dm-item"><span class="dm-k">Recommended next step</span>
+      <span class="badge-sm">{{ lead.recommended_next_step }}</span></span>
+    <span class="dm-item"><span class="dm-k">Rule</span>
+      <span class="mono text-xs">{{ lead.rule_version }}</span></span>
+  </div>
+</div>
+
+<div class="detail-grid">
+
+  <section class="panel">
+    <div class="panel-head"><h2>Priority</h2></div>
+    <div class="panel-body">
+      <table class="kv">
+        <tr><th>Level</th><td><span class="badge-sm">{{ lead.priority_level }}</span></td></tr>
+        <tr><th>Score</th><td class="mono">{{ lead.priority_score }}</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Asset relevance</h2></div>
+    <div class="panel-body">
+      <table class="kv">
+        <tr><th>Level</th><td><span class="badge-sm">{{ lead.relevance_level }}</span></td></tr>
+        <tr><th>Score</th><td class="mono">{{ lead.relevance_score }}</td></tr>
+        <tr><th>Match</th><td class="text-sm">{{ lead.asset_match_summary or '—' }}</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Exploitability</h2></div>
+    <div class="panel-body">
+      <p class="prose text-sm">{{ lead.exploitability_summary or '—' }}</p>
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Why investigate</h2></div>
+    <div class="panel-body">
+      <ul class="plain">
+        {% for reason in lead.reasons %}
+        <li class="text-sm"><strong class="mono">{{ reason.code }}</strong>
+          <span class="badge-sm">{{ reason.source }}</span>
+          <div>{{ reason.text }}</div></li>
+        {% else %}
+        {{ empty_state("No positive research signal yet.", compact=True) }}
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Blockers</h2><span class="badge-sm">known unknowns</span></div>
+    <div class="panel-body">
+      {% if lead.blockers %}
+      <ul class="plain">{% for blocker in lead.blockers %}<li class="text-sm text-muted">— {{ blocker }}</li>{% endfor %}</ul>
+      {% else %}
+      {{ empty_state("No hard blockers recorded.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+</div>
+
+<p class="disclaimer-foot">
+  Research planning only. A lead is NEVER a confirmed vulnerability, exploit,
+  or production finding. It reflects deterministic R15–R20 research state and
+  recommends a researcher action, not an active validation.
+</p>
+{% endblock %}
