@@ -59,6 +59,7 @@ def _ctx(request: Request, **extra):
         "kb_url":      build_url("/ui/kb"),
         "reports_url": build_url("/ui/reports"),
         "leads_url":   build_url("/ui/research/leads"),
+        "plans_url":   build_url("/ui/research/plans"),
         "stats_link":  build_url("/api/stats/by-program"),
         "fresh_link":  build_url("/ui/http/fresh"),
     }
@@ -73,10 +74,28 @@ def _program_link(name: str) -> str:
 # ----------------------------- dashboard -----------------------------
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
-    stats = dash.global_counts()
-    rows = dash.program_rows(sort="updated", direction="desc")[:12]
+    try:
+        stats = dash.global_counts()
+    except Exception:
+        stats = {"programs": 0, "subdomains": 0, "live": 0, "http": 0, "urls": 0, "endpoints": 0, "params": 0, "fresh_http_24h": 0}
+    try:
+        rows = dash.program_rows(sort="updated", direction="desc")[:12]
+    except Exception:
+        rows = []
     for r in rows:
         r["detail_url"] = build_url(f"/ui/program/{r['program_name']}")
+    try:
+        latest_runs = dash.latest_runs()
+    except Exception:
+        latest_runs = []
+    try:
+        changes = dash.recent_changes(limit=12)
+    except Exception:
+        changes = []
+    try:
+        activity_summary = dash.activity_summary()
+    except Exception:
+        activity_summary = {"total": 0}
     try:
         from backend import research_data
         research_overview = research_data.get_overview()
@@ -97,6 +116,11 @@ def dashboard(request: Request):
         leads_summary = research_leads.leads_summary()
     except Exception:  # never let the recon dashboard fail on research leads
         leads_summary = None
+    try:
+        from backend import research_execution
+        plans_summary = research_execution.plans_summary()
+    except Exception:
+        plans_summary = None
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -105,15 +129,16 @@ def dashboard(request: Request):
             active="dashboard",
             page_title="Dashboard",
             stats=stats,
-            latest_runs=dash.latest_runs(),
-            changes=dash.recent_changes(limit=12),
-            activity_summary=dash.activity_summary(),
+            latest_runs=latest_runs,
+            changes=changes,
+            activity_summary=activity_summary,
             programs=rows,
             fresh_count=stats.get("fresh_http_24h", 0),
             research_overview=research_overview,
             research_intel=research_intel,
             task_summary=task_summary,
             leads_summary=leads_summary,
+            plans_summary=plans_summary,
         ),
     )
 

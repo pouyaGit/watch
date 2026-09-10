@@ -1224,6 +1224,71 @@ def run_leads(
     return 0
 
 
+def run_research_plan(args: argparse.Namespace) -> int:
+    """Deterministic, read-only research execution plan (Stage R22).
+
+    Projects R21 leads into ordered execution steps, evidence targets and
+    preserved unknowns. No network, no LLM, no subprocess, no active
+    validation. A plan is research guidance only.
+    """
+    from backend import research_execution
+
+    limit = getattr(args, "limit", None)
+    if limit is None or limit < 0:
+        limit = research_execution.MAX_PLANS
+    try:
+        data = research_execution.list_plans(
+            limit=limit,
+            offset=0,
+            cve=getattr(args, "cve", None),
+            program=getattr(args, "program", None),
+            lead=getattr(args, "lead", None),
+        )
+    except ValueError as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    plans = data["items"]
+    if not plans:
+        print("RESEARCH PLAN: none (no R21 lead / R18 candidate match)")
+        return 0
+
+    if getattr(args, "json", False):
+        print(json.dumps(plans, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    # Compact human output
+    print("Research Execution Plan")
+    print("=======================")
+    print()
+    for idx, plan in enumerate(plans, start=1):
+        print(f"#{idx} {plan['cve_id']} -> {plan['program']}")
+        print(f"Plan: {plan['plan_id']}")
+        print(f"Lead: {plan['lead_id']}")
+        print(f"Status: {plan['status']}")
+        if plan.get("recommended_start"):
+            print("Recommended start:")
+            print(f"  {plan['recommended_start']}")
+        print("Steps:")
+        for step in plan["steps"]:
+            print(f"  {step['order']}. {step['title']} [{step['code']}]")
+        if plan["evidence_targets"]:
+            print("Evidence targets:")
+            for target in plan["evidence_targets"]:
+                print(f"  - {target['code']}")
+        if plan["unknowns"]:
+            print("Unknowns:")
+            for unknown in plan["unknowns"]:
+                print(f"  - {unknown}")
+        if plan["blockers"]:
+            print("Blockers:")
+            for blocker in plan["blockers"]:
+                print(f"  - {blocker}")
+        print()
+    print(f"RESEARCH PLANS: {len(plans)}")
+    return 0
+
+
 def run_kb_ingest(
     args: argparse.Namespace, store=None, research_dir=None
 ) -> int:
@@ -1283,13 +1348,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("check", help="offline readiness check (no LLM/NVD calls)")
 
-    research = sub.add_parser("research", help="research a single CVE")
-    research.add_argument("--cve", required=True, help="e.g. CVE-2026-1557")
+    # Top-level "research" handles both legacy single-CVE research and the
+    # Stage R22 execution-plan subcommand "research plan". --cve is optional
+    # at the argparse level so "research plan" parses; the main() dispatcher
+    # enforces required args per mode.
+    research = sub.add_parser(
+        "research",
+        help="research a single CVE or render execution plans (see 'research plan --help')",
+    )
+    research.add_argument("--cve", required=False, default=None, help="e.g. CVE-2026-1557")
     research.add_argument(
         "--skip-llm",
         action="store_true",
-        help="collect/correlate only, skip the LLM call",
+        help="collect/correlate only, skip the LLM call (single-CVE mode)",
     )
+    research_sub = research.add_subparsers(dest="research_command", required=False)
+    plan_parser = research_sub.add_parser(
+        "plan",
+        help="render a deterministic research execution plan for a CVE/program lead (read-only, no network)",
+    )
+    plan_parser.add_argument("--cve", default=None, help="filter by CVE, e.g. CVE-2026-1557")
+    plan_parser.add_argument("--program", default=None, help="filter by program, e.g. dell")
+    plan_parser.add_argument("--lead", default=None, help="filter by lead id, e.g. rl-... or plan id r22-...")
+    plan_parser.add_argument("--limit", type=int, default=None, help="show at most this many plans")
+    plan_parser.add_argument("--json", action="store_true", help="emit plans as JSON")
 
     batch = sub.add_parser("batch", help="research recent correlated CVEs")
     batch.add_argument("--days", type=int, default=7)
@@ -1880,7 +1962,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "check":
         return run_check()
     if args.command == "research":
-        return run_research(args)
+        # Stage R22 uses the same top-level command with a subcommand (research plan).
+        # Legacy single-CVE research keeps its --cve flag without a subcommand.
+        if getattr(args, "research_command", None) == "plan":
+            return run_research_plan(args)
+        if getattr(args, "research_command", None) is None:
+            if getattr(args, "cve", None):
+                return run_research(args)
+            # Missing required --cve for single-CVE mode
+            print("ERROR: --cve is required for 'research' (or use 'research plan')", file=sys.stderr)
+            return 2
+        return 2
     if args.command == "batch":
         return run_batch(args)
     if args.command == "kb":

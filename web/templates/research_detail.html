@@ -18,6 +18,7 @@
 {# ---------- cross-navigation ---------- #}
 <div class="quick-actions">
   {% if lead %}<a class="quick-action" href="{{ lead.lead_url }}"><span class="qa-icon">☣</span>Research lead ({{ lead.status }})</a>{% endif %}
+  {% if plan %}<a class="quick-action" href="{{ plan.plan_url }}"><span class="qa-icon">☣</span>Research Execution Plan ({{ plan.status }})</a>{% endif %}
   <a class="quick-action" href="{{ queue_cve_url }}"><span class="qa-icon">≡</span>Queue candidates</a>
   <a class="quick-action" href="{{ tasks_cve_url }}"><span class="qa-icon">✎</span>Research tasks{% if cve_task_count %} ({{ cve_task_count }}){% endif %}</a>
   {% if xss_search_url %}<a class="quick-action" href="{{ xss_search_url }}"><span class="qa-icon">✕</span>XSS candidates</a>{% endif %}
@@ -231,6 +232,39 @@
     <div class="panel-head"><h2>Research Intelligence</h2><span class="badge-sm">R15-R18</span></div>
     <div class="panel-body">
       {{ empty_state("No local knowledge-base intelligence for this CVE.", 'Run the offline knowledge ingestion (kb ingest) to attach exploitability / priority / relevance projections.', compact=True) }}
+    </div>
+  </section>
+  {% endif %}
+
+  {# ---------- research execution plan (R22) ---------- #}
+  {% if plan %}
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Research Execution Plan</h2><span class="badge-sm">R22 — RESEARCH PLAN — NOT VERIFIED</span></div>
+    <div class="panel-body">
+      <div class="rd-metarow">
+        <span class="dm-item"><span class="dm-k">Plan</span> <a class="mono text-xs" href="{{ plan.plan_url }}">{{ plan.plan_id }}</a></span>
+        <span class="dm-item"><span class="dm-k">Lead</span> <a class="mono text-xs" href="{{ plan.lead_url }}">{{ plan.lead_id }}</a></span>
+        <span class="dm-item"><span class="dm-k">Status</span> <span class="badge-sm">{{ plan.status }}</span></span>
+        <span class="dm-item"><span class="dm-k">Recommended start</span> <span class="badge-sm">{{ plan.recommended_start or '—' }}</span></span>
+      </div>
+      <div class="section-label mt-3">Steps</div>
+      <ol class="plain">
+        {% for step in plan.steps %}
+        <li class="text-sm"><strong class="mono">{{ step.code }}</strong> — {{ step.title }} <span class="badge-sm">{{ step.status }}</span></li>
+        {% endfor %}
+      </ol>
+      {% if plan.evidence_targets %}
+      <div class="section-label mt-3">Evidence targets</div>
+      <p class="text-xs">
+        {% for target in plan.evidence_targets %}<span class="badge-sm">{{ target.code }}</span> {% endfor %}
+      </p>
+      {% endif %}
+      {% if plan.unknowns %}
+      <div class="section-label mt-3">Unknowns</div>
+      <ul class="plain text-muted">{% for u in plan.unknowns %}<li class="text-sm">{{ u }}</li>{% endfor %}</ul>
+      {% endif %}
+      <p class="text-xs text-muted mt-3">RESEARCH PLAN — NOT VERIFIED. Guides what to review next, not a finding.</p>
+      <p class="mt-3"><a class="btn-ghost" href="{{ plan.plan_url }}">View full plan →</a> <a class="btn-ghost" href="{{ plan.lead_url }}">View lead →</a></p>
     </div>
   </section>
   {% endif %}

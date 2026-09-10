@@ -232,6 +232,46 @@ def api_research_lead_detail(lead_id: str):
         raise _bad(exc)
 
 
+# ---------------------------------------------------------------------------
+# Stage R22: deterministic Research Execution Plans (read-only, key-gated).
+# Must be declared before generic /api/research/{cve} so "plans" is not
+# captured as a CVE id.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/research/plans", dependencies=_AUTH)
+def api_research_plans(
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
+    cve: Optional[str] = Query(default=None),
+    program: Optional[str] = Query(default=None),
+    lead: Optional[str] = Query(default=None),
+):
+    """Stage R22 research execution plans (read-only, deterministic, key-gated)."""
+    from backend import research_execution
+
+    try:
+        return research_execution.list_plans(
+            limit=limit, offset=offset, cve=cve, program=program, lead=lead
+        )
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/plans/{plan_id}", dependencies=_AUTH)
+def api_research_plan_detail(plan_id: str):
+    """One Stage R22 research execution plan by deterministic id (read-only)."""
+    from backend import research_execution
+    from backend.research_data import NotFoundError as PlanNotFound
+
+    try:
+        return research_execution.get_plan(plan_id)
+    except PlanNotFound:
+        raise HTTPException(status_code=404, detail="research plan not found")
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
 @router.get("/api/research/{cve}", dependencies=_AUTH)
 def api_research_detail(cve: str):
     try:

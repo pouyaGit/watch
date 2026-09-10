@@ -20,6 +20,7 @@
     <div class="rd-head-right">
       <span class="badge-sm">{{ lead.status }}</span>
       <a class="btn-ghost" href="{{ lead.cve_url }}">CVE detail →</a>
+      {% if plan_url %}<a class="btn-primary" href="{{ plan_url }}">Research Execution Plan →</a>{% endif %}
     </div>
   </div>
   <div class="panel-body rd-metarow">
@@ -32,6 +33,8 @@
       <span class="badge-sm">{{ lead.recommended_next_step }}</span></span>
     <span class="dm-item"><span class="dm-k">Rule</span>
       <span class="mono text-xs">{{ lead.rule_version }}</span></span>
+    {% if plan_url %}<span class="dm-item"><span class="dm-k">Plan</span>
+      <a class="badge-link mono text-xs" href="{{ plan_url }}">view plan →</a></span>{% endif %}
   </div>
 </div>
 

@@ -1,0 +1,77 @@
+{# research_plans.html — Stage R22 research execution plans (read-only).
+   Deterministic projection of R21 leads. Research planning only. #}
+{% extends "base.html" %}
+{% block title %}Research Plans — WATCH{% endblock %}
+{% block page %}Research Plans{% endblock %}
+
+{% from "macros.html" import empty_state, research_banner with context %}
+
+{% block content %}
+<a class="back-link" href="{{ research_url }}">← Research / CVEs</a>
+
+<div class="page-head">
+  <h1 class="page-title">Research Plans</h1>
+  <p class="page-sub">Deterministic execution plan per research lead — what to investigate, in what order, what evidence to review. Research planning only.</p>
+</div>
+
+{{ research_banner("RESEARCH PLAN — NOT VERIFIED") }}
+
+<div class="kpi-grid kpi-4 mb-6">
+  <div class="stat-card"><div class="stat-label">Plans</div>
+    <div class="stat-value">{{ summary.total | fmtnum }}</div></div>
+  <div class="stat-card"><div class="stat-label">Ready</div>
+    <div class="stat-value ok">{{ summary.ready | fmtnum }}</div></div>
+  <div class="stat-card"><div class="stat-label">Blocked</div>
+    <div class="stat-value warn">{{ summary.blocked | fmtnum }}</div></div>
+  <div class="stat-card"><div class="stat-label">Completed</div>
+    <div class="stat-value">{{ summary.completed | fmtnum }}</div></div>
+</div>
+
+<form method="get" action="/ui/research/plans" class="search-bar">
+  {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="cve" value="{{ cve }}" placeholder="CVE…"
+         class="search-input" autocomplete="off">
+  <input type="search" name="program" value="{{ program }}" placeholder="Program…"
+         class="search-input" autocomplete="off">
+  <select name="status" class="filter-select">
+    <option value="">Status: any</option>
+    {% for s in ['RESEARCH_PLAN_READY', 'RESEARCH_PLAN_BLOCKED', 'RESEARCH_PLAN_COMPLETED'] %}
+      <option value="{{ s }}"{{ ' selected' if status == s }}>{{ s }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit" class="btn-primary">Filter</button>
+</form>
+
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Plan</th><th>CVE</th><th>Program</th><th>Lead</th><th>Status</th><th>Recommended start</th><th>Steps</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for plan in results %}
+      <tr>
+        <td><a class="badge-link" href="{{ plan.plan_url }}">{{ plan.plan_id }}</a></td>
+        <td><a class="mono cve-link" href="{{ plan.cve_url }}">{{ plan.cve_id }}</a></td>
+        <td class="mono">{{ plan.program }}</td>
+        <td><a class="badge-link" href="{{ plan.lead_url }}">{{ plan.lead_id }}</a></td>
+        <td><span class="badge-sm">{{ plan.status }}</span></td>
+        <td class="mono text-xs">{{ plan.recommended_start or '—' }}</td>
+        <td class="text-xs">{{ plan.steps | length }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="empty">
+        No research plans.
+        <div class="empty-hint">Plans are generated deterministically from R21 research leads (which require R18 queue candidates).</div>
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="disclaimer-foot">
+  Research planning only — a plan is never a confirmed vulnerability, exploit,
+  or production finding. Unknown/blocked signals are shown deliberately.
+</p>
+{% endblock %}

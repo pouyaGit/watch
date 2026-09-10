@@ -93,6 +93,7 @@ def _ctx(request: Request, **extra):
         "queue_url": build_url("/ui/research/queue"),
         "research_tasks_url": build_url("/ui/research/tasks"),
         "leads_url": build_url("/ui/research/leads"),
+        "plans_url": build_url("/ui/research/plans"),
         "xss_url": build_url("/ui/xss"),
         "kb_url": build_url("/ui/kb"),
         "reports_url": build_url("/ui/reports"),
@@ -449,10 +450,106 @@ def ui_research_lead_detail(request: Request, lead_id: str):
                            "Expected an id like rl-0123456789abcdef.")
     lead["cve_url"] = build_url(f"/ui/research/{lead['cve_id']}")
     lead["lead_url"] = build_url(f"/ui/research/leads/{lead['lead_id']}")
+    # Stage R22: link to execution plan if available
+    plan_url = None
+    try:
+        from backend import research_execution
+        plan_id = research_execution.plan_id_for(lead["cve_id"], lead["program"])
+        # verify plan exists (has a lead) before exposing link
+        research_execution.get_plan(plan_id)
+        plan_url = build_url(f"/ui/research/plans/{plan_id}")
+    except Exception:
+        plan_url = None
     return templates.TemplateResponse(
         request,
         "research_lead_detail.html",
-        _ctx(request, active="research-leads", page_title=lead["lead_id"], lead=lead),
+        _ctx(request, active="research-leads", page_title=lead["lead_id"], lead=lead, plan_url=plan_url),
+    )
+
+
+# ------------------------------------------------------------------ plans (R22)
+
+
+@router.get("/ui/research/plans", response_class=HTMLResponse, dependencies=_UI_AUTH)
+def ui_research_plans(
+    request: Request,
+    cve: Optional[str] = None,
+    program: Optional[str] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    limit: int = PAGE_SIZE_DEFAULT,
+):
+    """Stage R22: deterministic research execution plans (research only)."""
+
+    page, limit = _page_params(page, limit)
+    filters = {"cve": cve, "program": program, "status": status}
+    from backend import research_execution
+
+    try:
+        data = research_execution.list_plans(
+            limit=100, offset=0, cve=cve, program=program
+        )
+    except ResearchDataError:
+        return _error_page(request, "research-plans", 400, "Invalid filter",
+                           "The CVE/program filter is malformed.")
+    items = data["items"]
+    if status:
+        items = [item for item in items if item["status"] == status]
+    # paginate after filtering
+    total = len(items)
+    offset = (page - 1) * limit
+    page_items = items[offset: offset + limit]
+    for item in page_items:
+        item["plan_url"] = build_url(f"/ui/research/plans/{item['plan_id']}")
+        item["lead_url"] = build_url(f"/ui/research/leads/{item['lead_id']}")
+        item["cve_url"] = build_url(f"/ui/research/{item['cve_id']}")
+    summary = research_execution.plans_summary()
+    return templates.TemplateResponse(
+        request,
+        "research_plans.html",
+        _ctx(
+            request,
+            active="research-plans",
+            page_title="Research Plans",
+            results=page_items,
+            cve=cve or "",
+            program=program or "",
+            status=status or "",
+            summary=summary,
+            total=total,
+            page=page,
+            limit=limit,
+            total_pages=max(1, (total + limit - 1) // limit),
+        ),
+    )
+
+
+@router.get("/ui/research/plans/{plan_id}", response_class=HTMLResponse,
+            dependencies=_UI_AUTH)
+def ui_research_plan_detail(request: Request, plan_id: str):
+    """Stage R22: one research execution plan (research only)."""
+
+    from backend import research_execution
+
+    try:
+        plan = research_execution.get_plan(plan_id)
+    except NotFoundError:
+        return _error_page(request, "research-plans", 404,
+                           "Research plan not found",
+                           "No research plan exists for this id.")
+    except ResearchDataError:
+        return _error_page(request, "research-plans", 400,
+                           "Invalid plan id",
+                           "Expected an id like r22-0123456789abcdef.")
+    plan["plan_url"] = build_url(f"/ui/research/plans/{plan['plan_id']}")
+    plan["lead_url"] = build_url(f"/ui/research/leads/{plan['lead_id']}")
+    plan["cve_url"] = build_url(f"/ui/research/{plan['cve_id']}")
+    if plan.get("queue_id"):
+        plan["queue_url"] = _ui_link("/ui/research/queue", cve=plan["cve_id"])
+    return templates.TemplateResponse(
+        request,
+        "research_plan_detail.html",
+        _ctx(request, active="research-plans", page_title=plan["plan_id"], plan=plan),
     )
 
 
@@ -537,12 +634,23 @@ def ui_research_detail(request: Request, cve: str):
             lead["lead_url"] = build_url(f"/ui/research/leads/{lead['lead_id']}")
     except Exception:
         lead = None
+    # Stage R22: expose research execution plan for this CVE (if any)
+    plan = None
+    try:
+        from backend import research_execution
+        plan_items = research_execution.list_plans(limit=100, cve=cve)["items"]
+        if plan_items:
+            plan = plan_items[0]
+            plan["plan_url"] = build_url(f"/ui/research/plans/{plan['plan_id']}")
+            plan["lead_url"] = build_url(f"/ui/research/leads/{plan['lead_id']}")
+    except Exception:
+        plan = None
     return templates.TemplateResponse(
         request,
         "research_detail.html",
         _ctx(request, active="research", page_title=cve, r=detail, cve=cve,
              intel=intel, tasks=tasks, task_by_queue=task_by_queue,
-             lead=lead, **cross_nav),
+             lead=lead, plan=plan, **cross_nav),
     )
 
 
