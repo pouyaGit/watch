@@ -334,17 +334,38 @@ def _run_to_dict(run) -> dict:
 
 
 def latest_runs() -> list:
-    """One summary per registered task: status + last run (for the
-    'Latest Recon Activity' panel)."""
+    """One summary per registered operation: status + last run.
+
+    Powers the dashboard "Recent Operations" panel. Fail-soft BY OPERATION:
+    a missing or malformed run/status source for one operation must never
+    raise (which would blank the whole panel) nor fabricate data -- that row
+    simply falls back to no-run state, which the template renders as
+    status=NEVER, last run=—, duration=—.
+    """
     out = []
     for task_id, entry in all_tasks():
-        status = get_task_status(task_id)
-        last = get_last_run(task_id)
+        status = "idle"
+        last_run = None
+        try:
+            status = get_task_status(task_id)
+        except Exception:
+            status = "idle"
+        try:
+            last = get_last_run(task_id)
+        except Exception:
+            last = None
+        if last is not None:
+            try:
+                last_run = _run_to_dict(last)
+            except Exception:
+                last_run = None
+                if status not in ("running", "success", "failed"):
+                    status = "idle"
         out.append({
             "task_id": task_id,
             "name": entry["name"],
             "status": status,
-            "last_run": _run_to_dict(last) if last else None,
+            "last_run": last_run,
         })
     return out
 
