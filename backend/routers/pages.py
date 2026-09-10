@@ -81,6 +81,16 @@ def dashboard(request: Request):
         research_overview = research_data.get_overview()
     except Exception:  # never let the recon dashboard fail on research data
         research_overview = None
+    try:
+        from backend import research_data
+        research_intel = research_data.research_intelligence_stats()
+    except Exception:
+        research_intel = None
+    try:
+        from backend import research_tasks
+        task_summary = research_tasks.task_summary()
+    except Exception:
+        task_summary = None
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -95,6 +105,8 @@ def dashboard(request: Request):
             programs=rows,
             fresh_count=stats.get("fresh_http_24h", 0),
             research_overview=research_overview,
+            research_intel=research_intel,
+            task_summary=task_summary,
         ),
     )
 

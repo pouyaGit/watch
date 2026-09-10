@@ -54,12 +54,12 @@
 </a>
 {% endif %}
 
-{# ----- RESEARCH (compact, read-only artifacts; secondary to recon) ----- #}
-{% if research_overview %}
-<div class="section-label">Research
+{# ----- RESEARCH INTELLIGENCE (compact, read-only artifacts) ----- #}
+<div class="section-label">Research Intelligence
   <span class="rl-note">offline artifacts — not production findings</span>
   <a class="badge-link" style="float:right;margin-top:-4px" href="{{ docs_url }}" title="Read-only research JSON API (Stage D2)">API →</a>
 </div>
+{% if research_overview %}
 <div class="kpi-grid kpi-6 kpi-research mb-6">
   <a href="{{ research_url }}" class="stat-card stat-link">
     <div class="stat-label">Research CVEs</div>
@@ -73,6 +73,20 @@
     <div class="stat-label">Nuclei Candidates</div>
     <div class="stat-value warn">{{ research_overview.nuclei_candidates | fmtnum }}</div>
     <div class="stat-sub">artifacts: {{ research_overview.nuclei.generated | fmtnum }} gen · {{ research_overview.nuclei.results | fmtnum }} res · {{ research_overview.nuclei.findings | fmtnum }} find</div></a>
+  <a href="{{ queue_url }}" class="stat-card stat-link">
+    <div class="stat-label">Research Queue</div>
+    <div class="stat-value accent2">{{ research_intel.queue_items | fmtnum if research_intel else 0 }}</div>
+    <div class="stat-sub">
+      {% if research_intel %}{{ research_intel.cves_with_relevance | fmtnum }} CVE(s) w/ asset relevance · {{ research_intel.critical }} critical / {{ research_intel.high }} high
+      {% else %}not available{% endif %}
+    </div></a>
+  <a href="{{ research_tasks_url }}" class="stat-card stat-link">
+    <div class="stat-label">Research Tasks</div>
+    <div class="stat-value">{{ task_summary.total | fmtnum if task_summary else 0 }}</div>
+    <div class="stat-sub">
+      {% if task_summary %}{{ task_summary.by_status.get('TODO', 0) }} todo · {{ task_summary.by_status.get('IN_PROGRESS', 0) }} active · {{ task_summary.by_status.get('BLOCKED', 0) }} blocked · {{ task_summary.by_status.get('DONE', 0) }} done
+      {% else %}no tasks yet{% endif %}
+    </div></a>
   <a href="{{ xss_url }}" class="stat-card stat-link">
     <div class="stat-label">XSS Candidates</div>
     <div class="stat-value accent2">{{ research_overview.xss_candidates | fmtnum }}</div>
@@ -86,6 +100,12 @@
   <a href="{{ reports_url }}" class="stat-card stat-link">
     <div class="stat-label">Reports</div>
     <div class="stat-value ok">{{ research_overview.reports | fmtnum }}</div></a>
+</div>
+{% else %}
+<div class="panel mb-6">
+  <div class="panel-body">
+    {{ empty_state("Research intelligence unavailable", "Local research artifacts are not present or readable; the rest of the dashboard is unaffected.", compact=True) }}
+  </div>
 </div>
 {% endif %}
 

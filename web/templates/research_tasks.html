@@ -10,6 +10,8 @@
 {% from "macros.html" import pager, research_banner with context %}
 
 {% block content %}
+<a class="back-link" href="{{ research_url }}">← Research / CVEs</a>
+
 <div class="page-head">
   <h1 class="page-title">Research Tasks</h1>
   <p class="page-sub">Researcher workflow for queue candidates — TODO / IN_PROGRESS / BLOCKED / DONE.</p>
@@ -19,6 +21,8 @@
 
 <form method="get" action="/ui/research/tasks" class="search-bar">
   {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+  <input type="search" name="cve" value="{{ cve }}" placeholder="CVE…"
+         class="search-input" style="max-width:170px" autocomplete="off">
   <select name="status" class="filter-select">
     <option value="">Status: any</option>
     {% for s in ['TODO', 'IN_PROGRESS', 'BLOCKED', 'DONE'] %}

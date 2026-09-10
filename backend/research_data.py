@@ -1048,6 +1048,8 @@ def cve_intelligence(cve: str) -> dict:
         "priority": {},
         "relevance": [],
         "queue": [],
+        "vulnerability_types": [],
+        "cwes": [],
         "research_only": True,
     }
     try:
@@ -1113,6 +1115,10 @@ def cve_intelligence(cve: str) -> dict:
         "queue": [
             _compact_queue_item(queue_item_projection(item)) for item in items
         ],
+        "vulnerability_types": _compact_list(
+            getattr(document, "vulnerability_types", []) or []
+        ),
+        "cwes": _compact_list(getattr(document, "cwes", []) or []),
         "research_only": True,
     }
     _OVERVIEW_CACHE[cache_key] = (now, result)

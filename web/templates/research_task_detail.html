@@ -14,6 +14,13 @@
 
 {{ research_banner("RESEARCH WORKFLOW — NOT VERIFIED") }}
 
+{# ---------- cross-navigation ---------- #}
+<div class="quick-actions">
+  <a class="quick-action" href="{{ task.cve_url }}"><span class="qa-icon">☣</span>CVE research</a>
+  {% if task.queue_url %}<a class="quick-action" href="{{ task.queue_url }}"><span class="qa-icon">≡</span>Queue view</a>{% endif %}
+  {% if task.program_url %}<a class="quick-action" href="{{ task.program_url }}"><span class="qa-icon">◎</span>Program</a>{% endif %}
+</div>
+
 {% if error %}
 <div class="error-panel" role="alert">
   <div class="error-code">Update rejected</div>

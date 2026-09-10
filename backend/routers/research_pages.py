@@ -22,6 +22,8 @@ Nothing here writes, executes, fetches or renders untrusted HTML.
 from typing import Optional
 from urllib.parse import parse_qs, urlencode
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
@@ -283,21 +285,23 @@ def _render_research_task(
 def ui_research_tasks(
     request: Request,
     status: Optional[str] = None,
+    cve: Optional[str] = None,
     page: int = 1,
     limit: int = PAGE_SIZE_DEFAULT,
 ):
     page, limit = _page_params(page, limit)
-    filters = {"status": status}
+    filters = {"status": status, "cve": cve}
     try:
         data = research_tasks.list_tasks(
-            limit=limit, offset=(page - 1) * limit, status=status
+            limit=limit, offset=(page - 1) * limit, status=status, cve=cve
         )
     except TaskStoreError:
         return _error_page(request, "research-tasks", 400, "Invalid filter",
-                           "The status filter is malformed.")
+                           "The status/CVE filter is malformed.")
     for item in data["items"]:
         item["cve_url"] = build_url(f"/ui/research/{item['cve']}")
         item["task_url"] = build_url(f"/ui/research/tasks/{item['task_id']}")
+        item["queue_url"] = _ui_link("/ui/research/queue", cve=item["cve"])
     return templates.TemplateResponse(
         request,
         "research_tasks.html",
@@ -307,6 +311,7 @@ def ui_research_tasks(
             page_title="Research Tasks",
             results=data["items"],
             status=status or "",
+            cve=cve or "",
             **_pagination(data["total"], page, limit, "/ui/research/tasks",
                           **filters),
         ),
@@ -421,11 +426,37 @@ def ui_research_detail(request: Request, cve: str):
             else None
         )
         task_by_queue[task["queue_id"]] = task["task_id"]
+    vulnerability_type = str(detail.get("vulnerability_type") or "").lower()
+    kb_types = " ".join(intel.get("vulnerability_types") or []).lower()
+    kb_cwes = {str(c).upper() for c in (intel.get("cwes") or [])}
+    xss_related = (
+        "xss" in vulnerability_type
+        or "cross-site scripting" in vulnerability_type
+        or "xss" in kb_types
+        or detail.get("cwe") == "CWE-79"
+        or "CWE-79" in kb_cwes
+    )
+    # Fallback: the persisted local report is derived from the CVE's trusted
+    # references; a literal XSS mention there is a safe "applicable" signal.
+    if not xss_related and rdata.has_report(cve):
+        try:
+            report_text = (rdata.get_report(cve).get("markdown") or "")[:200000].lower()
+        except ResearchDataError:
+            report_text = ""
+        xss_related = "xss" in report_text or "cross-site scripting" in report_text
+    cross_nav = {
+        "queue_cve_url": _ui_link("/ui/research/queue", cve=cve),
+        "tasks_cve_url": _ui_link("/ui/research/tasks", cve=cve),
+        "kb_cve_url": _ui_link("/ui/kb", cve=cve),
+        "xss_search_url": _ui_link("/ui/xss", q=cve) if xss_related else None,
+        "cve_task_count": len(tasks),
+    }
     return templates.TemplateResponse(
         request,
         "research_detail.html",
         _ctx(request, active="research", page_title=cve, r=detail, cve=cve,
-             intel=intel, tasks=tasks, task_by_queue=task_by_queue),
+             intel=intel, tasks=tasks, task_by_queue=task_by_queue,
+             **cross_nav),
     )
 
 
@@ -473,6 +504,37 @@ def ui_xss(
     )
 
 
+_CVE_IN_TEXT_RE = re.compile(r"CVE-\d{4}-\d{4,7}")
+
+
+def _first_cve(candidate: dict) -> str | None:
+    """First CVE id literally present in a candidate record (validated regex).
+
+    Only used to build a trusted, regex-validated link to existing research;
+    it never invents an id.
+    """
+
+    def walk(value):
+        if isinstance(value, dict):
+            for item in value.values():
+                found = walk(item)
+                if found:
+                    return found
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                found = walk(item)
+                if found:
+                    return found
+        elif isinstance(value, str):
+            for match in _CVE_IN_TEXT_RE.finditer(value):
+                candidate_id = match.group(0)
+                if rdata.CVE_RE.match(candidate_id):
+                    return candidate_id
+        return None
+
+    return walk(candidate)
+
+
 @router.get("/ui/xss/{candidate_id}", response_class=HTMLResponse, dependencies=_UI_AUTH)
 def ui_xss_detail(request: Request, candidate_id: str):
     try:
@@ -495,6 +557,15 @@ def ui_xss_detail(request: Request, candidate_id: str):
             kid = str(item.get("knowledge_id") or "")
             if rdata.KB_ID_RE.match(kid):
                 item["kb_url"] = build_url(f"/ui/kb/{kid}")
+    # Deterministic cross-navigation: link the candidate back to research when
+    # a CVE id is literally present (regex-validated, never constructed).
+    cand["cve"] = _first_cve(cand)
+    cand["research_url"] = (
+        build_url(f"/ui/research/{cand['cve']}") if cand["cve"] else None
+    )
+    cand["queue_url"] = (
+        _ui_link("/ui/research/queue", cve=cand["cve"]) if cand["cve"] else None
+    )
     # Optional R7 LLM research (read-only, fail-safe): missing or malformed
     # records render as a neutral absence state, never as an error page.
     # validated_id is the normalized candidate id (get_xss already validated).
@@ -580,6 +651,16 @@ def ui_kb_detail(request: Request, kid: str):
     )
     doc["research_url"] = (
         build_url(f"/ui/research/{doc['cve']}")
+        if doc["cve"] and rdata.CVE_RE.match(doc["cve"])
+        else None
+    )
+    doc["queue_url"] = (
+        _ui_link("/ui/research/queue", cve=doc["cve"])
+        if doc["cve"] and rdata.CVE_RE.match(doc["cve"])
+        else None
+    )
+    doc["tasks_url"] = (
+        _ui_link("/ui/research/tasks", cve=doc["cve"])
         if doc["cve"] and rdata.CVE_RE.match(doc["cve"])
         else None
     )

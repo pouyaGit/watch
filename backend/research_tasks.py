@@ -35,6 +35,20 @@ def task_by_queue() -> dict:
     return {item["queue_id"]: item["task_id"] for item in data["items"]}
 
 
+def task_summary() -> dict:
+    """Read-only workflow counts for the dashboard (bounded local scans)."""
+
+    from ai.schemas.research_task import TASK_STATUSES
+
+    by_status = {}
+    total = 0
+    for status in TASK_STATUSES:
+        count = task_store().list(limit=1, status=status)["total"]
+        by_status[status] = count
+        total += count
+    return {"total": total, "by_status": by_status}
+
+
 def create_task(cve, program, queue_id, title=None, notes=None, references=None):
     return task_store().create(
         cve=cve,

@@ -26,7 +26,9 @@
         <span class="mono">{{ '%.2f' | format(doc.confidence) if doc.confidence is number else (doc.confidence if doc.confidence is not none else '—') }}</span></span>
       {% if doc.cve %}<span class="dm-item"><span class="dm-k">CVE</span>
         <span class="mono">{{ doc.cve }}</span>
-        {% if doc.research_url %}<a class="text-xs" href="{{ doc.research_url }}">research →</a>{% endif %}</span>{% endif %}
+        {% if doc.research_url %}<a class="text-xs" href="{{ doc.research_url }}">research →</a>{% endif %}
+        {% if doc.queue_url %}<a class="text-xs" href="{{ doc.queue_url }}">queue →</a>{% endif %}
+        {% if doc.tasks_url %}<a class="text-xs" href="{{ doc.tasks_url }}">tasks →</a>{% endif %}</span>{% endif %}
       {% if doc.indexed_at %}<span class="dm-item"><span class="dm-k">Indexed</span><span class="mono text-xs">{{ doc.indexed_at }}</span></span>{% endif %}
       {% if doc.published_at %}<span class="dm-item"><span class="dm-k">Published</span><span class="mono text-xs">{{ doc.published_at }}</span></span>{% endif %}
     </div>
