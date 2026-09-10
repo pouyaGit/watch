@@ -47,7 +47,7 @@ User=root
 WorkingDirectory=/opt/watch
 Slice=watch-heavy.slice
 
-Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/home/pouya_behnia/go/bin:/usr/local/bin:/usr/bin:/bin"
 
 ExecStart=/opt/watch/run-heavy-guarded.sh \
     /opt/watch/venv/bin/python3 \
@@ -88,7 +88,7 @@ User=root
 WorkingDirectory=/opt/watch
 Slice=watch-heavy.slice
 
-Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/home/pouya_behnia/go/bin:/usr/local/bin:/usr/bin:/bin"
 
 ExecStart=/opt/watch/run-heavy-guarded.sh \
     /opt/watch/venv/bin/python3 \
@@ -130,7 +130,7 @@ User=root
 WorkingDirectory=/opt/watch
 Slice=watch-heavy.slice
 
-Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/home/pouya_behnia/go/bin:/usr/local/bin:/usr/bin:/bin"
 
 ExecStart=/opt/watch/run-heavy-guarded.sh \
     /opt/watch/venv/bin/python3 \
@@ -171,7 +171,7 @@ User=root
 WorkingDirectory=/opt/watch
 Slice=watch-heavy.slice
 
-Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/home/pouya_behnia/go/bin:/usr/local/bin:/usr/bin:/bin"
 
 ExecStart=/opt/watch/run-heavy-guarded.sh \
     /opt/watch/venv/bin/python3 \
@@ -212,7 +212,7 @@ User=root
 WorkingDirectory=/opt/watch
 Slice=watch-heavy.slice
 
-Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/home/pouya_behnia/go/bin:/usr/local/bin:/usr/bin:/bin"
 
 ExecStart=/opt/watch/run-heavy-guarded.sh \
     /opt/watch/venv/bin/python3 \
