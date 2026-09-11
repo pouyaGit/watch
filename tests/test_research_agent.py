@@ -215,7 +215,7 @@ class TestSchedulerConfig(unittest.TestCase):
 
     def test_conservative_defaults(self):
         config = SchedulerConfig.from_env({})
-        self.assertEqual(config.window_start, "18:00")
+        self.assertEqual(config.window_start, "12:00")
         self.assertEqual(config.window_end, "00:00")
         self.assertEqual(config.max_minutes, 300)
         self.assertEqual(config.max_plans, 5)
@@ -297,6 +297,48 @@ class TestWindow(unittest.TestCase):
         self.assertEqual(nxt.day, 1)
         later = next_window_start(datetime(2026, 1, 1, 19, 0), "18:00", "00:00")
         self.assertEqual(later.day, 2)
+
+    def test_production_window_tehran_boundaries(self):
+        # 12:00-00:00 Asia/Tehran: start inclusive, end exclusive.
+        from zoneinfo import ZoneInfo
+
+        tehran = ZoneInfo("Asia/Tehran")
+
+        def at(hour, minute):
+            return datetime(2026, 9, 11, hour, minute, tzinfo=tehran)
+
+        self.assertFalse(in_window(at(11, 59), "12:00", "00:00"))
+        self.assertTrue(in_window(at(12, 0), "12:00", "00:00"))
+        self.assertTrue(in_window(at(23, 59), "12:00", "00:00"))
+        self.assertFalse(in_window(at(0, 0), "12:00", "00:00"))
+
+    def test_production_default_window_tehran(self):
+        # The shipped default window is 12:00-00:00 Asia/Tehran.
+        from zoneinfo import ZoneInfo
+
+        tehran = ZoneInfo("Asia/Tehran")
+        cfg = SchedulerConfig.from_env({})
+        self.assertEqual(cfg.window_start, "12:00")
+        self.assertEqual(cfg.window_end, "00:00")
+        sch = ResearchScheduler(cfg, plan_loader=lambda: [])
+        self.assertFalse(
+            sch.in_window(
+                datetime(2026, 9, 11, 11, 59, tzinfo=tehran)
+            )
+        )
+        self.assertTrue(
+            sch.in_window(
+                datetime(2026, 9, 11, 12, 0, tzinfo=tehran)
+            )
+        )
+        self.assertTrue(
+            sch.in_window(
+                datetime(2026, 9, 11, 23, 59, tzinfo=tehran)
+            )
+        )
+        self.assertFalse(
+            sch.in_window(datetime(2026, 9, 11, 0, 0, tzinfo=tehran))
+        )
 
 
 # ---------------------------------------------------------------------------

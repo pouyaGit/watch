@@ -84,7 +84,7 @@ def in_window(
 ) -> bool:
     """True when ``now`` (already in the configured tz) is inside the window.
 
-    Supports windows crossing midnight (e.g. 18:00 -> 00:00 or 22:00 -> 06:00).
+    Supports windows crossing midnight (e.g. 12:00 -> 00:00 or 22:00 -> 06:00).
     A zero-length window (start == end) is always closed.
     """
     start = parse_hhmm(window_start)
@@ -174,7 +174,7 @@ def acquire_lock(path: str | Path) -> Iterator[bool]:
 @dataclass
 class SchedulerConfig:
     enabled: bool = False
-    window_start: str = "18:00"
+    window_start: str = "12:00"
     window_end: str = "00:00"
     max_minutes: int = 300
     max_plans: int = 5
@@ -218,7 +218,7 @@ class SchedulerConfig:
 
         return cls(
             enabled=_parse_bool(get("WATCH_RESEARCH_ENABLED"), False),
-            window_start=str(get("WATCH_RESEARCH_WINDOW_START", "18:00")),
+            window_start=str(get("WATCH_RESEARCH_WINDOW_START", "12:00")),
             window_end=str(get("WATCH_RESEARCH_WINDOW_END", "00:00")),
             max_minutes=_parse_int(get("WATCH_RESEARCH_MAX_MINUTES"), 300),
             max_plans=_parse_int(get("WATCH_RESEARCH_MAX_PLANS"), 5),
