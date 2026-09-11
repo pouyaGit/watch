@@ -189,6 +189,25 @@ class SchedulerConfig:
     lock_path: str = "/run/watch-research.lock"
     agent_dir: str = "ai_data/research/agent"
     research_dir: str = "ai_data/research"
+    # Stage R24.8: opt-in public-source discovery. Disabled by default; when
+    # false the R23 agent path is used and NO R24 discovery network traffic
+    # occurs. The initial production envelope is deliberately tiny.
+    discovery: bool = False
+    discovery_max_plans: int = 1
+    discovery_max_rounds: int = 1
+    discovery_max_queries_per_plan: int = 3
+    discovery_max_discovered: int = 5
+    discovery_max_fetched: int = 3
+    discovery_max_bytes_per_source: int = 2_000_000
+    discovery_max_bytes_per_run: int = 4_000_000
+    discovery_max_llm_calls: int = 1
+    discovery_deadline_seconds: int = 120
+    # Stage R24.11: optional LLM reliability configuration. Defaults are safe:
+    # no fallback model, no retries, structured JSON response format.
+    llm_model: str = ""
+    llm_fallback_model: str = ""
+    llm_max_retries: int = 0
+    llm_response_format: str = "json"
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "SchedulerConfig":
@@ -214,6 +233,44 @@ class SchedulerConfig:
             ),
             research_dir=str(
                 get("WATCH_RESEARCH_RESEARCH_DIR", "ai_data/research")
+            ),
+            discovery=_parse_bool(get("WATCH_RESEARCH_DISCOVERY"), False),
+            discovery_max_plans=_parse_int(
+                get("WATCH_RESEARCH_DISCOVERY_MAX_PLANS"), 1
+            ),
+            discovery_max_rounds=_parse_int(
+                get("WATCH_RESEARCH_DISCOVERY_MAX_ROUNDS"), 1
+            ),
+            discovery_max_queries_per_plan=_parse_int(
+                get("WATCH_RESEARCH_DISCOVERY_MAX_QUERIES_PER_PLAN"), 3
+            ),
+            discovery_max_discovered=_parse_int(
+                get("WATCH_RESEARCH_DISCOVERY_MAX_DISCOVERED"), 5
+            ),
+            discovery_max_fetched=_parse_int(
+                get("WATCH_RESEARCH_DISCOVERY_MAX_FETCHED"), 3
+            ),
+            discovery_max_bytes_per_source=_parse_int(
+                get("WATCH_RESEARCH_DISCOVERY_MAX_BYTES_PER_SOURCE"), 2_000_000
+            ),
+            discovery_max_bytes_per_run=_parse_int(
+                get("WATCH_RESEARCH_DISCOVERY_MAX_BYTES_PER_RUN"), 4_000_000
+            ),
+            discovery_max_llm_calls=_parse_int(
+                get("WATCH_RESEARCH_DISCOVERY_MAX_LLM_CALLS"), 1
+            ),
+            discovery_deadline_seconds=_parse_int(
+                get("WATCH_RESEARCH_DISCOVERY_DEADLINE_SECONDS"), 120
+            ),
+            llm_model=str(get("WATCH_RESEARCH_LLM_MODEL", "") or ""),
+            llm_fallback_model=str(
+                get("WATCH_RESEARCH_LLM_FALLBACK_MODEL", "") or ""
+            ),
+            llm_max_retries=_parse_int(
+                get("WATCH_RESEARCH_LLM_MAX_RETRIES"), 0
+            ),
+            llm_response_format=str(
+                get("WATCH_RESEARCH_LLM_RESPONSE_FORMAT", "json") or "json"
             ),
         )
 
@@ -275,6 +332,20 @@ class ResearchScheduler:
             moment, self.config.window_start, self.config.window_end
         ).isoformat()
 
+    def _discovery_budget(self) -> dict:
+        cfg = self.config
+        return {
+            "max_plans": cfg.discovery_max_plans,
+            "max_rounds": cfg.discovery_max_rounds,
+            "max_queries_per_plan": cfg.discovery_max_queries_per_plan,
+            "max_discovered": cfg.discovery_max_discovered,
+            "max_fetched": cfg.discovery_max_fetched,
+            "max_bytes_per_source": cfg.discovery_max_bytes_per_source,
+            "max_bytes_per_run": cfg.discovery_max_bytes_per_run,
+            "max_llm_calls": cfg.discovery_max_llm_calls,
+            "deadline_seconds": cfg.discovery_deadline_seconds,
+        }
+
     # -- read-only preview ------------------------------------------------
     def status(self, now: datetime | None = None) -> dict:
         moment = now or self._now()
@@ -293,6 +364,8 @@ class ResearchScheduler:
             "max_plans": self.config.max_plans,
             "network": self.config.network,
             "llm": self.config.llm,
+            "discovery": self.config.discovery,
+            "discovery_budget": self._discovery_budget(),
             "eligible_plans": eligible,
             "eligible_count": len(eligible),
             "total_plans": len(plans),
@@ -321,6 +394,8 @@ class ResearchScheduler:
             "window": self.config.window_label(),
             "network": self.config.network,
             "llm": self.config.llm,
+            "discovery": self.config.discovery,
+            "discovery_budget": self._discovery_budget(),
             "plans": selected,
         }
 

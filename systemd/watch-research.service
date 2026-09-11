@@ -25,6 +25,12 @@ Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:
 Environment="WATCH_RESEARCH_ENABLED=true"
 Environment="WATCH_RESEARCH_NETWORK=true"
 
+# Stage R24.8: public-source discovery is DISABLED by default. When false the
+# R23 research path is used and no R24 discovery network calls occur. Enable
+# only by an explicit owner decision (WATCH_RESEARCH_DISCOVERY=true); the
+# conservative discovery budget below is the initial production envelope.
+Environment="WATCH_RESEARCH_DISCOVERY=false"
+
 # The application ALSO enforces an flock(2) lock; this outer flock prevents
 # two service instances from starting at once without conflicting with the
 # app lock (different path).

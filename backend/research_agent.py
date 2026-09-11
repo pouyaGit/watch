@@ -68,6 +68,9 @@ def agent_status() -> dict:
         "max_plans": info.get("max_plans"),
         "network": info.get("network", False),
         "llm": info.get("llm", False),
+        # R24.8: public-source discovery state + conservative budget (read-only).
+        "discovery": info.get("discovery", getattr(config, "discovery", False)),
+        "discovery_budget": info.get("discovery_budget", {}),
         "next_run": info.get("next_run"),
         "eligible_count": info.get("eligible_count", 0),
         "total_plans": info.get("total_plans", 0),

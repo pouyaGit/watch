@@ -1372,7 +1372,85 @@ def _build_llm_provider():
     return OpenRouterProvider(model=model) if model else OpenRouterProvider()
 
 
+def _build_discovery_llm_provider(model, *, response_format_json: bool = True):
+    """Build an OpenRouter provider for the R24 discovery path only.
+
+    Does not change ``_build_llm_provider`` (the shared R23 path). ``model`` may
+    be ``None`` to use the existing OPENROUTER_MODEL configuration.
+    """
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    from ai.llm.openrouter import OpenRouterProvider
+
+    return OpenRouterProvider(model=model, response_format_json=response_format_json)
+
+
+def _build_discovery_agent(config):
+    """Build the R24.8 discovery adapter (netguard-routed, bounded).
+
+    LLM is used only when ``WATCH_RESEARCH_LLM`` is enabled (unchanged R23
+    policy). The transport is the single real R24.8 adapter; both provider
+    discovery and source-body fetching pass through R24.3 netguard.
+    """
+    from ai.research_agent.discovery_runner import DiscoveryResearchAgent
+    from ai.research_agent.llm_loop import LoopBudgets
+    from ai.research_agent.transport import HTTPTransport
+
+    transport = HTTPTransport(
+        max_bytes=config.discovery_max_bytes_per_source,
+        total_timeout=float(config.discovery_deadline_seconds),
+    )
+    budgets = LoopBudgets(
+        max_rounds=config.discovery_max_rounds,
+        max_queries_per_plan=config.discovery_max_queries_per_plan,
+        round2_reserve=0,
+        max_queries_per_run=config.discovery_max_queries_per_plan,
+        max_discovered=config.discovery_max_discovered,
+        max_fetched_per_plan=config.discovery_max_fetched,
+        max_fetched_per_run=config.discovery_max_fetched,
+        max_bytes_per_source=config.discovery_max_bytes_per_source,
+        max_bytes_per_run=config.discovery_max_bytes_per_run,
+        max_llm_calls_per_plan=config.discovery_max_llm_calls,
+        max_llm_calls_per_run=config.discovery_max_llm_calls,
+    )
+    # R24.11: primary provider + optional explicitly-configured fallback model.
+    # Fallback is disabled unless WATCH_RESEARCH_LLM_FALLBACK_MODEL is set, and
+    # every attempt (primary/fallback/retry) shares the same LLM call budget.
+    llm = None
+    llm_fallback = None
+    if config.llm:
+        response_format_json = (
+            str(getattr(config, "llm_response_format", "json") or "json").lower()
+            != "text"
+        )
+        llm = _build_discovery_llm_provider(
+            getattr(config, "llm_model", "") or None,
+            response_format_json=response_format_json,
+        )
+        fallback_model = getattr(config, "llm_fallback_model", "") or ""
+        if fallback_model:
+            llm_fallback = _build_discovery_llm_provider(
+                fallback_model, response_format_json=response_format_json
+            )
+    return DiscoveryResearchAgent(
+        transport=transport,
+        llm=llm,
+        llm_enabled=config.llm,
+        llm_fallback=llm_fallback,
+        llm_max_retries=int(getattr(config, "llm_max_retries", 0) or 0),
+        budgets=budgets,
+        agent_dir=config.agent_dir,
+        research_dir=config.research_dir,
+        deadline_seconds=config.discovery_deadline_seconds,
+        max_plans=config.discovery_max_plans,
+    )
+
+
 def _build_research_agent(config):
+    if getattr(config, "discovery", False):
+        return _build_discovery_agent(config)
+
     from ai.research_agent.agent import ResearchAgent
     from ai.research_agent.sources import ResearchSourceCollector
 
@@ -1417,6 +1495,18 @@ def run_agent_status(args: argparse.Namespace) -> int:
     print(f"Max plans: {info['max_plans']}")
     print(f"Network: {'enabled' if info['network'] else 'disabled'}")
     print(f"LLM: {'enabled' if info['llm'] else 'disabled'}")
+    print(f"R24 discovery: {'enabled' if info.get('discovery') else 'disabled'}")
+    if info.get("discovery"):
+        budget = info.get("discovery_budget") or {}
+        print(
+            "  discovery budget: "
+            f"plans={budget.get('max_plans')} rounds={budget.get('max_rounds')} "
+            f"queries/plan={budget.get('max_queries_per_plan')} "
+            f"discovered={budget.get('max_discovered')} "
+            f"fetched={budget.get('max_fetched')} "
+            f"llm_calls={budget.get('max_llm_calls')} "
+            f"deadline={budget.get('deadline_seconds')}s"
+        )
     print(f"Next run: {info['next_run']}")
     print()
     print(f"Eligible plans ({info['eligible_count']}):")
@@ -1446,6 +1536,7 @@ def run_agent_dry_run(args: argparse.Namespace) -> int:
     print(f"Window: {preview['window']}")
     print(f"Network: {'enabled' if preview['network'] else 'disabled'}")
     print(f"LLM: {'enabled' if preview['llm'] else 'disabled'}")
+    print(f"R24 discovery: {'enabled' if preview.get('discovery') else 'disabled'}")
     print()
     print("Eligible plans:")
     if not preview["plans"]:

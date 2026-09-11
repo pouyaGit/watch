@@ -33,6 +33,15 @@ __all__ = [
     "store_run",
     "list_runs",
     "latest_run",
+    # Stage R24.5 additive discovery-block persistence (does not alter any
+    # existing R23 storage behavior or schema).
+    "discovery_path",
+    "store_discovery",
+    "load_discovery",
+    # Stage R24.6 additive LLM research-loop persistence.
+    "research_loop_path",
+    "store_research_loop",
+    "load_research_loop",
 ]
 
 DEFAULT_AGENT_DIR = Path("ai_data/research/agent")
@@ -264,3 +273,121 @@ def list_runs(base: str | Path | None = None) -> list[dict]:
 def latest_run(base: str | Path | None = None) -> dict | None:
     runs = list_runs(base)
     return runs[-1] if runs else None
+
+
+# ---------------------------------------------------------------------------
+# Stage R24.5 — additive discovery-block persistence.
+#
+# The R24 discovery block is stored in a SEPARATE artifact so the existing R23
+# result schema and result files are completely untouched (old results remain
+# byte-for-byte valid). Writes are atomic and idempotent, matching the existing
+# storage conventions. No database, no network.
+# ---------------------------------------------------------------------------
+DISCOVERY_SUFFIX = ".discovery.json"
+
+
+def discovery_path(
+    plan_id: str, rule_version: str, base: str | Path | None = None
+) -> Path:
+    """Path of the additive R24 discovery block for one plan+rule."""
+    safe_rule = re.sub(r"[^A-Za-z0-9_.-]", "_", str(rule_version or "r24-1")) or "r24-1"
+    return _base_dir(base) / f"{_safe(plan_id)}.{safe_rule}{DISCOVERY_SUFFIX}"
+
+
+def store_discovery(
+    block: Any,
+    *,
+    base: str | Path | None = None,
+    overwrite: bool = False,
+) -> tuple[Path, bool]:
+    """Persist one R24 discovery block; return ``(path, written)``.
+
+    Atomic (temp file + ``os.replace``) and idempotent by default: an existing
+    block for the same plan+rule is left untouched unless ``overwrite=True``.
+    ``block`` is any object with ``model_dump`` or a plain dict carrying
+    ``plan_id`` / ``rule_version``.
+    """
+    payload = (
+        block.model_dump(mode="json") if hasattr(block, "model_dump") else dict(block)
+    )
+    dest = discovery_path(
+        payload.get("plan_id"), payload.get("rule_version"), base
+    )
+    if dest.exists() and not overwrite:
+        return dest, False
+    text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    _atomic_write_text(dest, text)
+    return dest, True
+
+
+def load_discovery(
+    plan_id: str, rule_version: str, base: str | Path | None = None
+) -> dict | None:
+    """Load one R24 discovery block (``None`` when absent or unreadable)."""
+    try:
+        dest = discovery_path(plan_id, rule_version, base)
+    except ValueError:
+        return None
+    try:
+        payload = json.loads(dest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+# ---------------------------------------------------------------------------
+# Stage R24.6 — additive LLM research-loop persistence.
+#
+# Separate artifact again, so R23 results and R24.5 discovery blocks are
+# untouched. Atomic + idempotent; no database, no network, no findings/alerts.
+# ---------------------------------------------------------------------------
+LOOP_SUFFIX = ".loop.json"
+
+
+def research_loop_path(
+    plan_id: str, rule_version: str, base: str | Path | None = None
+) -> Path:
+    """Path of the additive R24.6 LLM research-loop artifact for one plan+rule."""
+    safe_rule = re.sub(r"[^A-Za-z0-9_.-]", "_", str(rule_version or "r24-loop-1")) or "r24-loop-1"
+    return _base_dir(base) / f"{_safe(plan_id)}.{safe_rule}{LOOP_SUFFIX}"
+
+
+def store_research_loop(
+    result: Any,
+    *,
+    base: str | Path | None = None,
+    overwrite: bool = False,
+) -> tuple[Path, bool]:
+    """Persist one R24.6 loop result; return ``(path, written)``.
+
+    Atomic (temp file + ``os.replace``) and idempotent by default. Keyed by
+    ``plan_id`` + ``loop_rule_version``. Never persists API keys.
+    """
+    payload = (
+        result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result)
+    )
+    dest = research_loop_path(
+        payload.get("plan_id"),
+        payload.get("loop_rule_version", "r24-loop-1"),
+        base,
+    )
+    if dest.exists() and not overwrite:
+        return dest, False
+    text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    _atomic_write_text(dest, text)
+    return dest, True
+
+
+def load_research_loop(
+    plan_id: str, rule_version: str = "r24-loop-1", base: str | Path | None = None
+) -> dict | None:
+    """Load one R24.6 loop result (``None`` when absent or unreadable)."""
+    try:
+        dest = research_loop_path(plan_id, rule_version, base)
+    except ValueError:
+        return None
+    try:
+        payload = json.loads(dest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None

@@ -123,6 +123,7 @@ class OpenRouterProvider(LLMProvider):
         model_env: str = "OPENROUTER_MODEL",
         max_tokens: int | None = None,
         max_tokens_env: str = "OPENROUTER_MAX_TOKENS",
+        response_format_json: bool = True,
     ) -> None:
         resolved_api_key = (
             api_key
@@ -150,6 +151,11 @@ class OpenRouterProvider(LLMProvider):
         self.model = resolved_model
         self.base_url = base_url
         self.timeout = timeout
+        # R24.11: some free models reject ``response_format={"type":"json_object"}``.
+        # Default True preserves the existing R23/R24 behavior exactly; callers
+        # may explicitly opt out for compatibility (the response is still parsed
+        # and validated by the caller).
+        self.response_format_json = bool(response_format_json)
         self.max_tokens = _resolve_max_tokens(
             max_tokens,
             max_tokens_env,
@@ -213,18 +219,21 @@ class OpenRouterProvider(LLMProvider):
         in any error path.
         """
 
+        request_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            "max_tokens": self.max_tokens,
+        }
+        if self.response_format_json:
+            request_kwargs["response_format"] = {"type": "json_object"}
+
         try:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-                response_format={"type": "json_object"},
-                max_tokens=self.max_tokens,
-            )
+            response = self._client.chat.completions.create(**request_kwargs)
         except APIStatusError as exc:
             raise OpenRouterProviderError(
                 f"OpenRouter returned HTTP "
