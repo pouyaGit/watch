@@ -88,12 +88,9 @@
       {% else %}no tasks yet{% endif %}
     </div></a>
   <a href="{{ xss_url }}" class="stat-card stat-link">
-    <div class="stat-label">XSS Candidates</div>
-    <div class="stat-value accent2">{{ research_overview.xss_candidates | fmtnum }}</div>
-    <div class="stat-sub">
-      {% for st, n in research_overview.xss_by_status.items() %}{{ st | lower | replace('_', ' ') }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}
-      {% if not research_overview.xss_by_status %}none yet{% endif %}
-    </div></a>
+    <div class="stat-label">Knowledge Patterns</div>
+    <div class="stat-value accent2">{{ research_overview.xss_knowledge_patterns | fmtnum if research_overview.xss_knowledge_patterns is not none else research_overview.xss_candidates | fmtnum }}</div>
+    <div class="stat-sub">Target Research Candidates: {{ research_overview.xss_target_candidates | fmtnum if research_overview.xss_target_candidates is not none else 0 }} · generic patterns, not target findings</div></a>
   <a href="{{ kb_url }}" class="stat-card stat-link">
     <div class="stat-label">KB Documents</div>
     <div class="stat-value">{{ research_overview.kb_documents | fmtnum }}</div></a>

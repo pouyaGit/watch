@@ -7,12 +7,12 @@
 {% block title %}{{ c.candidate_id }} — XSS — WATCH{% endblock %}
 {% block page %}{{ c.candidate_id }}{% endblock %}
 
-{% from "macros.html" import empty_state, xss_status_badge, research_banner with context %}
+{% from "macros.html" import empty_state, xss_status_badge, xss_presentation_badge, research_banner with context %}
 
 {% block content %}
-<a class="back-link" href="{{ xss_url }}">← XSS candidates</a>
+<a class="back-link" href="{{ xss_url }}">← XSS knowledge patterns</a>
 
-{{ research_banner("RESEARCH CANDIDATE — NOT A PRODUCTION FINDING") }}
+{{ research_banner(c.presentation_label or "KNOWLEDGE PATTERN — NOT TARGET VALIDATED") }}
 
 {# ---------- cross-navigation (validated CVE id only) ---------- #}
 {% if c.research_url %}
@@ -25,7 +25,7 @@
 <div class="panel mb-6">
   <div class="panel-head">
     <h2 class="mono">{{ c.candidate_id }}</h2>
-    <span>{{ xss_status_badge(c.status) }}</span>
+    <span>{{ xss_presentation_badge(c.presentation_type) }}{{ xss_status_badge(c.status) }}</span>
   </div>
   <div class="panel-body">
     <div class="detail-meta">
@@ -40,6 +40,29 @@
     <p class="prose"><strong>Pattern (untrusted text):</strong> {{ c.vulnerability_pattern }}</p>
     {% endif %}
     {% if c.disclaimer %}<p class="prose text-muted">{{ c.disclaimer }}</p>{% endif %}
+  </div>
+</div>
+
+{# ---------- D9 scope block: impossible to mistake for a target finding ---------- #}
+<div class="panel mb-6">
+  <div class="panel-head"><h2>Scope</h2>{{ xss_presentation_badge(c.presentation_type) }}</div>
+  <div class="panel-body">
+    <div class="detail-meta">
+      <span class="dm-item"><span class="dm-k">Scope</span>{{ c.scope or 'Generic XSS knowledge pattern' }}</span>
+      <span class="dm-item"><span class="dm-k">Target</span>{{ c.presentation.target if c.presentation and c.presentation.target else 'No target associated' }}</span>
+      <span class="dm-item"><span class="dm-k">Validation</span><span class="mono" title="{{ c.validation_state or 'NOT_TESTED' }}">{% if c.presentation_type == 'TARGET_RESEARCH_CANDIDATE' %}NOT VERIFIED{% else %}NOT TESTED{% endif %}</span></span>
+    </div>
+    {% if c.presentation_type == 'TARGET_RESEARCH_CANDIDATE' %}
+    <p class="prose">Target-specific research candidate</p>
+    {% if c.presentation and c.presentation.target %}<p class="prose"><strong>Target (explicitly recorded):</strong> {{ c.presentation.target }}</p>{% endif %}
+    <p class="prose text-muted">Not verified</p>
+    {% else %}
+    <p class="prose">Generic XSS knowledge pattern</p>
+    <p class="prose text-muted">No target associated</p>
+    <p class="prose text-muted">Not target-specific</p>
+    <p class="prose text-muted">Not tested</p>
+    {% endif %}
+    <div class="research-banner">This record describes reusable security knowledge. It does NOT indicate an XSS finding on any monitored program.</div>
   </div>
 </div>
 
@@ -194,5 +217,5 @@
   </div>
 </section>
 
-<p class="disclaimer-foot">{{ c.disclaimer or 'Research candidate only — not a confirmed vulnerability.' }}</p>
+<p class="disclaimer-foot">{{ c.disclaimer or 'Generic XSS knowledge pattern — not target validated, not a confirmed vulnerability.' }}</p>
 {% endblock %}

@@ -523,6 +523,25 @@ body {
 }
 .badge-sm.bf { background: #3d1a00; border-color: #ff8c00; color: #ffb84d; font-weight: 600; }
 
+/* Stage R25: Money Score priority bands (research attention only). */
+.badge-sm.prio-p1 { background: #3d2200; border-color: #f0883e; color: #f0a35e; font-weight: 600; }
+.badge-sm.prio-p2 { background: #0d2b45; border-color: #58a6ff; color: #79b8ff; font-weight: 600; }
+
+/* Stage R26.1: opportunity classes (research attention only, not verdicts). */
+.badge-sm.opp-high-value { background: #3d2200; border-color: #f0883e; color: #f0a35e; font-weight: 600; }
+.badge-sm.opp-good-opportunity { background: #0d2b45; border-color: #58a6ff; color: #79b8ff; font-weight: 600; }
+.badge-sm.opp-blocked { background: #3d1113; border-color: #f85149; color: #ff7b72; font-weight: 600; }
+.badge-sm.opp-low-confidence { background: #3d3000; border-color: #d29922; color: #e3b341; }
+.badge-sm.opp-defer { background: var(--panel2); border-color: var(--border); color: var(--muted); }
+
+/* Stage R26.2: recommended-action badges (read-only decision layer). */
+.badge-sm.action-verify-asset-match { background: #3d1113; border-color: #f85149; color: #ff7b72; font-weight: 600; }
+.badge-sm.action-gather-evidence { background: #3d3000; border-color: #d29922; color: #e3b341; }
+.badge-sm.action-start-research { background: #0d2b45; border-color: #58a6ff; color: #79b8ff; font-weight: 600; }
+.badge-sm.action-continue-research { background: #0d3320; border-color: #3fb950; color: #56d364; font-weight: 600; }
+.badge-sm.action-review-outcome { background: #2d1b3d; border-color: #a371f7; color: #b392f0; font-weight: 600; }
+.badge-sm.action-defer { background: var(--panel2); border-color: var(--border); color: var(--muted); }
+
 /* ================= change timeline ================= */
 .change-row {
   display: flex;

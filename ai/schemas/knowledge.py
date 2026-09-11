@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class KnowledgeSourceClaims(BaseModel):
@@ -149,6 +149,45 @@ class KnowledgeResearchQueueItem(BaseModel):
     unknown_factors: list[str] = Field(default_factory=list)
     evidence: list[KnowledgeIntelligenceEvidence] = Field(default_factory=list)
     rule_version: str = "r18-1"
+
+
+class KnowledgeEconomicValue(BaseModel):
+    """Stage R25.2 additive deterministic economic research-prioritization.
+
+    Research-attention only — never a vulnerability verdict, never a payout
+    prediction, never a finding. Composes existing R15-R24 outputs into a
+    bounded 0-100 Money Score with VALUE/CONFIDENCE/EFFORT/RISK subscores.
+    Standalone (not attached to a document): one item per lead. ``research_only``
+    is forced True; ``rule_version`` is fixed ``r25-1``.
+    """
+
+    cve_id: str = ""
+    program: str = ""
+    lead_id: str = ""
+    plan_id: str = ""
+    queue_id: str = ""
+    task_id: str = ""
+    money_score: int = Field(default=0, ge=0, le=100)
+    priority: str = "P5_DEFER"
+    confidence: str = "LOW"
+    confidence_basis: list[str] = Field(default_factory=list)
+    effort: int = Field(default=0, ge=0, le=100)
+    effort_estimate: str = ""
+    asset_match: str = "NONE"
+    why_valuable: list[str] = Field(default_factory=list)
+    main_blockers: list[str] = Field(default_factory=list)
+    recommended_action: str = "DEFER"
+    subscores: dict = Field(default_factory=dict)
+    evidence_summary: dict = Field(default_factory=dict)
+    caps_applied: list[str] = Field(default_factory=list)
+    rule_version: str = "r25-1"
+    research_only: bool = Field(default=True, frozen=False)
+
+    @field_validator("research_only")
+    @classmethod
+    def _force_research_only(cls, value: bool) -> bool:
+        # Money Score is research prioritization only; never a verdict.
+        return True
 
 
 class KnowledgeProvenance(BaseModel):

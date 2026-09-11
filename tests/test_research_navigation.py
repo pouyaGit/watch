@@ -71,7 +71,8 @@ class TestDashboardResearchSection(_Base):
         self.assertEqual(r.status_code, 200)
         self.assertIn("Research Intelligence", r.text)
         for label in ("Research CVEs", "Research Queue", "Research Tasks",
-                      "XSS Candidates", "KB Documents", "Reports"):
+                      "Knowledge Patterns", "Target Research Candidates",
+                      "KB Documents", "Reports"):
             self.assertIn(label, r.text)
 
     def test_cards_link_to_pages(self):
@@ -185,8 +186,10 @@ class TestXssCrossNavigation(_Base):
         self.assertEqual(r.status_code, 200)
         self.assertIn("Related research", r.text)
         self.assertIn("/ui/research/CVE-", r.text)
-        # deterministic candidate stays authoritative / not verified
-        self.assertIn("RESEARCH CANDIDATE — NOT A PRODUCTION FINDING", r.text)
+        # deterministic candidate stays authoritative / not target validated
+        # (D9: generic KB pattern, no target association in this corpus)
+        self.assertIn("KNOWLEDGE PATTERN — NOT TARGET VALIDATED", r.text)
+        self.assertIn("No target associated", r.text)
 
     def test_xss_without_cve_has_no_research_link(self):
         r = self._get("/ui/xss/xss-0df931af429249e4")

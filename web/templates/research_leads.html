@@ -28,6 +28,133 @@
     <div class="stat-value">{{ summary.completed | fmtnum }}</div></div>
 </div>
 
+{% if hunt_by_priority %}
+<div class="panel mb-6">
+  <div class="panel-head"><h2>Personal hunt queue</h2>
+    <span class="badge-sm">r29-1 · research only</span></div>
+  <div class="panel-body">
+    {% for tier, label in [('HUNT_NOW', '🔥 HUNT NOW'), ('HUNT_NEXT', '➡️ HUNT NEXT'), ('VERIFY_FIRST', '⚠️ VERIFY FIRST'), ('RESEARCH_LATER', '🕒 RESEARCH LATER'), ('SKIP_FOR_NOW', '⏸ SKIP FOR NOW')] %}
+      {% set tier_items = hunt_by_priority.get(tier) or [] %}
+      {% if tier_items %}
+      <h3 class="text-sm mt-3">{{ label }}
+        <span class="text-muted text-xs">({{ tier_items | length }})</span></h3>
+      <ul class="plain">
+        {% for item in tier_items[:5] %}
+        <li class="text-sm">
+          <span class="mono">{{ item.cve_id }}</span> → <span class="mono">{{ item.program }}</span>
+          <span class="badge-sm">{{ item.money_score }} / {{ item.money_priority.split('_')[0] }}</span>
+          <span class="text-muted text-xs">{{ item.recommended_time_box }}</span>
+          <div class="text-xs text-muted">{{ item.hunt_reason }}</div>
+        </li>
+        {% endfor %}
+        {% if tier_items | length > 5 %}
+        <li class="text-xs text-muted">+{{ tier_items | length - 5 }} more</li>
+        {% endif %}
+      </ul>
+      {% endif %}
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if calibration %}
+<div class="panel mb-6">
+  <div class="panel-body rd-metarow">
+    <span class="dm-item"><span class="dm-k">ECONOMIC CALIBRATION</span>
+      <span class="badge-sm">{{ calibration.recommendation }}</span></span>
+    <span class="dm-item"><span class="dm-k">Rule</span>
+      <span class="mono text-xs">{{ calibration.rule_version }}</span></span>
+    <span class="dm-item"><span class="dm-k">Sample</span>
+      <span class="mono text-xs">{{ calibration.terminal_outcomes }} terminal outcomes</span></span>
+    <span class="dm-item"><span class="dm-k">Minimum</span>
+      <span class="mono text-xs">{{ calibration.minimum_terminal_outcomes }}</span></span>
+    <span class="dm-item"><span class="dm-k">Weights</span>
+      <span class="badge-sm">UNCHANGED</span></span>
+  </div>
+</div>
+{% endif %}
+
+{% if product_validation %}
+<div class="panel mb-6">
+  <div class="panel-body rd-metarow">
+    <span class="dm-item"><span class="dm-k">PRODUCT VALIDATION</span>
+      <span class="badge-sm">Data: {{ product_validation.data_status }}</span></span>
+    <span class="dm-item"><span class="dm-k">Decision</span>
+      <span class="mono text-xs">{{ product_validation.product_decision }}</span></span>
+    <span class="dm-item"><span class="dm-k">Sample</span>
+      <span class="mono text-xs">{{ product_validation.leads }} leads · {{ product_validation.sessions }} sessions · {{ product_validation.terminal_outcomes }} terminal outcomes</span></span>
+  </div>
+</div>
+{% endif %}
+
+{% if workflow %}
+<div class="panel mb-6">
+  <div class="panel-head"><h2>Daily research workflow</h2>
+    <span class="badge-sm">{{ workflow.workflow_version }} · read-only</span></div>
+  <div class="panel-body">
+    <div class="kpi-grid kpi-4 mb-4">
+      <div class="stat-card"><div class="stat-label">Ready</div>
+        <div class="stat-value ok">{{ workflow.ready | fmtnum }}</div></div>
+      <div class="stat-card"><div class="stat-label">Blocked</div>
+        <div class="stat-value warn">{{ workflow.blocked | fmtnum }}</div></div>
+      <div class="stat-card"><div class="stat-label">In progress</div>
+        <div class="stat-value">{{ workflow.in_progress | fmtnum }}</div></div>
+      <div class="stat-card"><div class="stat-label">Completed</div>
+        <div class="stat-value">{{ workflow.completed | fmtnum }}</div></div>
+    </div>
+    {% if workflow.top_actions %}
+    <h3 class="text-sm">Today's plan</h3>
+    <ul class="plain">
+      {% for plan in workflow.top_actions[:3] %}
+      <li class="text-sm">{{ plan.cve_id }} → {{ plan.program }}
+        <span class="badge-sm action-{{ plan.recommended_action | lower | replace('_', '-') }}">{{ plan.recommended_action | replace('_', ' ') }}</span>
+        <span class="text-muted text-xs">{{ plan.estimated_minutes }} min</span>
+        <div class="text-xs text-muted">{{ plan.next_step }}</div></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <h3 class="text-sm mt-4">Top opportunities</h3>
+    {% if workflow.top_opportunities %}
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr><th>CVE</th><th>Program</th><th>Class</th><th>Money</th><th>Action</th></tr></thead>
+        <tbody>
+          {% for item in workflow.top_opportunities %}
+          <tr>
+            <td class="mono">{{ item.cve_id }}</td>
+            <td class="mono">{{ item.program }}</td>
+            <td><span class="badge-sm">{{ item.opportunity_class | replace('_', ' ') }}</span></td>
+            <td class="mono">{{ item.money_score }} / {{ item.priority }}</td>
+            <td><span class="badge-sm">{{ item.recommended_action | replace('_', ' ') }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    {{ empty_state("No opportunities in the daily workflow.", compact=True) }}
+    {% endif %}
+    {% if workflow.recommendations %}
+    <p class="text-sm mt-4"><strong>Recommendation:</strong> {{ workflow.recommendations[0] }}</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="panel mb-6">
+  <div class="panel-body rd-metarow">
+    <span class="dm-item"><span class="dm-k">PRODUCT API</span>
+      <span class="badge-sm">API v1</span></span>
+    <span class="dm-item"><span class="dm-k">Access</span>
+      <span class="mono text-xs">Read-only</span></span>
+    <span class="dm-item"><span class="dm-k">Data</span>
+      <span class="mono text-xs">Research Intelligence</span></span>
+    <span class="dm-item"><span class="dm-k">Reference</span>
+      <a class="badge-link" href="/docs">API documentation</a>
+      <a class="badge-link" href="/openapi.json">OpenAPI</a></span>
+  </div>
+</div>
+
 <form method="get" action="/ui/research/leads" class="search-bar">
   {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
   <input type="search" name="cve" value="{{ cve }}" placeholder="CVE…"
@@ -47,7 +174,7 @@
   <table class="tbl">
     <thead>
       <tr>
-        <th>Lead</th><th>CVE</th><th>Program</th><th>Priority</th>
+        <th>Lead</th><th>CVE</th><th>Program</th><th>Money</th><th>Opportunity</th><th>Next action</th><th>Priority</th>
         <th>Relevance</th><th>Status</th><th>Next step</th><th>Why</th>
       </tr>
     </thead>
@@ -57,6 +184,9 @@
         <td><a class="badge-link" href="{{ lead.lead_url }}">{{ lead.lead_id }}</a></td>
         <td><a class="mono cve-link" href="{{ lead.cve_url }}">{{ lead.cve_id }}</a></td>
         <td class="mono">{{ lead.program }}</td>
+        <td>{% if lead.money_score is not none %}<span class="badge-sm prio-{{ lead.money_priority[:2] | lower }}" title="{{ lead.money_priority }}">{{ lead.money_score }} · {{ lead.money_priority[:2] }}</span>{% else %}<span class="text-muted text-xs">—</span>{% endif %}</td>
+        <td>{% if lead.opportunity_class %}<span class="badge-sm opp-{{ lead.opportunity_class | lower | replace('_', '-') }}">{{ lead.opportunity_class | replace('_', ' ') }}</span>{% else %}<span class="text-muted text-xs">—</span>{% endif %}</td>
+        <td>{% if lead.next_action_code %}<span class="badge-sm action-{{ lead.next_action_code | lower | replace('_', '-') }}" title="{{ lead.next_action_status }}">{{ lead.next_action_code | replace('_', ' ') }}</span>{% else %}<span class="text-muted text-xs">—</span>{% endif %}</td>
         <td><span class="badge-sm">{{ lead.priority_level }}</span>
             <div class="mono text-xs text-muted">{{ lead.priority_score }}</div></td>
         <td><span class="badge-sm">{{ lead.relevance_level }}</span>
@@ -69,9 +199,10 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="empty">
+      <tr><td colspan="11" class="empty">
         No research leads.
         <div class="empty-hint">Leads are generated deterministically from R18 queue candidates (positive priority × asset relevance only).</div>
+        <div class="empty-hint">MONEY QUEUE: no research candidates</div>
       </td></tr>
       {% endfor %}
     </tbody>

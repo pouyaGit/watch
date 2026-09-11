@@ -159,7 +159,8 @@ class TestXssLlmDashboard(unittest.TestCase):
                 self.assertIn("LLM RESEARCH", r.text)
                 self.assertIn("LLM research not generated.", r.text)
                 # deterministic authority banners stay prominent
-                self.assertIn("RESEARCH CANDIDATE", r.text)
+                # (D9: generic pattern wording, never a target finding)
+                self.assertIn("KNOWLEDGE PATTERN", r.text)
                 self.assertIn("UNTESTED RESEARCH IDEA", r.text)
 
     def test_ui_renders_llm_panel_with_kinds(self):
@@ -174,9 +175,9 @@ class TestXssLlmDashboard(unittest.TestCase):
                              "DETERMINISTIC CANDIDATE"):
                     self.assertIn(frag, r.text)
                 # deterministic status/confidence still from candidate
-                # (badge renders CANDIDATE; banner carries full wording)
+                # (badge renders CANDIDATE; banner carries D9 wording)
                 self.assertIn("CANDIDATE", r.text)
-                self.assertIn("RESEARCH CANDIDATE", r.text)
+                self.assertIn("KNOWLEDGE PATTERN", r.text)
                 self.assertIn("0.90", r.text)
                 self.assertNotIn("|safe", r.text)
 
@@ -203,7 +204,7 @@ class TestXssLlmDashboard(unittest.TestCase):
                 self.assertEqual(r.status_code, 200)
                 # deterministic candidate still renders (badge text CANDIDATE)
                 self.assertIn("CANDIDATE", r.text)
-                self.assertIn("RESEARCH CANDIDATE", r.text)
+                self.assertIn("KNOWLEDGE PATTERN", r.text)
 
     # -- safety ------------------------------------------------------------------
     def test_no_provider_or_execution_imports(self):

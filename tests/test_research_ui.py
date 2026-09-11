@@ -135,8 +135,11 @@ class TestResearchUi(unittest.TestCase):
     def test_xss_page(self):
         r = self._get("/ui/xss")
         self.assertEqual(r.status_code, 200)
-        self.assertIn("RESEARCH CANDIDATES", r.text)
-        self.assertIn("NOT PRODUCTION FINDINGS", r.text)
+        # D9 semantics: generic KB patterns, never presented as findings.
+        self.assertIn("KNOWLEDGE PATTERNS", r.text)
+        self.assertIn("NOT TARGET VALIDATED", r.text)
+        self.assertIn("Knowledge Patterns", r.text)
+        self.assertIn("Target Research Candidates", r.text)
         self.assertIn(XSS_ID, r.text)
 
     def test_xss_page_filters(self):
@@ -149,7 +152,9 @@ class TestResearchUi(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("UNTESTED RESEARCH IDEA", r.text)
         self.assertIn("NEVER EXECUTED", r.text)
-        self.assertIn("NOT A PRODUCTION FINDING", r.text)
+        # D9 semantics: generic pattern, no target claim.
+        self.assertIn("KNOWLEDGE PATTERN — NOT TARGET VALIDATED", r.text)
+        self.assertIn("No target associated", r.text)
         self.assertIn("Preconditions", r.text)
         self.assertIn("Unknowns", r.text)
 
@@ -241,7 +246,9 @@ class TestResearchUi(unittest.TestCase):
         r = self._get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Research CVEs", r.text)
-        self.assertIn("XSS Candidates", r.text)
+        # D9 semantics: generic patterns are not presented as candidates.
+        self.assertIn("Knowledge Patterns", r.text)
+        self.assertIn("Target Research Candidates", r.text)
         self.assertIn("KB Documents", r.text)
         self.assertIn("offline artifacts", r.text)
 
@@ -415,18 +422,36 @@ class TestResearchUiPolish(unittest.TestCase):
         p, q = _qs(path, **params)
         return self.client.get(p, params=q)
 
-    def test_dashboard_xss_status_breakdown_humanized(self):
+    @mock.patch("backend.dashboard.global_counts")
+    @mock.patch("backend.dashboard.program_rows")
+    @mock.patch("backend.dashboard.latest_runs")
+    @mock.patch("backend.dashboard.recent_changes")
+    def test_dashboard_xss_status_breakdown_humanized(
+        self, recent, latest, rows, counts
+    ):
+        from backend import research_data as rd
+        counts.return_value = {"programs": 1, "subdomains": 1, "live": 1,
+                               "http": 1, "urls": 1, "endpoints": 1,
+                               "params": 1, "fresh_http_24h": 0}
+        rows.return_value = []
+        latest.return_value = []
+        recent.return_value = []
+        overview = rd.get_overview()
         r = self._get("/")
         self.assertEqual(r.status_code, 200)
         # raw snake_case status tokens must not leak into the research strip
         self.assertNotIn("research_candidate:", r.text)
         self.assertNotIn("insufficient_evidence:", r.text)
-        # human-readable breakdown of the 3 real persisted candidates
-        self.assertIn("research candidate:", r.text)
-        self.assertIn("insufficient evidence:", r.text)
-        # real persisted counts on the strip (4 CVEs / 3 XSS / 1 KB / 1 report)
-        for needle in (">4<", ">3<", ">1<"):
-            self.assertIn(needle, r.text)
+        # D9 semantics: dashboard counts generic patterns separately from
+        # target-specific candidates (zero in the current corpus).
+        self.assertIn("Knowledge Patterns", r.text)
+        self.assertIn("Target Research Candidates", r.text)
+        # real persisted presentation counts on the strip (dynamic: the
+        # corpus grows, so derive needles from the file-based overview).
+        self.assertIn(f">{overview['xss_knowledge_patterns']}<", r.text)
+        self.assertIn("Target Research Candidates: "
+                      f"{overview['xss_target_candidates']}", r.text)
+        self.assertEqual(overview["xss_target_candidates"], 0)
 
     def test_research_detail_nuclei_scannable(self):
         r = self._get(f"/ui/research/{CVE}")

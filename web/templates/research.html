@@ -34,8 +34,9 @@
     <div class="stat-value accent2">{{ stats.public_exploits | fmtnum }}</div>
     <div class="stat-sub">flagged in persisted research</div></div>
   <a href="{{ xss_url }}" class="stat-card stat-link">
-    <div class="stat-label">XSS Candidates</div>
-    <div class="stat-value">{{ overview.xss_candidates | fmtnum }}</div></a>
+    <div class="stat-label">Knowledge Patterns</div>
+    <div class="stat-value">{{ overview.xss_knowledge_patterns | fmtnum if overview.xss_knowledge_patterns is not none else overview.xss_candidates | fmtnum }}</div>
+    <div class="stat-sub">Target Research Candidates: {{ overview.xss_target_candidates | fmtnum if overview.xss_target_candidates is not none else 0 }}</div></a>
   <a href="{{ reports_url }}" class="stat-card stat-link">
     <div class="stat-label">Reports</div>
     <div class="stat-value ok">{{ overview.reports | fmtnum }}</div></a>

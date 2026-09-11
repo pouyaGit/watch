@@ -544,6 +544,20 @@ def _xss_top_evidence(payload: dict) -> str | None:
 
 
 def _xss_compact(payload: dict) -> dict:
+    # D9 presentation semantics: deterministic, no scoring/target changes.
+    # Imported lazily-tolerant: never let presentation break the read path.
+    try:
+        from backend.xss_presentation import classify_xss_presentation
+        presentation = classify_xss_presentation(payload)
+    except Exception:
+        presentation = {
+            "presentation_type": "KNOWLEDGE_PATTERN",
+            "label": "KNOWLEDGE PATTERN — NOT TARGET VALIDATED",
+            "scope": "Generic XSS knowledge pattern",
+            "target": "No target associated",
+            "target_association": False,
+            "validation_state": "NOT_TESTED",
+        }
     return {
         "candidate_id": payload.get("candidate_id"),
         "kind": _XSS_KIND,
@@ -557,6 +571,12 @@ def _xss_compact(payload: dict) -> dict:
         "top_evidence": _xss_top_evidence(payload),
         "technologies": _as_list(payload.get("technologies")),
         "disclaimer": payload.get("disclaimer", _XSS_DISCLAIMER),
+        "presentation_type": presentation["presentation_type"],
+        "presentation_label": presentation["label"],
+        "scope": presentation["scope"],
+        "target_association": presentation["target_association"],
+        "validation_state": presentation["validation_state"],
+        "presentation": dict(presentation),
     }
 
 
@@ -604,11 +624,22 @@ def list_xss(
             entries.append(record)
     entries.sort(key=lambda r: str(r.get("candidate_id") or ""))
     total = len(entries)
+    # D9: presentation counts across the full filtered set (not just the page).
+    knowledge_patterns = sum(
+        1 for r in entries if r.get("presentation_type") != "TARGET_RESEARCH_CANDIDATE"
+    )
+    target_candidates = total - knowledge_patterns
     return {
         "total": total,
         "offset": offset,
         "limit": limit,
         "items": entries[offset : offset + limit],
+        "knowledge_patterns": knowledge_patterns,
+        "target_research_candidates": target_candidates,
+        "presentation_counts": {
+            "KNOWLEDGE_PATTERN": knowledge_patterns,
+            "TARGET_RESEARCH_CANDIDATE": target_candidates,
+        },
     }
 
 
@@ -622,6 +653,25 @@ def get_xss(candidate_id: str) -> dict:
     if not detail.get("disclaimer"):
         detail["disclaimer"] = _XSS_DISCLAIMER
     detail["artifact"] = path.name
+    # D9 presentation metadata (additive only; existing fields untouched).
+    try:
+        from backend.xss_presentation import classify_xss_presentation
+        presentation = classify_xss_presentation(payload)
+    except Exception:
+        presentation = {
+            "presentation_type": "KNOWLEDGE_PATTERN",
+            "label": "KNOWLEDGE PATTERN — NOT TARGET VALIDATED",
+            "scope": "Generic XSS knowledge pattern",
+            "target": "No target associated",
+            "target_association": False,
+            "validation_state": "NOT_TESTED",
+        }
+    detail["presentation_type"] = presentation["presentation_type"]
+    detail["presentation_label"] = presentation["label"]
+    detail["scope"] = presentation["scope"]
+    detail["target_association"] = presentation["target_association"]
+    detail["validation_state"] = presentation["validation_state"]
+    detail["presentation"] = dict(presentation)
     return detail
 
 
@@ -837,16 +887,31 @@ def get_overview() -> dict:
         kb_count = 0
     xss_by_status: dict[str, int] = {}
     xss_total = 0
+    xss_knowledge_patterns = 0
+    xss_target_candidates = 0
     if XSS_DIR.exists():
         for path in sorted(XSS_DIR.glob("xss-*.json")):
             if not XSS_ID_RE.match(path.stem):
                 continue
             xss_total += 1
             try:
-                status = str(json.loads(path.read_text(encoding="utf-8")).get("status", "UNKNOWN"))
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                status = str(payload.get("status", "UNKNOWN"))
             except (OSError, ValueError):
+                payload = {}
                 status = "UNKNOWN"
             xss_by_status[status] = xss_by_status.get(status, 0) + 1
+            # D9 presentation split: only explicit program/target/asset keys
+            # count as target-specific; never inferred from CVE/KB text.
+            try:
+                from backend.xss_presentation import classify_xss_presentation
+                ptype = classify_xss_presentation(payload)["presentation_type"]
+            except Exception:
+                ptype = "KNOWLEDGE_PATTERN"
+            if ptype == "TARGET_RESEARCH_CANDIDATE":
+                xss_target_candidates += 1
+            else:
+                xss_knowledge_patterns += 1
     reports_count = _count_files(REPORTS_DIR, "*.md")
     # Reuse the cached research-stats pass for the persisted candidate flags
     # (nuclei_candidate / public_exploit are real fields of the cli.json).
@@ -856,6 +921,12 @@ def get_overview() -> dict:
         "kb_documents": kb_count,
         "xss_candidates": xss_total,
         "xss_by_status": dict(sorted(xss_by_status.items())),
+        "xss_knowledge_patterns": xss_knowledge_patterns,
+        "xss_target_candidates": xss_target_candidates,
+        "xss_presentation_counts": {
+            "KNOWLEDGE_PATTERN": xss_knowledge_patterns,
+            "TARGET_RESEARCH_CANDIDATE": xss_target_candidates,
+        },
         "reports": reports_count,
         "nuclei_candidates": stats.get("nuclei_candidates", 0),
         "public_exploit_cves": stats.get("public_exploits", 0),

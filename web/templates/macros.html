@@ -126,6 +126,17 @@
   {%- else -%}unknown{%- endif -%}
 {%- endmacro %}
 
+{# ---------- XSS presentation badge (D9 semantics, whitelisted classes only) ----------
+   KNOWLEDGE_PATTERN = generic reusable knowledge, never a target finding.
+   TARGET_RESEARCH_CANDIDATE = explicit target association, still not verified. #}
+{% macro xss_presentation_badge(presentation_type) -%}
+  {%- if presentation_type == 'TARGET_RESEARCH_CANDIDATE' -%}
+    <span class="badge badge-warn">TARGET RESEARCH CANDIDATE</span>
+  {%- else -%}
+    <span class="badge badge-neutral">KNOWLEDGE PATTERN</span>
+  {%- endif -%}
+{%- endmacro %}
+
 {# ---------- XSS candidate status badge (whitelisted classes only) ---------- #}
 {% macro xss_status_badge(status) -%}
   {%- if status == 'RESEARCH_CANDIDATE' -%}

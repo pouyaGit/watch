@@ -8,15 +8,26 @@
 {% block title %}XSS Candidates — WATCH{% endblock %}
 {% block page %}XSS Research Candidates{% endblock %}
 
-{% from "macros.html" import pager, xss_status_badge, research_banner with context %}
+{% from "macros.html" import pager, xss_status_badge, xss_presentation_badge, research_banner with context %}
 
 {% block content %}
 <div class="page-head">
   <h1 class="page-title">XSS</h1>
-  <p class="page-sub">Offline XSS research candidates derived from persisted KB patterns.</p>
+  <p class="page-sub">Offline XSS knowledge patterns derived from persisted KB documents. Generic patterns are not target findings.</p>
 </div>
 
-{{ research_banner("RESEARCH CANDIDATES — NOT PRODUCTION FINDINGS") }}
+{{ research_banner("KNOWLEDGE PATTERNS — NOT TARGET VALIDATED") }}
+
+<div class="kpi-grid kpi-2 mb-6">
+  <div class="stat-card">
+    <div class="stat-label">Knowledge Patterns</div>
+    <div class="stat-value">{{ knowledge_patterns | fmtnum if knowledge_patterns is not none else total | fmtnum }}</div>
+    <div class="stat-sub">Generic XSS knowledge pattern · not target-specific · not tested</div></div>
+  <div class="stat-card">
+    <div class="stat-label">Target Research Candidates</div>
+    <div class="stat-value">{{ target_research_candidates | fmtnum if target_research_candidates is not none else 0 | fmtnum }}</div>
+    <div class="stat-sub">Only records with an explicit program/asset association · not verified</div></div>
+</div>
 
 <form method="get" action="/ui/xss" class="search-bar">
   {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
@@ -56,6 +67,7 @@
     <thead>
       <tr>
         <th>Candidate</th>
+        <th>Scope</th>
         <th>Status</th>
         <th class="num">Confidence</th>
         <th>Type</th>
@@ -68,6 +80,7 @@
       {% for c in results %}
       <tr>
         <td><a class="mono cve-link" href="{{ c.detail_url }}">{{ c.candidate_id }}</a></td>
+        <td>{{ xss_presentation_badge(c.presentation_type) }}</td>
         <td>{{ xss_status_badge(c.status) }}</td>
         <td class="num">
           {% if c.confidence is number %}
@@ -83,9 +96,9 @@
         <td class="td-title text-xs" title="{{ c.top_evidence or '' }}">{{ c.top_evidence or '—' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="empty">
-        No XSS candidates match this filter.
-        <div class="empty-hint">Candidates are produced by the offline XSS research agent; nothing here is a finding.</div>
+      <tr><td colspan="8" class="empty">
+        No XSS knowledge patterns match this filter.
+        <div class="empty-hint">Patterns are produced by the offline XSS research agent from generic KB documents; nothing here is a target finding.</div>
       </td></tr>
       {% endfor %}
     </tbody>

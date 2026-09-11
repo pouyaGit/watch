@@ -18,8 +18,16 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
+from ai.knowledge.research_outcomes import (
+    OutcomeNotFound,
+    OutcomeValidationError,
+)
+from ai.knowledge.research_sessions import (
+    SessionNotFound,
+    SessionValidationError,
+)
 from ai.knowledge.task_store import (
     StaleTaskError,
     TaskNotFound,
@@ -86,6 +94,51 @@ class ResearchTaskPatch(BaseModel):
     blocker: str | None = None
     result_summary: str | None = None
     references: list[str] | None = None
+
+
+class ResearchSessionCreate(BaseModel):
+    """Validated R25.7 session-create payload (no target/execution fields)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lead_id: str
+    planned_minutes: int = 0
+    note: str = ""
+
+
+class ResearchSessionComplete(BaseModel):
+    """Validated R25.7 completion payload (time accounting only)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actual_minutes: int | None = None
+    outcome_id: str = ""
+    note: str = ""
+
+
+class ResearchSessionAbandon(BaseModel):
+    """Validated R25.7 abandon payload (time accounting only)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actual_minutes: int | None = None
+    note: str = ""
+
+
+class ResearchOutcomeCreate(BaseModel):
+    """Validated R25.5 outcome-create payload.
+
+    No payout/reward fields exist and unknown fields are rejected
+    (``extra="forbid"``), so a payout field can never be persisted.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    lead_id: str
+    status: str
+    time_spent_minutes: int = 0
+    researcher_note: str = ""
+    source: str = "MANUAL"
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +325,469 @@ def api_research_plan_detail(plan_id: str):
         raise _bad(exc)
 
 
+# ---------------------------------------------------------------------------
+# Stage R25: deterministic Money Score queue (read-only, key-gated).
+# Must be declared before generic /api/research/{cve} so "economics" is not
+# captured as a CVE id.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/research/economics", dependencies=_AUTH)
+def api_research_economics(
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
+    cve: Optional[str] = Query(default=None),
+    program: Optional[str] = Query(default=None),
+):
+    """Stage R25 Money Score queue (read-only, deterministic, key-gated)."""
+    from backend import research_economics
+
+    try:
+        return research_economics.list_research_economics(
+            limit=limit, offset=offset, cve=cve, program=program
+        )
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+# Stage R25.6: read-only calibration audit. Declared before
+# /api/research/economics/{lead_id} so "calibration" is not captured as a
+# lead id. There is deliberately no write endpoint.
+
+
+@router.get("/api/research/economics/calibration", dependencies=_AUTH)
+def api_research_economics_calibration(
+    min_samples: int = Query(default=10, ge=1, le=100000),
+    cve: Optional[str] = Query(default=None),
+    program: Optional[str] = Query(default=None),
+):
+    """R25.6 offline Money Score calibration (read-only, no weight changes)."""
+    from backend import research_calibration
+
+    try:
+        return research_calibration.build_report(
+            min_samples=min_samples, cve=cve, program=program
+        )
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+# Stage R25.7: research session time accounting (append-only, no execution).
+# Declared before /api/research/economics/{lead_id} so "sessions" is not
+# captured as a lead id.
+
+
+@router.post("/api/research/economics/sessions", dependencies=_AUTH,
+             status_code=201)
+def api_research_session_create(body: ResearchSessionCreate):
+    """Create a PLANNED session (idempotent; never auto-started)."""
+    from backend import research_sessions
+
+    try:
+        return research_sessions.create_session(
+            lead_id=body.lead_id,
+            planned_minutes=body.planned_minutes,
+            note=body.note,
+        )
+    except SessionValidationError as exc:
+        raise _bad(exc)
+    except OSError as exc:
+        raise HTTPException(status_code=500,
+                            detail="session store unavailable") from exc
+
+
+@router.get("/api/research/economics/sessions", dependencies=_AUTH)
+def api_research_sessions(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    lead_id: Optional[str] = Query(default=None),
+    cve: Optional[str] = Query(default=None),
+    program: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+):
+    """List research sessions (read-only, bounded, key-gated)."""
+    from backend import research_sessions
+
+    try:
+        return research_sessions.list_sessions(
+            limit=limit, offset=offset, lead_id=lead_id, cve=cve,
+            program=program, status=status,
+        )
+    except SessionValidationError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/economics/sessions/summary", dependencies=_AUTH)
+def api_research_session_summary(lead_id: str = Query(...)):
+    """Read-only R25.2+R25.5+R25.7 performance view for one lead."""
+    from backend import research_sessions
+
+    try:
+        return research_sessions.lead_execution_performance(lead_id)
+    except SessionNotFound:
+        raise HTTPException(status_code=404, detail="session not found")
+    except NotFoundError:
+        raise HTTPException(status_code=404,
+                            detail="economic projection not found")
+    except SessionValidationError as exc:
+        raise _bad(exc)
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/economics/sessions/{session_id}", dependencies=_AUTH)
+def api_research_session_detail(session_id: str):
+    """One research session by deterministic id (read-only)."""
+    from backend import research_sessions
+
+    try:
+        return research_sessions.get_session(session_id)
+    except SessionNotFound:
+        raise HTTPException(status_code=404, detail="research session not found")
+    except SessionValidationError as exc:
+        raise _bad(exc)
+
+
+@router.post("/api/research/economics/sessions/{session_id}/start",
+             dependencies=_AUTH)
+def api_research_session_start(session_id: str):
+    """Explicitly start a PLANNED session (metadata only)."""
+    from backend import research_sessions
+
+    try:
+        return research_sessions.start_session(session_id)
+    except SessionNotFound:
+        raise HTTPException(status_code=404, detail="research session not found")
+    except SessionValidationError as exc:
+        raise _bad(exc)
+
+
+@router.post("/api/research/economics/sessions/{session_id}/complete",
+             dependencies=_AUTH)
+def api_research_session_complete(session_id: str,
+                                  body: ResearchSessionComplete):
+    """Complete an IN_PROGRESS session; optional existing R25.5 outcome link."""
+    from backend import research_sessions
+
+    try:
+        return research_sessions.complete_session(
+            session_id=session_id,
+            actual_minutes=body.actual_minutes,
+            outcome_id=body.outcome_id,
+            note=body.note,
+        )
+    except SessionNotFound:
+        raise HTTPException(status_code=404, detail="research session not found")
+    except SessionValidationError as exc:
+        raise _bad(exc)
+
+
+@router.post("/api/research/economics/sessions/{session_id}/abandon",
+             dependencies=_AUTH)
+def api_research_session_abandon(session_id: str,
+                                 body: ResearchSessionAbandon):
+    """Abandon a PLANNED/IN_PROGRESS session (time accounting only)."""
+    from backend import research_sessions
+
+    try:
+        return research_sessions.abandon_session(
+            session_id=session_id,
+            actual_minutes=body.actual_minutes,
+            note=body.note,
+        )
+    except SessionNotFound:
+        raise HTTPException(status_code=404, detail="research session not found")
+    except SessionValidationError as exc:
+        raise _bad(exc)
+
+
+# Stage R25.5: append-only economic research outcomes. Declared before
+# /api/research/economics/{lead_id} so "outcomes" is not captured as a lead id.
+
+
+@router.get("/api/research/economics/outcomes", dependencies=_AUTH)
+def api_research_outcomes(
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
+    lead_id: Optional[str] = Query(default=None),
+    cve: Optional[str] = Query(default=None),
+    program: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+):
+    """Recorded R25.5 research outcomes (read-only, bounded, key-gated)."""
+    from backend import research_outcomes
+
+    try:
+        return research_outcomes.list_outcomes(
+            limit=limit, offset=offset, lead_id=lead_id, cve=cve,
+            program=program, status=status,
+        )
+    except OutcomeValidationError as exc:
+        raise _bad(exc)
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/economics/outcomes/{outcome_id}", dependencies=_AUTH)
+def api_research_outcome_detail(outcome_id: str):
+    """One recorded R25.5 outcome by deterministic id (read-only)."""
+    from backend import research_outcomes
+
+    try:
+        return research_outcomes.get_outcome(outcome_id)
+    except OutcomeNotFound:
+        raise HTTPException(status_code=404, detail="research outcome not found")
+    except OutcomeValidationError as exc:
+        raise _bad(exc)
+
+
+@router.post("/api/research/economics/outcomes", dependencies=_AUTH,
+             status_code=201)
+def api_research_outcome_create(body: ResearchOutcomeCreate):
+    """Record one research outcome (append-only, idempotent, no payouts).
+
+    Never executes research, never triggers a worker, never contacts
+    external sources, never touches the Money Score.
+    """
+    from backend import research_outcomes
+
+    try:
+        result = research_outcomes.record_outcome(
+            lead_id=body.lead_id,
+            status=body.status,
+            time_spent_minutes=body.time_spent_minutes,
+            note=body.researcher_note,
+            source=body.source,
+        )
+    except OutcomeValidationError as exc:
+        raise _bad(exc)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="outcome store unavailable") from exc
+    return result
+
+
+@router.get("/api/research/economics/{lead_id}", dependencies=_AUTH)
+def api_research_economic_detail(lead_id: str):
+    """One Stage R25 economic projection by deterministic lead id (read-only)."""
+    from backend import research_economics
+
+    try:
+        return research_economics.get_research_economic_value(lead_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="economic projection not found")
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+# ---------------------------------------------------------------------------
+# Stage R26.1: read-only opportunity intelligence (Money Score copied).
+# Declared before /api/research/{cve} so literal paths are not captured.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/research/opportunities", dependencies=_AUTH)
+def api_research_opportunities(
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
+    cve: Optional[str] = Query(default=None),
+    program: Optional[str] = Query(default=None),
+):
+    """Ranked economic opportunity queue (read-only, deterministic)."""
+    from backend import research_opportunities
+
+    try:
+        return research_opportunities.list_opportunities(
+            limit=limit, offset=offset, cve=cve, program=program
+        )
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/opportunities/summary", dependencies=_AUTH)
+def api_research_opportunity_summary():
+    """Compact opportunity class counts + top items (read-only)."""
+    from backend import research_opportunities
+
+    return research_opportunities.opportunity_summary()
+
+
+# ---------------------------------------------------------------------------
+# Stage R26.2: read-only researcher Action Queue (no new scoring, no writes).
+# Declared BEFORE /api/research/opportunities/{lead_id} so "actions" is not
+# captured as a lead id, and BEFORE /api/research/{cve}.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/research/opportunities/actions", dependencies=_AUTH)
+def api_research_opportunity_actions(
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
+    status: Optional[str] = Query(default=None),
+    cve: Optional[str] = Query(default=None),
+    program: Optional[str] = Query(default=None),
+    cls: Optional[str] = Query(default=None, alias="class"),
+):
+    """Ranked researcher Action Queue (read-only, deterministic, key-gated)."""
+    from backend import research_action_queue
+
+    try:
+        return research_action_queue.list_actions(
+            limit=limit,
+            offset=offset,
+            status=status,
+            opportunity_class=cls,
+            cve=cve,
+            program=program,
+        )
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/opportunities/actions/summary", dependencies=_AUTH)
+def api_research_opportunity_actions_summary():
+    """Compact action counts + top action (read-only)."""
+    from backend import research_action_queue
+
+    return research_action_queue.action_summary()
+
+
+@router.get("/api/research/opportunities/actions/{lead_id}",
+            dependencies=_AUTH)
+def api_research_opportunity_action_detail(lead_id: str):
+    """One researcher action by deterministic lead id (read-only)."""
+    from backend import research_action_queue
+
+    try:
+        return research_action_queue.get_action(lead_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="opportunity action not found")
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/opportunities/{lead_id}", dependencies=_AUTH)
+def api_research_opportunity_detail(lead_id: str):
+    """One opportunity by deterministic lead id (read-only)."""
+    from backend import research_opportunities
+
+    try:
+        return research_opportunities.get_opportunity(lead_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="opportunity not found")
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+# ---------------------------------------------------------------------------
+# Stage R26.3: daily research workflow (read-only, derived; no persistence).
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/research/workflow/daily", dependencies=_AUTH)
+def api_research_workflow_daily(
+    limit: int = Query(default=5, ge=1, le=50),
+    cve: Optional[str] = Query(default=None),
+    program: Optional[str] = Query(default=None),
+    opportunity_class: Optional[str] = Query(default=None, alias="class"),
+    status: Optional[str] = Query(default=None),
+):
+    """Derived daily research workflow (read-only, no snapshots)."""
+    from backend import daily_research
+
+    try:
+        return daily_research.build_daily_workflow(
+            top_n=limit,
+            cve=cve,
+            program=program,
+            opportunity_class=opportunity_class,
+            status=status,
+        )
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/workflow/summary", dependencies=_AUTH)
+def api_research_workflow_summary(
+    limit: int = Query(default=5, ge=1, le=50),
+    cve: Optional[str] = Query(default=None),
+    program: Optional[str] = Query(default=None),
+):
+    """Compact daily workflow counts + top action (read-only)."""
+    from backend import daily_research
+
+    try:
+        return daily_research.daily_summary(
+            top_n=limit, cve=cve, program=program
+        )
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+# ---------------------------------------------------------------------------
+# Stage R29.1: personal hunt queue (internal read-only; no public API).
+# Declared before /api/research/{cve} so "hunt" is not captured as a CVE.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/research/hunt", dependencies=_AUTH)
+def api_research_hunt(
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
+    cve: Optional[str] = Query(default=None),
+    program: Optional[str] = Query(default=None),
+    priority: Optional[str] = Query(default=None),
+    opportunity_class: Optional[str] = Query(default=None, alias="class"),
+    status: Optional[str] = Query(default=None),
+):
+    """Personal bug-bounty hunt queue (read-only, research-only)."""
+    from backend import hunt_queue
+
+    try:
+        return hunt_queue.list_hunt_items(
+            limit=limit, offset=offset, cve=cve, program=program,
+            priority=priority, opportunity_class=opportunity_class,
+            status=status,
+        )
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/hunt/summary", dependencies=_AUTH)
+def api_research_hunt_summary():
+    """Compact personal hunt tier counts + top items (read-only)."""
+    from backend import hunt_queue
+
+    return hunt_queue.hunt_summary()
+
+
+# ---------------------------------------------------------------------------
+# Stage R27.1: product validation audit (read-only, no new score).
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/research/product-validation", dependencies=_AUTH)
+def api_research_product_validation(
+    min_sessions: int = Query(default=20, ge=0, le=100000),
+    min_outcomes: int = Query(default=20, ge=0, le=100000),
+    min_leads: int = Query(default=10, ge=0, le=100000),
+    cve: Optional[str] = Query(default=None),
+    program: Optional[str] = Query(default=None),
+):
+    """Deterministic product validation report (read-only, no persistence)."""
+    from backend import product_validation
+
+    try:
+        return product_validation.build_product_validation_report(
+            min_sessions=min_sessions,
+            min_outcomes=min_outcomes,
+            min_leads=min_leads,
+            cve=cve,
+            program=program,
+        )
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
 @router.get("/api/research/agent/status", dependencies=_AUTH)
 def api_research_agent_status():
     """Stage R23: read-only autonomous research agent status."""
@@ -286,6 +802,61 @@ def api_research_agent_runs(limit: int = Query(default=50)):
     from backend import research_agent as ra
 
     return {"items": ra.list_runs(limit=limit), "total": len(ra.list_runs(limit=1000))}
+
+
+@router.get("/api/research/matches/{cve}/summary", dependencies=_AUTH)
+def api_research_match_summary(cve: str):
+    """Stage R30.1 aggregate asset <-> CVE match summary (read-only)."""
+    from backend import asset_cve_matching
+
+    try:
+        return asset_cve_matching.get_match_summary(cve)
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/matches/{cve}", dependencies=_AUTH)
+def api_research_matches(cve: str):
+    """Stage R30.1 asset <-> CVE matches for one CVE (read-only)."""
+    from backend import asset_cve_matching
+
+    try:
+        return asset_cve_matching.build_matches(cve=cve)
+    except ResearchDataError as exc:
+        raise _bad(exc)
+
+
+@router.get("/api/research/matches/{cve}/{program}", dependencies=_AUTH)
+def api_research_match_program(cve: str, program: str):
+    """Stage R30.1 asset <-> CVE match for one CVE/program (read-only)."""
+    from backend import asset_cve_matching
+
+    try:
+        data = asset_cve_matching.get_match_summary(cve, program=program)
+    except ResearchDataError as exc:
+        raise _bad(exc)
+    if not data.get("items"):
+        raise HTTPException(status_code=404, detail="asset/CVE match not found")
+    return data
+
+
+@router.get("/api/research/inventory/summary", dependencies=_AUTH)
+def api_research_inventory_summary():
+    """Stage R30.2 observed inventory summary (read-only, research-only)."""
+    from backend import observed_inventory
+
+    return observed_inventory.get_inventory_summary()
+
+
+@router.get("/api/research/inventory/{program}", dependencies=_AUTH)
+def api_research_inventory_program(program: str):
+    """Stage R30.2 observed inventory for one program (read-only)."""
+    from backend import observed_inventory
+
+    inventory = observed_inventory.get_inventory(program)
+    if inventory is None:
+        raise HTTPException(status_code=404, detail="program inventory not found")
+    return inventory
 
 
 @router.get("/api/research/{cve}", dependencies=_AUTH)

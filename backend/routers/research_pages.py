@@ -412,9 +412,84 @@ def ui_research_leads(
     items = data["items"]
     if status:
         items = [item for item in items if item["status"] == status]
+    # Stage R25: attach Money Score projections (fail-soft; a projection
+    # failure must never break the leads list).
+    try:
+        from backend import research_economics
+        econ_by_lead = {e["lead_id"]: e for e in research_economics.build_economics()}
+    except Exception:
+        econ_by_lead = {}
+    # Stage R25.6: compact calibration summary (fail-soft, read-only).
+    try:
+        from backend import research_calibration
+        calibration = research_calibration.calibration_summary()
+    except Exception:
+        calibration = None
+    # Stage R26.1: opportunity classes (fail-soft, read-only).
+    try:
+        from backend import research_opportunities
+        opp_by_lead = {
+            o["lead_id"]: o
+            for o in research_opportunities.build_opportunities()
+        }
+    except Exception:
+        opp_by_lead = {}
+    # Stage R26.3: daily research workflow (fail-soft, read-only, no writes).
+    try:
+        from backend import daily_research
+        workflow = daily_research.build_daily_workflow(top_n=3)
+    except Exception:
+        workflow = None
+    # Stage R27.1: compact product-validation indicator (fail-soft).
+    try:
+        from backend import product_validation as pv
+        product_validation = pv.product_validation_summary()
+    except Exception:
+        product_validation = None
+    # Stage R29.1: personal hunt queue grouped by tier (fail-soft, read-only).
+    hunt_by_priority: dict = {}
+    try:
+        from backend import hunt_queue
+        for item in hunt_queue.build_hunt_queue():
+            hunt_by_priority.setdefault(
+                item["hunt_priority"], []).append(item)
+    except Exception:
+        hunt_by_priority = {}
+    # Stage R26.2: researcher Action Queue (fail-soft, read-only).
+    try:
+        from backend import research_action_queue
+        action_by_lead = {
+            a["lead_id"]: a
+            for a in research_action_queue.build_action_queue()
+        }
+    except Exception:
+        action_by_lead = {}
     for item in items:
         item["cve_url"] = build_url(f"/ui/research/{item['cve_id']}")
         item["lead_url"] = build_url(f"/ui/research/leads/{item['lead_id']}")
+        econ = econ_by_lead.get(item["lead_id"])
+        item["money_score"] = econ["money_score"] if econ else None
+        item["money_priority"] = (econ["priority"] if econ else None)
+        opp = opp_by_lead.get(item["lead_id"])
+        item["opportunity_class"] = (opp["opportunity_class"] if opp
+                                     else None)
+        action = action_by_lead.get(item["lead_id"])
+        item["next_action_code"] = (
+            action["recommended_action"] if action else None
+        )
+        item["next_action_status"] = (
+            action["current_status"] if action else None
+        )
+    # Money queue order: money_score DESC, CVE ASC, program ASC. Leads
+    # without a projection sort last (never fabricated).
+    def _money_key(item):
+        money = item.get("money_score")
+        if isinstance(money, int):
+            return (0, -money, item.get("cve_id") or "",
+                    item.get("program") or "")
+        return (1, 0, item.get("cve_id") or "", item.get("program") or "")
+
+    items.sort(key=_money_key)
     summary = research_leads.leads_summary()
     return templates.TemplateResponse(
         request,
@@ -428,6 +503,10 @@ def ui_research_leads(
             program=program or "",
             status=status or "",
             summary=summary,
+            calibration=calibration,
+            workflow=workflow,
+            product_validation=product_validation,
+            hunt_by_priority=hunt_by_priority,
         ),
     )
 
@@ -451,6 +530,75 @@ def ui_research_lead_detail(request: Request, lead_id: str):
                            "Expected an id like rl-0123456789abcdef.")
     lead["cve_url"] = build_url(f"/ui/research/{lead['cve_id']}")
     lead["lead_url"] = build_url(f"/ui/research/leads/{lead['lead_id']}")
+    # Stage R25: economic projection for this lead (fail-soft; a projection
+    # failure must never break the lead detail page).
+    econ = None
+    try:
+        from backend import research_economics
+        econ = research_economics.get_research_economic_value(lead["lead_id"])
+    except Exception:
+        econ = None
+    # Stage R25.5: outcome summary for this lead (fail-soft, read-only).
+    outcome_summary = None
+    try:
+        from backend import research_outcomes
+        outcome_summary = research_outcomes.summarize_lead_outcomes(
+            lead["lead_id"])
+    except Exception:
+        outcome_summary = None
+    # Stage R26.1: opportunity view for this lead (fail-soft, read-only).
+    opportunity = None
+    try:
+        from backend import research_opportunities
+        opportunity = research_opportunities.get_opportunity(lead["lead_id"])
+    except Exception:
+        opportunity = None
+    # Stage R29.1: personal hunt decision for this lead (fail-soft).
+    hunt_item = None
+    try:
+        from backend import hunt_queue
+        hunt_item = hunt_queue.get_hunt_item(lead["lead_id"])
+    except Exception:
+        hunt_item = None
+    # Stage R26.2: researcher Action Queue entry for this lead (fail-soft).
+    action = None
+    try:
+        from backend import research_action_queue
+        action = research_action_queue.get_action(lead["lead_id"])
+    except Exception:
+        action = None
+    # Stage R25.7: session summary + active session (fail-soft, read-only).
+    session_summary = None
+    active_session = None
+    try:
+        from backend import research_sessions
+        session_summary = research_sessions.summarize_session(lead["lead_id"])
+        recent = research_sessions.list_sessions(
+            limit=20, offset=0, lead_id=lead["lead_id"])["items"]
+        active_session = next(
+            (s for s in recent if s["status"] in ("IN_PROGRESS", "PLANNED")),
+            None,
+        )
+    except Exception:
+        session_summary = None
+        active_session = None
+    # Stage R30.1: additive asset <-> CVE match evidence (fail-soft, read-only).
+    asset_match = None
+    try:
+        from backend import asset_cve_matching
+        asset_match = asset_cve_matching.get_match_summary(
+            lead["cve_id"], program=lead["program"])
+        if not asset_match.get("items"):
+            asset_match = None
+    except Exception:
+        asset_match = None
+    # Stage R30.2: raw observed asset inventory context (fail-soft, read-only).
+    inventory = None
+    try:
+        from backend import observed_inventory
+        inventory = observed_inventory.get_inventory(lead["program"])
+    except Exception:
+        inventory = None
     # Stage R22: link to execution plan if available
     plan_url = None
     try:
@@ -461,11 +609,156 @@ def ui_research_lead_detail(request: Request, lead_id: str):
         plan_url = build_url(f"/ui/research/plans/{plan_id}")
     except Exception:
         plan_url = None
+    outcome_statuses = _outcome_statuses()
     return templates.TemplateResponse(
         request,
         "research_lead_detail.html",
-        _ctx(request, active="research-leads", page_title=lead["lead_id"], lead=lead, plan_url=plan_url),
+        _ctx(request, active="research-leads", page_title=lead["lead_id"],
+             lead=lead, plan_url=plan_url, econ=econ,
+             outcome_summary=outcome_summary,
+             outcome_statuses=outcome_statuses,
+             outcome_saved=_outcome_saved(request),
+             session_summary=session_summary,
+             active_session=active_session,
+             session_saved=_session_saved(request),
+             opportunity=opportunity, action=action,
+             hunt_item=hunt_item, asset_match=asset_match,
+             inventory=inventory),
     )
+
+
+def _session_saved(request: Request) -> str:
+    return str(request.query_params.get("session_saved") or "")
+
+
+@router.post("/ui/research/leads/{lead_id}/session/start", dependencies=_UI_AUTH)
+async def ui_research_session_start(request: Request, lead_id: str):
+    """Explicit researcher action: create+start a time-accounting session.
+
+    Metadata only. No security testing, no target contact, no execution.
+    """
+
+    from backend import research_sessions
+
+    fields = await _form(request)
+    try:
+        research_sessions.begin_session(
+            lead_id=lead_id,
+            planned_minutes=fields.get("planned_minutes", "0"),
+            note=fields.get("note", ""),
+        )
+    except ValueError as exc:
+        return _error_page(request, "research-leads", 400,
+                           "Invalid session", str(exc))
+    except OSError:
+        return _error_page(request, "research-leads", 500,
+                           "Session store unavailable",
+                           "The local session store could not be written.")
+    return RedirectResponse(
+        url=build_url(f"/ui/research/leads/{lead_id}", session_saved="started"),
+        status_code=303)
+
+
+@router.post("/ui/research/leads/{lead_id}/session/{session_id}/complete",
+             dependencies=_UI_AUTH)
+async def ui_research_session_complete(request: Request, lead_id: str,
+                                       session_id: str):
+    """Complete an active session (time accounting + optional outcome link)."""
+
+    from backend import research_sessions
+
+    fields = await _form(request)
+    actual = fields.get("actual_minutes", "").strip()
+    try:
+        research_sessions.complete_session(
+            session_id=session_id,
+            actual_minutes=int(actual) if actual else None,
+            outcome_id=fields.get("outcome_id", ""),
+            note=fields.get("note", ""),
+        )
+    except ValueError as exc:
+        return _error_page(request, "research-leads", 400,
+                           "Invalid completion", str(exc))
+    except OSError:
+        return _error_page(request, "research-leads", 500,
+                           "Session store unavailable",
+                           "The local session store could not be written.")
+    return RedirectResponse(
+        url=build_url(f"/ui/research/leads/{lead_id}", session_saved="completed"),
+        status_code=303)
+
+
+@router.post("/ui/research/leads/{lead_id}/session/{session_id}/abandon",
+             dependencies=_UI_AUTH)
+async def ui_research_session_abandon(request: Request, lead_id: str,
+                                      session_id: str):
+    """Abandon an active session (time accounting only)."""
+
+    from backend import research_sessions
+
+    fields = await _form(request)
+    actual = fields.get("actual_minutes", "").strip()
+    try:
+        research_sessions.abandon_session(
+            session_id=session_id,
+            actual_minutes=int(actual) if actual else None,
+            note=fields.get("note", ""),
+        )
+    except ValueError as exc:
+        return _error_page(request, "research-leads", 400,
+                           "Invalid abandonment", str(exc))
+    except OSError:
+        return _error_page(request, "research-leads", 500,
+                           "Session store unavailable",
+                           "The local session store could not be written.")
+    return RedirectResponse(
+        url=build_url(f"/ui/research/leads/{lead_id}", session_saved="abandoned"),
+        status_code=303)
+
+
+def _outcome_statuses() -> list[str]:
+    """Closed R25.5 outcome vocabulary for the manual form (read-only)."""
+
+    from ai.schemas.research_outcome import OUTCOME_STATUSES
+
+    return list(OUTCOME_STATUSES)
+
+
+def _outcome_saved(request: Request) -> bool:
+    return str(request.query_params.get("outcome_saved") or "") == "1"
+
+
+@router.post("/ui/research/leads/{lead_id}/outcome", dependencies=_UI_AUTH)
+async def ui_research_lead_outcome_create(request: Request, lead_id: str):
+    """Record one R25.5 outcome from the manual (status/time/note-only) form.
+
+    Append-only; no payout fields exist in the form or handler. No research
+    execution, no worker, no external contact, no Money Score change.
+    """
+
+    from backend import research_outcomes
+
+    fields = await _form(request)
+    try:
+        research_outcomes.record_outcome(
+            lead_id=lead_id,
+            status=fields.get("status", ""),
+            time_spent_minutes=fields.get("time_minutes", "0"),
+            note=fields.get("note", ""),
+            source="MANUAL",
+        )
+    except ResearchDataError as exc:
+        return _error_page(request, "research-leads", 400,
+                           "Invalid outcome", str(exc))
+    except ValueError as exc:
+        return _error_page(request, "research-leads", 400,
+                           "Invalid outcome", str(exc))
+    except OSError:
+        return _error_page(request, "research-leads", 500,
+                           "Outcome store unavailable",
+                           "The local outcome store could not be written.")
+    url = build_url(f"/ui/research/leads/{lead_id}", outcome_saved="1")
+    return RedirectResponse(url=url, status_code=303)
 
 
 # ------------------------------------------------------------------ plans (R22)
@@ -747,8 +1040,16 @@ def ui_xss(
         _ctx(
             request,
             active="xss",
-            page_title="XSS Research Candidates",
+            page_title="XSS Knowledge Patterns",
             results=data["items"],
+            knowledge_patterns=data.get(
+                "knowledge_patterns",
+                data.get("presentation_counts", {}).get("KNOWLEDGE_PATTERN", data["total"]),
+            ),
+            target_research_candidates=data.get(
+                "target_research_candidates",
+                data.get("presentation_counts", {}).get("TARGET_RESEARCH_CANDIDATE", 0),
+            ),
             q=q or "",
             status=status or "",
             type=type or "",

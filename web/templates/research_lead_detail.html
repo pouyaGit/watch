@@ -69,6 +69,284 @@
   </section>
 
   <section class="panel span-2">
+    <div class="panel-head"><h2>Economic research</h2><span class="badge-sm">money score · research only</span></div>
+    <div class="panel-body">
+      {% if econ %}
+      <table class="kv">
+        <tr><th>Money Score</th><td class="mono">{{ econ.money_score }}
+          <span class="badge-sm prio-{{ econ.priority[:2] | lower }}" title="{{ econ.priority }}">{{ econ.priority[:2] }}</span></td></tr>
+        <tr><th>Priority</th><td><span class="badge-sm">{{ econ.priority | replace('_', ' — ', 1) }}</span></td></tr>
+        <tr><th>Confidence</th><td><span class="badge-sm">{{ econ.confidence }}</span></td></tr>
+        <tr><th>Effort</th><td class="text-sm">{{ econ.effort_estimate }} <span class="text-muted">(score {{ econ.effort }})</span></td></tr>
+        <tr><th>Asset Match</th><td><span class="badge-sm">{{ econ.asset_match.replace('_', ' ') }}</span></td></tr>
+        <tr><th>Recommended action</th><td><span class="badge-sm">{{ econ.recommended_action }}</span></td></tr>
+        <tr><th>Subscores</th><td class="mono text-xs">Value {{ econ.subscores.value }} / Confidence {{ econ.subscores.confidence }} / Effort {{ econ.subscores.effort }} / Risk {{ econ.subscores.risk }}</td></tr>
+      </table>
+      <h3 class="text-sm mt-4">Why valuable</h3>
+      {% if econ.why_valuable %}
+      <ul class="plain">{% for reason in econ.why_valuable %}<li class="text-sm">— {{ reason }}</li>{% endfor %}</ul>
+      {% else %}
+      {{ empty_state("No positive value signal yet.", compact=True) }}
+      {% endif %}
+      <h3 class="text-sm mt-4">Main blockers</h3>
+      {% if econ.main_blockers %}
+      <ul class="plain">{% for blocker in econ.main_blockers %}<li class="text-sm text-muted">— {{ blocker }}</li>{% endfor %}</ul>
+      {% else %}
+      {{ empty_state("No hard blockers recorded.", compact=True) }}
+      {% endif %}
+      {% else %}
+      {{ empty_state("No economic projection for this lead.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Research outcomes</h2><span class="badge-sm">append-only · research only</span></div>
+    <div class="panel-body">
+      {% if outcome_summary %}
+      <table class="kv">
+        <tr><th>Attempts</th><td class="mono">{{ outcome_summary.attempts }}</td></tr>
+        <tr><th>Accepted</th><td class="mono">{{ outcome_summary.accepted }}</td></tr>
+        <tr><th>Duplicate</th><td class="mono">{{ outcome_summary.duplicate }}</td></tr>
+        <tr><th>Rejected</th><td class="mono">{{ outcome_summary.rejected }}</td></tr>
+        <tr><th>Not applicable</th><td class="mono">{{ outcome_summary.not_applicable }}</td></tr>
+        <tr><th>Wasted time</th><td class="mono">{{ outcome_summary.wasted_time }}</td></tr>
+        <tr><th>Total time</th><td class="mono">{{ outcome_summary.total_time_spent_minutes }} min</td></tr>
+        <tr><th>Data quality</th><td><span class="badge-sm">{{ outcome_summary.data_quality }}</span></td></tr>
+      </table>
+      {% if outcome_summary.latest_outcome %}
+      <p class="text-xs text-muted mt-2">Latest: {{ outcome_summary.latest_outcome.status }} at {{ outcome_summary.latest_outcome.timestamp }}{% if outcome_summary.latest_outcome.researcher_note %} — {{ outcome_summary.latest_outcome.researcher_note }}{% endif %}</p>
+      {% endif %}
+      {% else %}
+      {{ empty_state("Outcome summary unavailable.", compact=True) }}
+      {% endif %}
+      {% if outcome_saved %}
+      <p class="text-sm ok mt-3">Outcome recorded.</p>
+      {% endif %}
+      <h3 class="text-sm mt-4">Record outcome</h3>
+      <form method="post" action="/ui/research/leads/{{ lead.lead_id }}/outcome" class="search-bar">
+        {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+        <select name="status" class="filter-select" required>
+          {% for s in outcome_statuses %}
+          <option value="{{ s }}">{{ s }}</option>
+          {% endfor %}
+        </select>
+        <input type="number" name="time_minutes" value="0" min="0" max="100000"
+               step="1" class="search-input" style="max-width:9rem"
+               placeholder="Minutes" aria-label="Time spent minutes">
+        <input type="text" name="note" maxlength="2000" class="search-input"
+               placeholder="Note (optional)" autocomplete="off"
+               aria-label="Researcher note">
+        <button type="submit" class="btn-primary">Add outcome</button>
+      </form>
+      <p class="text-xs text-muted mt-2">Records status, time and note only. Research management only — no execution, no alerting.</p>
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Research session</h2><span class="badge-sm">time accounting · research only</span></div>
+    <div class="panel-body">
+      {% if session_summary %}
+      <table class="kv">
+        <tr><th>Money Score</th><td class="mono">{% if econ %}{{ econ.money_score }}{% else %}—{% endif %}</td></tr>
+        <tr><th>Planned</th><td class="mono">{{ session_summary.planned_time }} min</td></tr>
+        <tr><th>Sessions</th><td class="mono">{{ session_summary.total_sessions }}</td></tr>
+        <tr><th>Actual</th><td class="mono">{{ session_summary.actual_time }} min</td></tr>
+        <tr><th>Completed / abandoned</th><td class="mono">{{ session_summary.completed_sessions }} / {{ session_summary.abandoned_sessions }}</td></tr>
+      </table>
+      {% if session_saved %}<p class="text-sm ok mt-3">Session {{ session_saved }}.</p>{% endif %}
+      {% if active_session %}
+      <p class="text-sm mt-3">Active: <span class="mono text-xs">{{ active_session.session_id }}</span>
+        <span class="badge-sm">{{ active_session.status }}</span>
+        {% if active_session.started_at %}<span class="text-muted text-xs">started {{ active_session.started_at }}</span>{% endif %}</p>
+      <h3 class="text-sm mt-4">Complete session</h3>
+      <form method="post" action="/ui/research/leads/{{ lead.lead_id }}/session/{{ active_session.session_id }}/complete" class="search-bar">
+        {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+        <input type="number" name="actual_minutes" min="0" max="100000" step="1"
+               class="search-input" style="max-width:9rem" placeholder="Actual min"
+               aria-label="Actual minutes">
+        <input type="text" name="outcome_id" class="search-input" style="max-width:15rem"
+               placeholder="Outcome id (optional)" autocomplete="off"
+               aria-label="Optional outcome id">
+        <input type="text" name="note" maxlength="2000" class="search-input"
+               placeholder="Note (optional)" autocomplete="off"
+               aria-label="Session note">
+        <button type="submit" class="btn-primary">Complete session</button>
+      </form>
+      <h3 class="text-sm mt-4">Abandon session</h3>
+      <form method="post" action="/ui/research/leads/{{ lead.lead_id }}/session/{{ active_session.session_id }}/abandon" class="search-bar">
+        {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+        <input type="number" name="actual_minutes" min="0" max="100000" step="1"
+               class="search-input" style="max-width:9rem" placeholder="Actual min (optional)"
+               aria-label="Actual minutes optional">
+        <input type="text" name="note" maxlength="2000" class="search-input"
+               placeholder="Reason (optional)" autocomplete="off"
+               aria-label="Abandon reason">
+        <button type="submit" class="btn-ghost">Abandon session</button>
+      </form>
+      {% else %}
+      <h3 class="text-sm mt-4">Start research session</h3>
+      <form method="post" action="/ui/research/leads/{{ lead.lead_id }}/session/start" class="search-bar">
+        {% if api_key_qs %}<input type="hidden" name="api_key" value="{{ api_key_qs }}">{% endif %}
+        <input type="number" name="planned_minutes" min="0" max="100000" step="1"
+               class="search-input" style="max-width:9rem" value="60"
+               placeholder="Planned min" aria-label="Planned minutes">
+        <input type="text" name="note" maxlength="2000" class="search-input"
+               placeholder="Note (optional)" autocomplete="off"
+               aria-label="Session note">
+        <button type="submit" class="btn-primary">Start research session</button>
+      </form>
+      <p class="text-xs text-muted mt-2">Starts a time-accounting session only. No security testing is performed or authorized.</p>
+      {% endif %}
+      {% else %}
+      {{ empty_state("Session summary unavailable.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Next action</h2><span class="badge-sm">R26.2 · read-only decision layer</span></div>
+    <div class="panel-body">
+      {% if action %}
+      <table class="kv">
+        <tr><th>NEXT ACTION</th><td><span class="badge-sm action-{{ action.recommended_action | lower | replace('_', '-') }}">{{ action.recommended_action | replace('_', ' ') }}</span></td></tr>
+        <tr><th>WHY</th><td class="text-sm">{{ action.action_reason }}</td></tr>
+        <tr>
+          <th>BLOCKER</th>
+          <td class="text-sm">
+            {% if action.blockers %}
+              {% for blocker in action.blockers %}
+                <div><span class="mono text-xs">{{ blocker }}</span></div>
+              {% endfor %}
+            {% else %}
+              <span class="text-muted text-xs">No hard blocker recorded.</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr><th>NEXT STEP</th><td class="text-sm">{{ action.next_step }}</td></tr>
+        <tr><th>STATUS</th><td><span class="badge-sm">{{ action.current_status }}</span></td></tr>
+      </table>
+      <p class="text-xs text-muted mt-3">Action Queue is a read-only decision layer composed from R26.1 opportunity + R25.7 sessions + R25.5 outcomes. It does not start, modify, or execute anything.</p>
+      {% else %}
+      {{ empty_state("No action projection for this lead.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Opportunity intelligence</h2><span class="badge-sm">read-only composition · research only</span></div>
+    <div class="panel-body">
+      {% if opportunity %}
+      <table class="kv">
+        <tr><th>Class</th><td><span class="badge-sm opp-{{ opportunity.opportunity_class | lower | replace('_', '-') }}">{{ opportunity.opportunity_class | replace('_', ' ') }}</span></td></tr>
+        <tr><th>Recommended action</th><td><span class="badge-sm">{{ opportunity.recommended_action }}</span></td></tr>
+        <tr><th>Evidence</th><td class="text-sm">{{ opportunity.evidence_quality }}
+          <span class="text-muted">· {{ opportunity.evidence_summary.get('source_count', 0) }} sources / {{ opportunity.evidence_summary.get('evidence_count', 0) }} evidence · tier {{ opportunity.evidence_summary.get('strongest_source_tier', 'NONE') }} · {{ opportunity.research_status }}</span></td></tr>
+        <tr><th>Historical outcome</th><td class="text-sm">
+          {% if opportunity.outcome_status == 'NONE' %}NONE (missing historical data){% else %}{{ opportunity.outcome_status }} · accepted {{ opportunity.accepted }} / duplicate {{ opportunity.duplicate }} / rejected {{ opportunity.rejected }} / wasted {{ opportunity.wasted }}{% endif %}</td></tr>
+        <tr><th>Historical time</th><td class="text-sm">
+          {% if opportunity.historical_time_status == 'NONE' %}NONE (missing historical data){% else %}est {{ opportunity.estimated_minutes }} min · actual {{ opportunity.actual_minutes }} min · delta {{ opportunity.time_delta_minutes }} min · efficiency {{ opportunity.efficiency_ratio }}{% endif %}</td></tr>
+      </table>
+      <h3 class="text-sm mt-4">Why now</h3>
+      {% if opportunity.why_now %}
+      <ul class="plain">{% for code in opportunity.why_now %}<li class="text-sm"><span class="badge-sm">{{ code }}</span></li>{% endfor %}</ul>
+      {% else %}
+      {{ empty_state("No immediate research reason recorded.", compact=True) }}
+      {% endif %}
+      <h3 class="text-sm mt-4">Why valuable</h3>
+      {% if opportunity.why_valuable %}
+      <ul class="plain">{% for reason in opportunity.why_valuable %}<li class="text-sm">— {{ reason }}</li>{% endfor %}</ul>
+      {% else %}
+      {{ empty_state("No positive value signal recorded.", compact=True) }}
+      {% endif %}
+      <h3 class="text-sm mt-4">Blockers</h3>
+      {% if opportunity.blockers %}
+      <ul class="plain">{% for blocker in opportunity.blockers %}<li class="text-sm text-muted">— {{ blocker }}</li>{% endfor %}</ul>
+      {% else %}
+      {{ empty_state("No hard blockers recorded.", compact=True) }}
+      {% endif %}
+      <p class="text-xs text-muted mt-3">Opportunity classification is a presentation layer around the deterministic Money Score. It is not a vulnerability confirmation and never executes anything.</p>
+      {% else %}
+      {{ empty_state("No opportunity projection for this lead.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+  {% if hunt_item %}
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Personal hunt decision</h2><span class="badge-sm">r29-1 · research only</span></div>
+    <div class="panel-body">
+      <table class="kv">
+        <tr><th>Priority</th><td><span class="badge-sm hunt-{{ hunt_item.hunt_priority | lower | replace('_', '-') }}">{{ hunt_item.hunt_priority | replace('_', ' ') }}</span></td></tr>
+        <tr><th>Why</th><td class="text-sm">{{ hunt_item.hunt_reason }}</td></tr>
+        <tr><th>Time box</th><td class="text-sm">{{ hunt_item.recommended_time_box }}
+          <span class="text-muted text-xs">(estimate {{ hunt_item.estimated_minutes }} min)</span></td></tr>
+        <tr><th>Historical</th><td class="text-sm">
+          Attempts: {{ hunt_item.historical_outcome.attempts }} ·
+          Accepted: {{ hunt_item.historical_outcome.accepted }} ·
+          Duplicate: {{ hunt_item.historical_outcome.duplicate }} ·
+          Wasted: {{ hunt_item.historical_outcome.wasted }} ·
+          Time: {{ hunt_item.historical_time.total_time }} min</td></tr>
+        <tr><th>Next</th><td class="text-sm">{{ hunt_item.next_step }}</td></tr>
+      </table>
+      <p class="text-xs text-muted mt-3">Research prioritization only — does not confirm vulnerability.</p>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Asset match evidence</h2><span class="badge-sm">r30-1 · research only</span></div>
+    <div class="panel-body">
+      {% if asset_match and asset_match.strongest %}
+      {% set m = asset_match.strongest %}
+      <table class="kv">
+        <tr><th>Strongest match</th><td><span class="badge-sm">{{ m.strongest_match_type or 'NONE' }}</span></td></tr>
+        <tr><th>Confidence</th><td class="text-sm">{{ m.strongest_confidence }}
+          <span class="text-muted">· state {{ m.asset_match_state }}</span></td></tr>
+        <tr><th>Observed</th><td class="text-sm">
+          {% if m.observed %}{% for item in m.observed %}{{ item }}{% if not loop.last %}; {% endif %}{% endfor %}{% else %}None recorded{% endif %}</td></tr>
+        <tr><th>Missing</th><td class="text-sm">
+          {% if m.missing %}{% for item in m.missing %}{{ item }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}None{% endif %}</td></tr>
+        <tr><th>Resolved blockers</th><td class="text-sm">
+          {% if m.resolved_blockers %}{% for item in m.resolved_blockers %}{{ item }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}None{% endif %}</td></tr>
+        <tr><th>Remaining blockers</th><td class="text-sm">
+          {% if m.remaining_blockers %}{% for item in m.remaining_blockers %}{{ item }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}None{% endif %}</td></tr>
+        <tr><th>Evidence</th><td class="text-sm">
+          {% if m.evidence %}{% for item in m.evidence %}{{ item }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% else %}None recorded{% endif %}</td></tr>
+      </table>
+      <p class="text-xs text-muted mt-3">{{ m.match_summary }} Deterministic research relevance only; no target testing was performed and this is not a vulnerability confirmation.</p>
+      {% else %}
+      {{ empty_state("No asset match projection for this lead.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><h2>Observed asset inventory</h2><span class="badge-sm">r30-2 · raw observed context</span></div>
+    <div class="panel-body">
+      {% if inventory %}
+      <table class="kv">
+        <tr><th>Technology</th><td class="text-sm">
+          {% if inventory.technologies %}{% for item in inventory.technologies %}{{ item.value }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}none{% endif %}</td></tr>
+        <tr><th>Product</th><td class="text-sm">
+          {% if inventory.products %}{% for item in inventory.products %}{{ item.value }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}none{% endif %}</td></tr>
+        <tr><th>Component</th><td class="text-sm">
+          {% if inventory.components %}{% for item in inventory.components %}{{ item.value }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}none{% endif %}</td></tr>
+        <tr><th>Plugin</th><td class="text-sm">
+          {% if inventory.plugins %}{% for item in inventory.plugins %}{{ item.value }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}none{% endif %}</td></tr>
+        <tr><th>Version</th><td class="text-sm">
+          {% if inventory.versions %}{% for item in inventory.versions %}{{ item.value }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}none{% endif %}</td></tr>
+        <tr><th>Parameter</th><td class="text-sm">
+          {% if inventory.parameters %}{% for item in inventory.parameters %}{{ item.value }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}none{% endif %}</td></tr>
+      </table>
+      <p class="text-xs text-muted mt-3">Raw observed inventory derived from existing Watch recon data (read-only). {{ inventory.paths | length }} path record(s). No target testing was performed.</p>
+      {% else %}
+      {{ empty_state("No observed inventory available for this program.", compact=True) }}
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="panel span-2">
     <div class="panel-head"><h2>Why investigate</h2></div>
     <div class="panel-body">
       <ul class="plain">
