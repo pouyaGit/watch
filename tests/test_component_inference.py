@@ -453,10 +453,17 @@ class TestApplyInferred(unittest.TestCase):
             endpoint_record("/assets/ckeditor/plugins/")
         ])
         merged = ci.apply_inferred_items(inventory, inferred)
-        self.assertIs(merged, inventory)
         self.assertEqual(len(merged.components), 1)
         self.assertEqual(
             merged.components[0].evidence_type, "STRUCTURED_COMPONENT"
+        )
+        # Stage R31.5: the inferred provenance is retained additively even
+        # when the category item itself is not duplicated (MIXED groundwork).
+        self.assertEqual(len(merged.component_provenance), 1)
+        self.assertEqual(merged.component_provenance[0].value, "CKEditor")
+        self.assertEqual(merged.component_provenance[0].category, "COMPONENT")
+        self.assertEqual(
+            merged.component_provenance[0].scope_path, "/assets/ckeditor/"
         )
 
     def test_noop_returns_same_object(self):

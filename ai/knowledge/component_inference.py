@@ -36,6 +36,7 @@ from urllib.parse import urlsplit
 
 from ai.correlator.technology import normalize as normalize_technology
 from ai.schemas.observed_inventory import (
+    EVIDENCE_PROVENANCE_RULE_VERSION,
     ObservedAssetInventory,
     ObservedItem,
 )
@@ -256,6 +257,29 @@ def _matched_value(rule: InferenceRule, match: re.Match) -> str:
     return str(match.group("value") or "").strip()
 
 
+def _owner_scope(path: str, rule: InferenceRule, match: re.Match) -> str:
+    """Path-only directory scope that owns the matched evidence.
+
+    For value-capturing rules the scope includes the captured segment
+    (``/wp-content/plugins/<slug>/``); for fixed directory-token rules it
+    includes the token (``/assets/ckeditor/``); for fixed filename rules
+    (jQuery) it is the containing directory. Pure string slicing on the
+    already-sanitized path; no fuzzy or semantic matching.
+    """
+
+    if rule.fixed_value:
+        segment = path[match.start():match.end()].rsplit("/", 1)[-1]
+        if "." in segment and not segment.endswith("/"):
+            end = match.start()
+        else:
+            end = match.end()
+        prefix = path[:end]
+    else:
+        prefix = path[:match.end("value")]
+    prefix = prefix.rstrip("/")
+    return (prefix + "/") if prefix else "/"
+
+
 def infer_inventory_items(
     *,
     url_records: object = (),
@@ -265,18 +289,21 @@ def infer_inventory_items(
     """Infer components/plugins from persisted paths (pure, deterministic).
 
     Returns ``{"components": [ObservedItem, ...], "plugins": [...],
-    "evidence": [str, ...]}``. Every emitted item carries
-    ``source=COMPONENT_INVENTORY`` and an ``INFERRED_COMPONENT`` /
+    "evidence": [str, ...], "provenance": [dict, ...]}``. Every emitted item
+    carries ``source=COMPONENT_INVENTORY`` and an ``INFERRED_COMPONENT`` /
     ``INFERRED_PLUGIN`` evidence type. Every distinct path is evaluated and
     the result never depends on input record order or set iteration order.
+    ``provenance`` records the canonical evidence path and owning scope per
+    inferred value (path-only, structured; ``evidence`` remains free text).
     """
 
     paths = _distinct_paths(endpoint_records, url_records, http_records)
 
     # Per normalized value keep the canonical best match
-    # ``(path, rule_id, value)``: the lexicographically smallest matching path
-    # wins. This keeps the result deterministic without sorting every path.
-    values: dict[str, dict[str, tuple[str, str, str]]] = {
+    # ``(path, rule_id, value, scope_path)``: the lexicographically smallest
+    # matching path wins. This keeps the result deterministic without sorting
+    # every path.
+    values: dict[str, dict[str, tuple[str, str, str, str]]] = {
         CATEGORY_COMPONENT: {},
         CATEGORY_PLUGIN: {},
     }
@@ -294,9 +321,11 @@ def infer_inventory_items(
             if not key:
                 continue
             bucket = values[rule.category]
-            candidate = (path, rule.rule_id, value)
+            candidate = (
+                path, rule.rule_id, value, _owner_scope(path, rule, match)
+            )
             current = bucket.get(key)
-            if current is None or candidate < current:
+            if current is None or candidate[:3] < current[:3]:
                 bucket[key] = candidate
 
     def _build(category: str, evidence_type: str) -> list[ObservedItem]:
@@ -310,12 +339,27 @@ def infer_inventory_items(
         return out
 
     evidence: list[str] = []
-    for category in (CATEGORY_COMPONENT, CATEGORY_PLUGIN):
+    provenance: list[dict] = []
+    for category, evidence_type, label in (
+        (CATEGORY_COMPONENT, EVIDENCE_COMPONENT, "COMPONENT"),
+        (CATEGORY_PLUGIN, EVIDENCE_PLUGIN, "PLUGIN"),
+    ):
         for key in sorted(values[category]):
-            path, rule_id, value = values[category][key]
+            path, rule_id, value, scope_path = values[category][key]
             evidence.append(
                 f"{category} {value!r} inferred from path {path!r} "
                 f"(rule {rule_id})"
+            )
+            provenance.append(
+                {
+                    "value": value,
+                    "category": label,
+                    "evidence_type": evidence_type,
+                    "evidence_path": path,
+                    "scope_path": scope_path,
+                    "rule_id": rule_id,
+                    "source": SOURCE_COMPONENT,
+                }
             )
 
     components = _build(CATEGORY_COMPONENT, EVIDENCE_COMPONENT)
@@ -327,6 +371,7 @@ def infer_inventory_items(
         "evidence": sorted({line for line in evidence if line})[
             :MAX_EVIDENCE
         ],
+        "provenance": provenance[:MAX_ITEMS],
     }
 
 
@@ -335,16 +380,36 @@ def infer_inventory_items(
 # ---------------------------------------------------------------------------
 
 
+def _provenance_key(item: object) -> tuple:
+    """Deterministic identity for one provenance entry (model or dict)."""
+
+    def _get(name: str) -> str:
+        if isinstance(item, dict):
+            return str(item.get(name) or "").strip()
+        return str(getattr(item, name, "") or "").strip()
+
+    return (
+        _get("category").upper(),
+        _get("value"),
+        _get("evidence_type").upper(),
+        _get("evidence_path"),
+        _get("scope_path"),
+        _get("rule_id"),
+    )
+
+
 def apply_inferred_items(
     inventory: ObservedAssetInventory,
     inferred: object,
 ) -> ObservedAssetInventory:
     """Merge inferred components/plugins into an observed inventory.
 
-    Explicit items always win: an inferred value whose normalized key already
-    exists in the category is dropped. Technologies, products, versions,
-    version associations, parameters and paths are copied unchanged. Returns
-    the same object when nothing new is inferred.
+    Explicit items always win for the category lists: an inferred value whose
+    normalized key already exists is not duplicated. Structured inferred
+    provenance is retained additively even then (so the adapter can classify
+    the value as ``MIXED``). Technologies, products, versions, version
+    associations, parameters, parameter paths and paths are copied unchanged.
+    Returns the same object when there is nothing new to add.
     """
 
     data = inferred if isinstance(inferred, dict) else {}
@@ -369,7 +434,17 @@ def apply_inferred_items(
         for item in inferred_plugins
         if normalize_technology(item.value) not in existing_plugins
     ]
-    if not new_components and not new_plugins:
+
+    existing_provenance = list(inventory.component_provenance)
+    existing_provenance_keys = {
+        _provenance_key(item) for item in existing_provenance
+    }
+    new_provenance = [
+        item
+        for item in data.get("provenance") or ()
+        if _provenance_key(item) not in existing_provenance_keys
+    ]
+    if not new_components and not new_plugins and not new_provenance:
         return inventory
 
     evidence = list(inventory.evidence)
@@ -385,6 +460,10 @@ def apply_inferred_items(
     generated_from["component_inference_rule_version"] = RULE_VERSION
     generated_from["inferred_components"] = len(new_components)
     generated_from["inferred_plugins"] = len(new_plugins)
+    if new_provenance:
+        generated_from["evidence_provenance_rule_version"] = (
+            EVIDENCE_PROVENANCE_RULE_VERSION
+        )
 
     return ObservedAssetInventory(
         inventory_id=inventory.inventory_id,
@@ -395,6 +474,8 @@ def apply_inferred_items(
         plugins=list(inventory.plugins) + new_plugins,
         versions=inventory.versions,
         version_associations=inventory.version_associations,
+        component_provenance=existing_provenance + new_provenance,
+        parameter_paths=inventory.parameter_paths,
         parameters=inventory.parameters,
         paths=inventory.paths,
         sources=sources,

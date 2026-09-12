@@ -55,6 +55,7 @@ from ai.schemas.observed_inventory import (
     OBSERVED_INVENTORY_RULE_VERSION,
     ObservedAssetInventory,
     ObservedItem,
+    ObservedParameterPath,
     ObservedVersionAssociation,
     inventory_id_for,
 )
@@ -281,6 +282,49 @@ def collect_parameters(projections: object) -> list[ObservedItem]:
         if item is not None:
             items.append(item)
     return items
+
+
+def collect_parameter_paths(
+    projections: object,
+) -> list[ObservedParameterPath]:
+    """Parameter -> path-only endpoint linkage (additive Stage R31.5).
+
+    A parameter is only component-scoped when the endpoint path that carries
+    it is inside the inferred component's owning scope; this collector supplies
+    that endpoint path. Deterministic, deduplicated and bounded; path-only.
+    """
+
+    pairs: dict[tuple[str, str], ObservedParameterPath] = {}
+    for projection in projections or ():
+        for endpoint in (
+            getattr(projection, "endpoint_observations", ()) or ()
+        ):
+            path = _normalize_path_key(getattr(endpoint, "path", ""))
+            if not path:
+                continue
+            names: list[str] = []
+            for name in getattr(endpoint, "params", ()) or ():
+                cleaned = _clean(name)
+                if cleaned:
+                    names.append(cleaned)
+            for detail in (
+                getattr(endpoint, "param_details", ()) or ()
+            ):
+                cleaned = _clean(getattr(detail, "name", ""))
+                if cleaned:
+                    names.append(cleaned)
+            for cleaned in names:
+                try:
+                    record = ObservedParameterPath(
+                        parameter=cleaned,
+                        path=path,
+                        source=SOURCE_PARAMETER,
+                    )
+                except ValueError:
+                    continue
+                key = (normalize_parameter(cleaned), path)
+                pairs.setdefault(key, record)
+    return [pairs[key] for key in sorted(pairs)][:_MAX_ITEMS]
 
 
 def collect_products(records: object = ()) -> list[ObservedItem]:
@@ -562,6 +606,7 @@ def collect_program_inventory(
     )
     paths = collect_paths(projections)
     parameters = collect_parameters(projections)
+    parameter_paths = collect_parameter_paths(projections)
     products = collect_products(product_records)
     components = collect_components(component_records)
     plugins = collect_plugins(plugin_records)
@@ -622,6 +667,7 @@ def collect_program_inventory(
         "versions": versions,
         "version_associations": version_associations,
         "parameters": parameters,
+        "parameter_paths": parameter_paths,
         "paths": paths,
         "sources": sources,
         "evidence": evidence,
@@ -640,6 +686,7 @@ def collect_program_inventory(
             "projected_subdomains": len(projections),
             "skipped_subdomains": len(skipped_subdomains),
             "version_associations": len(version_associations),
+            "parameter_paths": len(parameter_paths),
         },
     }
 
@@ -660,6 +707,7 @@ def build_observed_inventory(
         plugins=collected["plugins"],
         versions=collected["versions"],
         version_associations=collected["version_associations"],
+        parameter_paths=collected["parameter_paths"],
         parameters=collected["parameters"],
         paths=collected["paths"],
         sources=collected["sources"],
@@ -686,6 +734,7 @@ def build_inventory_summary(inventories: object) -> dict:
             "versions": len(item.versions),
             "version_associations": len(item.version_associations),
             "parameters": len(item.parameters),
+            "parameter_paths": len(item.parameter_paths),
             "paths": len(item.paths),
             "sources": list(item.sources),
         }
@@ -718,6 +767,7 @@ __all__ = [
     "collect_versions",
     "collect_version_associations",
     "collect_parameters",
+    "collect_parameter_paths",
     "collect_paths",
     "build_observed_inventory",
     "build_inventory_summary",

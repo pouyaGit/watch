@@ -22,18 +22,36 @@ from __future__ import annotations
 import hashlib
 import time
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from ai.knowledge.asset_cve_matching import (
     RULE_VERSION,
     evaluate_inventory,
+    match_component,
+    match_parameter,
+    match_path,
+    match_plugin,
+    normalize_component,
+    normalize_parameter,
+    normalize_plugin,
     normalize_version,
 )
 from ai.knowledge.version_component_association import (
     RULE_VERSION as ASSOCIATION_RULE_VERSION,
     evaluate_version_association,
 )
+from ai.schemas.observed_inventory import (
+    EVIDENCE_PROVENANCE_RULE_VERSION,
+)
 
 MAX_PROGRAMS = 100
+
+# Stage R31.5 evidence-provenance vocabulary (closed, advisory-only).
+PROVENANCE_STATES: tuple[str, ...] = ("EXPLICIT", "INFERRED", "MIXED")
+SUPPORT_SCOPES: tuple[str, ...] = ("COMPONENT_SCOPED", "GLOBAL", "NONE")
+
+# Bound on withheld-support evidence lines recorded additively.
+MAX_WITHHELD_SUPPORT = 64
 
 _METADATA_OBSERVED_KEYS = (
     ("plugins", "plugins"),
@@ -183,10 +201,12 @@ def _observed_from_assets(records: object) -> dict:
 
 def _merge_unique(*lists: object) -> list[str]:
     out: list[str] = []
+    seen: set[str] = set()
     for values in lists:
         for value in values or ():
             text = str(value or "").strip()
-            if text and text not in out:
+            if text and text not in seen:
+                seen.add(text)
                 out.append(text)
     return out
 
@@ -195,7 +215,8 @@ def _inventory_values(program: str) -> dict[str, list]:
     """Stage R30.2 observed-inventory values for one program (fail-soft).
 
     Returns plain observed value lists for the R30.1 matcher input plus the
-    Stage R30.3 version-association records; the R30.1 matching rules are
+    Stage R30.3 version-association records and the Stage R31.5 structured
+    provenance/parameter-path additions; the R30.1 matching rules are
     untouched.
     """
 
@@ -218,9 +239,11 @@ def _inventory_values(program: str) -> dict[str, list]:
         "paths",
     ):
         values: list[str] = []
+        seen: set[str] = set()
         for item in inventory.get(key) or ():
             value = str(item.get("value") or "").strip()
-            if value and value not in values:
+            if value and value not in seen:
+                seen.add(value)
                 values.append(value)
         out[key] = values
     associations: list[dict] = []
@@ -228,6 +251,55 @@ def _inventory_values(program: str) -> dict[str, list]:
         if isinstance(item, dict):
             associations.append(item)
     out["version_associations"] = associations
+    provenance: list[dict] = []
+    for item in inventory.get("component_provenance") or ():
+        if isinstance(item, dict):
+            provenance.append(item)
+    out["component_provenance"] = provenance
+    parameter_paths: list[dict] = []
+    for item in inventory.get("parameter_paths") or ():
+        if isinstance(item, dict):
+            parameter_paths.append(item)
+    out["parameter_paths"] = parameter_paths
+    out["inferred_components"] = []
+    out["explicit_components"] = []
+    out["inferred_plugins"] = []
+    out["explicit_plugins"] = []
+    for key, inferred_key, explicit_key in (
+        ("components", "inferred_components", "explicit_components"),
+        ("plugins", "inferred_plugins", "explicit_plugins"),
+    ):
+        for item in inventory.get(key) or ():
+            if not isinstance(item, dict):
+                continue
+            value = str(item.get("value") or "").strip()
+            if not value:
+                continue
+            evidence_type = str(
+                item.get("evidence_type") or ""
+            ).strip().upper()
+            target = (
+                out[inferred_key]
+                if evidence_type.startswith("INFERRED")
+                else out[explicit_key]
+            )
+            if value not in target:
+                target.append(value)
+    # Provenance alone also establishes inferred evidence (e.g. the inferred
+    # item was deduplicated against an explicit one -> MIXED).
+    for item in inventory.get("component_provenance") or ():
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("category") or "").strip().upper()
+        value = str(item.get("value") or "").strip()
+        if not value:
+            continue
+        if category == "COMPONENT":
+            if value not in out["inferred_components"]:
+                out["inferred_components"].append(value)
+        elif category == "PLUGIN":
+            if value not in out["inferred_plugins"]:
+                out["inferred_plugins"].append(value)
     return out
 
 
@@ -276,6 +348,236 @@ def _version_association_records(
         if text:
             records.append({"version": text})
     return records
+
+
+def _normalized_keys(values: object, normalizer) -> set[str]:
+    keys: set[str] = set()
+    for value in values or ():
+        text = str(value or "").strip()
+        if not text:
+            continue
+        normalized = normalizer(text)
+        if normalized:
+            keys.add(normalized)
+    return keys
+
+
+def _path_key(value: object) -> str:
+    """Path-only key (no scheme/host/query/fragment) for scope comparison."""
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "://" in text or text.startswith("//"):
+        try:
+            text = urlsplit(text).path or ""
+        except ValueError:
+            return ""
+    text = text.split("?", 1)[0].split("#", 1)[0].strip()
+    if not text:
+        return ""
+    if not text.startswith("/"):
+        text = "/" + text
+    return text
+
+
+def _in_scope(path: object, scope: object) -> bool:
+    path_key = _path_key(path)
+    scope_key = _path_key(scope)
+    if not path_key or not scope_key:
+        return False
+    scope_key = scope_key.rstrip("/") + "/"
+    return path_key == scope_key.rstrip("/") or path_key.startswith(scope_key)
+
+
+def _provenance_scopes(inventory_observed: dict) -> dict:
+    """Normalized inferred value -> path-only owning scopes (R31.5)."""
+
+    scopes: dict[str, dict[str, set[str]]] = {
+        "component": {},
+        "plugin": {},
+    }
+    normalizers = {
+        "component": normalize_component,
+        "plugin": normalize_plugin,
+    }
+    for item in inventory_observed.get("component_provenance") or ():
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("category") or "").strip().lower()
+        if category not in scopes:
+            continue
+        value = str(item.get("value") or "").strip()
+        scope = _path_key(item.get("scope_path") or "")
+        normalized = normalizers[category](value) if value else ""
+        if not normalized or not scope:
+            continue
+        scopes[category].setdefault(normalized, set()).add(scope)
+    return scopes
+
+
+def _parameter_locations(inventory_observed: dict) -> dict:
+    """Normalized parameter -> set of path-only endpoints carrying it."""
+
+    locations: dict[str, set[str]] = {}
+    for item in inventory_observed.get("parameter_paths") or ():
+        if not isinstance(item, dict):
+            continue
+        name = normalize_parameter(item.get("parameter") or "")
+        path = _path_key(item.get("path") or "")
+        if name and path:
+            locations.setdefault(name, set()).add(path)
+    return locations
+
+
+def _support_gate(
+    *,
+    cve_components: object,
+    cve_plugins: object,
+    cve_parameters: object,
+    cve_paths: object,
+    observed_components: object,
+    observed_plugins: object,
+    observed_parameters: object,
+    observed_paths: object,
+    explicit_keys: dict,
+    inferred_keys: dict,
+    provenance_scopes: dict,
+    parameter_locations: dict,
+) -> dict:
+    """Stage R31.5 deterministic component-scoped support gate.
+
+    Distinguishes EXPLICIT / INFERRED / MIXED component-plugin evidence and,
+    for inferred-only evidence, replaces global PARAMETER/PATH support with
+    component-scoped support before it reaches the unchanged R30.1 engine.
+    Explicit evidence is never gated. Withheld global support is recorded.
+    """
+
+    matched_inferred: dict[str, set[str]] = {
+        "component": set(),
+        "plugin": set(),
+    }
+    matched_explicit: dict[str, set[str]] = {
+        "component": set(),
+        "plugin": set(),
+    }
+    for category, cve_values, observed_values, matcher, normalizer in (
+        (
+            "component",
+            cve_components,
+            observed_components,
+            match_component,
+            normalize_component,
+        ),
+        (
+            "plugin",
+            cve_plugins,
+            observed_plugins,
+            match_plugin,
+            normalize_plugin,
+        ),
+    ):
+        for value in observed_values or ():
+            text = str(value or "").strip()
+            if not text:
+                continue
+            if matcher(cve_values, [text]) is None:
+                continue
+            normalized = normalizer(text)
+            if not normalized:
+                continue
+            if normalized in inferred_keys.get(category, ()):
+                matched_inferred[category].add(normalized)
+            if normalized in explicit_keys.get(category, ()):
+                matched_explicit[category].add(normalized)
+
+    any_inferred = any(matched_inferred.values())
+    any_explicit = any(matched_explicit.values())
+    result = {
+        "provenance": "EXPLICIT",
+        "support_scope": "GLOBAL",
+        "gating": False,
+        "parameters": list(observed_parameters or ()),
+        "paths": list(observed_paths or ()),
+        "withheld": [],
+    }
+    if not any_inferred:
+        return result
+    if any_explicit:
+        result["provenance"] = "MIXED"
+        return result
+
+    # Inferred-only component/plugin evidence: scope the support.
+    result["provenance"] = "INFERRED"
+    result["gating"] = True
+
+    scopes: set[str] = set()
+    for category in ("component", "plugin"):
+        for key in matched_inferred[category]:
+            scopes.update(provenance_scopes.get(category, {}).get(key, ()))
+    scope_keys = [
+        scope.rstrip("/") + "/" for scope in sorted(scopes)
+    ]
+
+    scoped_paths: list[str] = []
+    for path in observed_paths or ():
+        key = _path_key(path)
+        if not key:
+            continue
+        if any(
+            key == scope.rstrip("/") or key.startswith(scope)
+            for scope in scope_keys
+        ):
+            scoped_paths.append(str(path))
+    scoped_parameters: list[str] = []
+    for parameter in observed_parameters or ():
+        locations = parameter_locations.get(
+            normalize_parameter(parameter), ()
+        )
+        if any(
+            _in_scope(location, scope)
+            for location in locations
+            for scope in scope_keys
+        ):
+            scoped_parameters.append(str(parameter))
+
+    result["parameters"] = scoped_parameters
+    result["paths"] = scoped_paths
+    result["support_scope"] = (
+        "COMPONENT_SCOPED"
+        if (scoped_parameters or scoped_paths)
+        else "NONE"
+    )
+
+    withheld: list[str] = []
+    cve_parameter_keys = _normalized_keys(
+        cve_parameters, normalize_parameter
+    )
+    scoped_parameter_set = set(scoped_parameters)
+    for parameter in observed_parameters or ():
+        text = str(parameter)
+        if text in scoped_parameter_set:
+            continue
+        if normalize_parameter(text) in cve_parameter_keys:
+            withheld.append(
+                f"parameter {text!r} observed globally "
+                "(not component-scoped)"
+            )
+    if cve_paths and observed_paths:
+        scoped_path_set = set(scoped_paths)
+        unscoped_paths = [
+            path
+            for path in observed_paths
+            if str(path) not in scoped_path_set
+        ]
+        hit = match_path(cve_paths, unscoped_paths)
+        if hit is not None:
+            withheld.append(
+                f"path {hit.matched_value!r} observed globally "
+                "(not component-scoped)"
+            )
+    result["withheld"] = sorted(set(withheld))[:MAX_WITHHELD_SUPPORT]
+    return result
 
 
 def build_matches(
@@ -333,6 +635,14 @@ def build_matches(
             observed["paths"] = _merge_unique(
                 observed["paths"], metadata_observed["paths"]
             )
+            # Stage R31.5: values already observed from explicit sources
+            # (asset records / persisted research metadata) are explicit.
+            explicit_component_keys = _normalized_keys(
+                observed["components"], normalize_component
+            )
+            explicit_plugin_keys = _normalized_keys(
+                observed["plugins"], normalize_plugin
+            )
             # Stage R30.2: merge the derived observed inventory (existing
             # Watch recon data) into the R30.1 matcher INPUT. R30.1 remains the
             # authority for matching semantics; no matching rule is changed.
@@ -359,6 +669,43 @@ def build_matches(
             )
             observed_categories = _merge_unique(
                 metadata_observed["categories"]
+            )
+            # Stage R31.5: classify observed component/plugin evidence and,
+            # for inferred-only evidence, scope supporting PARAMETER/PATH
+            # input before the unchanged R30.1 engine sees it.
+            explicit_component_keys |= _normalized_keys(
+                inventory_observed.get("explicit_components"),
+                normalize_component,
+            )
+            explicit_plugin_keys |= _normalized_keys(
+                inventory_observed.get("explicit_plugins"),
+                normalize_plugin,
+            )
+            support_gate = _support_gate(
+                cve_components=cve_components,
+                cve_plugins=cve_plugins,
+                cve_parameters=profile.get("parameters") or [],
+                cve_paths=cve_paths,
+                observed_components=observed["components"],
+                observed_plugins=observed["plugins"],
+                observed_parameters=observed_parameters,
+                observed_paths=observed_paths,
+                explicit_keys={
+                    "component": explicit_component_keys,
+                    "plugin": explicit_plugin_keys,
+                },
+                inferred_keys={
+                    "component": _normalized_keys(
+                        inventory_observed.get("inferred_components"),
+                        normalize_component,
+                    ),
+                    "plugin": _normalized_keys(
+                        inventory_observed.get("inferred_plugins"),
+                        normalize_plugin,
+                    ),
+                },
+                provenance_scopes=_provenance_scopes(inventory_observed),
+                parameter_locations=_parameter_locations(inventory_observed),
             )
             # Stage R30.3: associate observed versions with their explicit
             # owning technology family/component BEFORE the R30.1 version
@@ -400,8 +747,8 @@ def build_matches(
                 observed_plugins=observed["plugins"],
                 observed_technologies=observed["technologies"],
                 observed_versions=list(association.engine_versions),
-                observed_parameters=observed_parameters,
-                observed_paths=observed_paths,
+                observed_parameters=support_gate["parameters"],
+                observed_paths=support_gate["paths"],
                 observed_categories=observed_categories,
                 blocker_codes=blockers_by_program.get(group_name, []),
             )
@@ -416,6 +763,13 @@ def build_matches(
             )
             summary["version_association_rule_version"] = (
                 ASSOCIATION_RULE_VERSION
+            )
+            # Additive R31.5 evidence-provenance context (never a new score).
+            summary["evidence_provenance"] = support_gate["provenance"]
+            summary["support_scope"] = support_gate["support_scope"]
+            summary["withheld_support"] = list(support_gate["withheld"])
+            summary["evidence_provenance_rule_version"] = (
+                EVIDENCE_PROVENANCE_RULE_VERSION
             )
             results.append(summary)
 

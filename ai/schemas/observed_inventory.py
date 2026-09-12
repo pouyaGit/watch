@@ -26,6 +26,10 @@ Hard boundaries encoded here:
   establishes it) the owning component/plugin. An association is never inferred
   from URLs, hostnames, parameters, keywords, CVE text or LLM output; the
   component stays empty (unavailable) when no structured source exists.
+- Stage R31.5 adds ``component_provenance`` (canonical evidence path + owning
+  scope for inferred components/plugins, path-only) and ``parameter_paths``
+  (parameter -> path-only endpoint linkage). Both are additive and never
+  replace or reinterpret explicit observations.
 
 No I/O, no network, no LLM, no execution of any kind is represented here.
 """
@@ -34,6 +38,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -43,6 +48,12 @@ OBSERVED_INVENTORY_RULE_VERSION = "r30-2"
 # unchanged). Association semantics are documented in
 # ``ai/knowledge/version_component_association.py``.
 VERSION_ASSOCIATION_RULE_VERSION = "r30-3"
+
+# Stage R31.5 evidence-provenance layer (additive): inferred component/plugin
+# observations keep their canonical evidence path and owning scope as
+# structured, path-only data so the backend adapter can distinguish
+# explicit vs inferred evidence and scope supporting paths/parameters.
+EVIDENCE_PROVENANCE_RULE_VERSION = "r31-5"
 
 # Closed evidence-type vocabulary. R31.2 permits only the two anchored,
 # deterministic INFERRED_* rule types; guessed/LLM-derived values are never
@@ -173,6 +184,135 @@ class ObservedVersionAssociation(BaseModel):
         return text
 
 
+def _path_only(value: object) -> str:
+    """Deterministic path-only sanitizer (no scheme/host/query/fragment)."""
+
+    text = str(value if value is not None else "")
+    text = re.sub(r"[\r\n]+", " ", text).strip()
+    if not text:
+        return ""
+    if "://" in text or text.startswith("//"):
+        try:
+            text = urlsplit(text).path or ""
+        except ValueError:
+            return ""
+    text = text.split("?", 1)[0].split("#", 1)[0].strip()
+    if not text:
+        return ""
+    if not text.startswith("/"):
+        text = "/" + text
+    return text[:MAX_VALUE_LEN]
+
+
+class ObservedProvenance(BaseModel):
+    """Structured provenance for one *inferred* component/plugin value.
+
+    Records the canonical evidence path and the owning directory scope as
+    path-only strings (no scheme, host, query, fragment or target identifier).
+    Explicit observations do not need this structure: their provenance is the
+    item's ``source``/``evidence_type``. Inferred path retention is additive to
+    Stage R30.2/R31.2 and never replaces an explicit observation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: str
+    category: str
+    evidence_type: str
+    evidence_path: str
+    scope_path: str = ""
+    rule_id: str = ""
+    source: str = "COMPONENT_INVENTORY"
+
+    @field_validator("value")
+    @classmethod
+    def _valid_value(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("provenance value must be non-empty")
+        return text[:MAX_VALUE_LEN]
+
+    @field_validator("category")
+    @classmethod
+    def _valid_category(cls, value: str) -> str:
+        text = str(value or "").strip().upper()
+        if text not in ("COMPONENT", "PLUGIN"):
+            raise ValueError(f"invalid provenance category: {value!r}")
+        return text
+
+    @field_validator("evidence_type")
+    @classmethod
+    def _valid_evidence_type(cls, value: str) -> str:
+        text = str(value or "").strip().upper()
+        if text not in ("INFERRED_COMPONENT", "INFERRED_PLUGIN"):
+            raise ValueError(f"invalid inferred evidence_type: {value!r}")
+        return text
+
+    @field_validator("evidence_path")
+    @classmethod
+    def _valid_evidence_path(cls, value: str) -> str:
+        text = _path_only(value)
+        if not text:
+            raise ValueError("provenance evidence_path must be non-empty")
+        return text
+
+    @field_validator("scope_path")
+    @classmethod
+    def _valid_scope_path(cls, value: str) -> str:
+        return _path_only(value)
+
+    @field_validator("rule_id")
+    @classmethod
+    def _bounded_rule_id(cls, value: str) -> str:
+        return str(value or "").strip()[:MAX_VALUE_LEN]
+
+    @field_validator("source")
+    @classmethod
+    def _valid_source(cls, value: str) -> str:
+        text = str(value or "").strip().upper()
+        if text not in INVENTORY_SOURCES:
+            raise ValueError(f"invalid inventory source: {value!r}")
+        return text
+
+
+class ObservedParameterPath(BaseModel):
+    """One observed parameter and the path-only endpoint that carries it.
+
+    Additive R31.5 linkage used to decide whether a parameter is inside an
+    inferred component's owning scope. ``path`` is path-only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    parameter: str
+    path: str
+    source: str = "PARAMETER_INVENTORY"
+
+    @field_validator("parameter")
+    @classmethod
+    def _valid_parameter(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("parameter-path parameter must be non-empty")
+        return text[:MAX_VALUE_LEN]
+
+    @field_validator("path")
+    @classmethod
+    def _valid_path(cls, value: str) -> str:
+        text = _path_only(value)
+        if not text:
+            raise ValueError("parameter-path path must be non-empty")
+        return text
+
+    @field_validator("source")
+    @classmethod
+    def _valid_source(cls, value: str) -> str:
+        text = str(value or "").strip().upper()
+        if text not in INVENTORY_SOURCES:
+            raise ValueError(f"invalid inventory source: {value!r}")
+        return text
+
+
 def _bounded_items(value: list) -> list[ObservedItem]:
     out: list[ObservedItem] = []
     seen: set[tuple[str, str, str]] = set()
@@ -211,6 +351,45 @@ def _bounded_associations(value: list) -> list[ObservedVersionAssociation]:
     return out
 
 
+def _bounded_provenance(value: list) -> list[ObservedProvenance]:
+    out: list[ObservedProvenance] = []
+    seen: set[tuple[str, str, str, str, str, str]] = set()
+    for item in value or ():
+        if not isinstance(item, ObservedProvenance):
+            item = ObservedProvenance(**item)
+        key = (
+            item.category,
+            item.value,
+            item.evidence_type,
+            item.evidence_path,
+            item.scope_path,
+            item.rule_id,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+        if len(out) >= MAX_ITEMS:
+            break
+    return out
+
+
+def _bounded_parameter_paths(value: list) -> list[ObservedParameterPath]:
+    out: list[ObservedParameterPath] = []
+    seen: set[tuple[str, str]] = set()
+    for item in value or ():
+        if not isinstance(item, ObservedParameterPath):
+            item = ObservedParameterPath(**item)
+        key = (item.parameter, item.path)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+        if len(out) >= MAX_ITEMS:
+            break
+    return out
+
+
 class ObservedAssetInventory(BaseModel):
     """Read-only observed inventory for one program (research-only)."""
 
@@ -230,6 +409,17 @@ class ObservedAssetInventory(BaseModel):
     # Stage R30.3 additive: observed version -> owning family/component pairs.
     # Defaults to empty (unassociated) when no structured owner exists.
     version_associations: list[ObservedVersionAssociation] = Field(
+        default_factory=list
+    )
+
+    # Stage R31.5 additive: structured provenance for inferred
+    # components/plugins (canonical evidence path + owning scope), and the
+    # parameter -> path-only endpoint linkage used for component-scoped
+    # support decisions.
+    component_provenance: list[ObservedProvenance] = Field(
+        default_factory=list
+    )
+    parameter_paths: list[ObservedParameterPath] = Field(
         default_factory=list
     )
 
@@ -270,6 +460,20 @@ class ObservedAssetInventory(BaseModel):
         cls, value: list
     ) -> list[ObservedVersionAssociation]:
         return _bounded_associations(value)
+
+    @field_validator("component_provenance", mode="before")
+    @classmethod
+    def _valid_component_provenance(
+        cls, value: list
+    ) -> list[ObservedProvenance]:
+        return _bounded_provenance(value)
+
+    @field_validator("parameter_paths", mode="before")
+    @classmethod
+    def _valid_parameter_paths(
+        cls, value: list
+    ) -> list[ObservedParameterPath]:
+        return _bounded_parameter_paths(value)
 
     @field_validator("sources")
     @classmethod
