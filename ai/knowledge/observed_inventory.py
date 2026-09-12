@@ -23,6 +23,13 @@ There is no persisted component/plugin/product field anywhere in the current
 Watch data model, so those collectors accept *explicit* already-loaded records
 and return empty when none are provided. They never turn path segments or
 technology implications into components/plugins/products.
+
+Stage R30.3 (additive) additionally pairs each derived version with its owning
+observed technology family (from the same Http.tech observation) so the R30.1
+version evaluation can distinguish ``VERSION_MATCH_WITHIN_SAME_FAMILY`` from
+``VERSION_MATCH_WITHOUT_COMPONENT_ASSOCIATION``. Component ownership is only
+taken from explicit structured records and stays ``""`` (unavailable)
+otherwise; it is never inferred.
 """
 
 from __future__ import annotations
@@ -48,6 +55,7 @@ from ai.schemas.observed_inventory import (
     OBSERVED_INVENTORY_RULE_VERSION,
     ObservedAssetInventory,
     ObservedItem,
+    ObservedVersionAssociation,
     inventory_id_for,
 )
 
@@ -327,6 +335,127 @@ def collect_plugins(records: object = ()) -> list[ObservedItem]:
     )
 
 
+def _association(
+    *,
+    version: object,
+    family: object = "",
+    component: object = "",
+    source: str,
+    evidence_type: str,
+) -> ObservedVersionAssociation | None:
+    text = _clean(version)
+    if not text:
+        return None
+    try:
+        return ObservedVersionAssociation(
+            version=text,
+            technology_family=_clean(family),
+            component=_clean(component),
+            source=source,
+            evidence_type=evidence_type,
+        )
+    except ValueError:
+        return None
+
+
+def _association_from_record(
+    record: object,
+) -> ObservedVersionAssociation | None:
+    """Coerce one explicit structured version-owner record (never inferred)."""
+
+    if record is None:
+        return None
+    if isinstance(record, ObservedVersionAssociation):
+        return record
+    if isinstance(record, dict):
+        version = record.get("version") or record.get("value")
+        family = record.get("technology_family") or record.get("family")
+        component = record.get("component")
+        source = record.get("source") or SOURCE_TECHNOLOGY
+        evidence_type = (
+            record.get("evidence_type") or EVIDENCE_TECHNOLOGY
+        )
+    else:
+        version = getattr(record, "version", None) or getattr(
+            record, "value", None
+        )
+        family = getattr(record, "technology_family", "") or getattr(
+            record, "family", ""
+        )
+        component = getattr(record, "component", "")
+        source = getattr(record, "source", None) or SOURCE_TECHNOLOGY
+        evidence_type = (
+            getattr(record, "evidence_type", None) or EVIDENCE_TECHNOLOGY
+        )
+    return _association(
+        version=version,
+        family=family,
+        component=component,
+        source=source,
+        evidence_type=evidence_type,
+    )
+
+
+def collect_version_associations(
+    projections: object,
+    records: object = (),
+) -> list[ObservedVersionAssociation]:
+    """Versions paired with their owning observed technology family.
+
+    The owning family comes from the same persisted technology observation that
+    produced the version (e.g. the ``WordPress:6.8.3`` Http.tech label).
+    Components are only taken from *explicit structured records*; the current
+    persisted Watch model has no component/plugin version source, so every
+    technology-derived version reports ``component = ""`` (unavailable) and an
+    owner is never inferred from paths, hostnames, parameters or keywords.
+    """
+
+    items: list[ObservedVersionAssociation] = []
+    for projection in projections or ():
+        for observation in getattr(projection, "technologies", ()) or ():
+            version = getattr(observation, "observed_version", None)
+            if not version:
+                continue
+            item = _association(
+                version=version,
+                family=getattr(observation, "name", ""),
+                component="",
+                source=SOURCE_TECHNOLOGY,
+                evidence_type=EVIDENCE_TECHNOLOGY,
+            )
+            if item is not None:
+                items.append(item)
+    for record in records or ():
+        item = _association_from_record(record)
+        if item is not None:
+            items.append(item)
+
+    deduped: list[ObservedVersionAssociation] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in items:
+        key = (
+            normalize_version(item.version),
+            normalize_technology(item.technology_family),
+            normalize_technology(item.component),
+        )
+        if not key[0] or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+        if len(deduped) >= _MAX_ITEMS:
+            break
+    return sorted(
+        deduped,
+        key=lambda item: (
+            normalize_version(item.version),
+            normalize_technology(item.technology_family),
+            normalize_technology(item.component),
+            item.source,
+            item.evidence_type,
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -391,6 +520,7 @@ def collect_program_inventory(
     product_records: object = (),
     component_records: object = (),
     plugin_records: object = (),
+    version_records: object = (),
 ) -> dict:
     """Derive the full category map for one program (pure, deterministic)."""
 
@@ -427,6 +557,9 @@ def collect_program_inventory(
 
     technologies = collect_technologies(projections)
     versions = collect_versions(projections)
+    version_associations = collect_version_associations(
+        projections, version_records
+    )
     paths = collect_paths(projections)
     parameters = collect_parameters(projections)
     products = collect_products(product_records)
@@ -444,6 +577,13 @@ def collect_program_inventory(
                     f"version {version!r} from Http.tech technology "
                     f"{_clean(getattr(observation, 'name', ''))!r}"
                 )
+    for item in version_associations:
+        evidence.append(
+            f"version {item.version!r} owned by technology family "
+            f"{(item.technology_family or 'unavailable')!r} "
+            f"(component {item.component or 'unavailable'!r}) "
+            f"from {item.source}"
+        )
     for item in paths:
         evidence.append(f"path {item.value!r} from Endpoints.path")
     for projection in projections:
@@ -471,6 +611,7 @@ def collect_program_inventory(
             )
             for item in collection
         }
+        | {item.source for item in version_associations}
     )
     return {
         "program": program_name,
@@ -479,6 +620,7 @@ def collect_program_inventory(
         "components": components,
         "plugins": plugins,
         "versions": versions,
+        "version_associations": version_associations,
         "parameters": parameters,
         "paths": paths,
         "sources": sources,
@@ -497,6 +639,7 @@ def collect_program_inventory(
             "subdomain_records": len(grouped.subdomains),
             "projected_subdomains": len(projections),
             "skipped_subdomains": len(skipped_subdomains),
+            "version_associations": len(version_associations),
         },
     }
 
@@ -516,6 +659,7 @@ def build_observed_inventory(
         components=collected["components"],
         plugins=collected["plugins"],
         versions=collected["versions"],
+        version_associations=collected["version_associations"],
         parameters=collected["parameters"],
         paths=collected["paths"],
         sources=collected["sources"],
@@ -540,6 +684,7 @@ def build_inventory_summary(inventories: object) -> dict:
             "components": len(item.components),
             "plugins": len(item.plugins),
             "versions": len(item.versions),
+            "version_associations": len(item.version_associations),
             "parameters": len(item.parameters),
             "paths": len(item.paths),
             "sources": list(item.sources),
@@ -571,6 +716,7 @@ __all__ = [
     "collect_components",
     "collect_plugins",
     "collect_versions",
+    "collect_version_associations",
     "collect_parameters",
     "collect_paths",
     "build_observed_inventory",

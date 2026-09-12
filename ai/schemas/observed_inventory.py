@@ -18,6 +18,11 @@ Hard boundaries encoded here:
 - ``inventory_id`` is deterministic from rule_version + program.
 - ``rule_version`` is fixed to ``r30-2``; ``research_only`` is forced ``True``;
   unknown fields are rejected (``extra="forbid"``).
+- Stage R30.3 adds ``version_associations``: observed versions paired with the
+  *explicit* owning technology family and (only when a structured source
+  establishes it) the owning component/plugin. An association is never inferred
+  from URLs, hostnames, parameters, keywords, CVE text or LLM output; the
+  component stays empty (unavailable) when no structured source exists.
 
 No I/O, no network, no LLM, no execution of any kind is represented here.
 """
@@ -30,6 +35,11 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 OBSERVED_INVENTORY_RULE_VERSION = "r30-2"
+
+# Stage R30.3 association layer (additive; the R30.2 inventory shape is
+# unchanged). Association semantics are documented in
+# ``ai/knowledge/version_component_association.py``.
+VERSION_ASSOCIATION_RULE_VERSION = "r30-3"
 
 # Closed evidence-type vocabulary. Inferred/guessed values are never allowed.
 EVIDENCE_TYPES: tuple[str, ...] = (
@@ -104,6 +114,58 @@ class ObservedItem(BaseModel):
         return text
 
 
+class ObservedVersionAssociation(BaseModel):
+    """One observed version paired with its *explicit* owning identity.
+
+    ``technology_family`` is the observed technology/product that owns the
+    version (e.g. ``WordPress`` for the persisted ``WordPress:6.8.3``
+    Http.tech label). ``component`` is the owning component/plugin and stays
+    empty (unavailable) unless a structured source establishes it. Neither
+    value is ever inferred from URLs, hostnames, parameter names, keywords,
+    CVE description text or LLM output.
+
+    The schema is additive to Stage R30.2 (``ObservedItem`` is unchanged).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: str
+    technology_family: str = ""
+    component: str = ""
+    source: str = "TECHNOLOGY_INVENTORY"
+    evidence_type: str = "STRUCTURED_TECHNOLOGY"
+
+    @field_validator("version")
+    @classmethod
+    def _valid_version(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("observed version must be non-empty")
+        return text[:MAX_VALUE_LEN]
+
+    @field_validator("technology_family", "component")
+    @classmethod
+    def _bounded_owner(cls, value: str) -> str:
+        text = str(value or "").strip()
+        return text[:MAX_VALUE_LEN]
+
+    @field_validator("source")
+    @classmethod
+    def _valid_source(cls, value: str) -> str:
+        text = str(value or "").strip().upper()
+        if text not in INVENTORY_SOURCES:
+            raise ValueError(f"invalid inventory source: {value!r}")
+        return text
+
+    @field_validator("evidence_type")
+    @classmethod
+    def _valid_evidence_type(cls, value: str) -> str:
+        text = str(value or "").strip().upper()
+        if text not in EVIDENCE_TYPES:
+            raise ValueError(f"invalid evidence_type: {value!r}")
+        return text
+
+
 def _bounded_items(value: list) -> list[ObservedItem]:
     out: list[ObservedItem] = []
     seen: set[tuple[str, str, str]] = set()
@@ -111,6 +173,28 @@ def _bounded_items(value: list) -> list[ObservedItem]:
         if not isinstance(item, ObservedItem):
             item = ObservedItem(**item)
         key = (item.value, item.source, item.evidence_type)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+        if len(out) >= MAX_ITEMS:
+            break
+    return out
+
+
+def _bounded_associations(value: list) -> list[ObservedVersionAssociation]:
+    out: list[ObservedVersionAssociation] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for item in value or ():
+        if not isinstance(item, ObservedVersionAssociation):
+            item = ObservedVersionAssociation(**item)
+        key = (
+            item.version,
+            item.technology_family,
+            item.component,
+            item.source,
+            item.evidence_type,
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -135,6 +219,12 @@ class ObservedAssetInventory(BaseModel):
     versions: list[ObservedItem] = Field(default_factory=list)
     parameters: list[ObservedItem] = Field(default_factory=list)
     paths: list[ObservedItem] = Field(default_factory=list)
+
+    # Stage R30.3 additive: observed version -> owning family/component pairs.
+    # Defaults to empty (unassociated) when no structured owner exists.
+    version_associations: list[ObservedVersionAssociation] = Field(
+        default_factory=list
+    )
 
     sources: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
@@ -166,6 +256,13 @@ class ObservedAssetInventory(BaseModel):
     @classmethod
     def _valid_collections(cls, value: list) -> list[ObservedItem]:
         return _bounded_items(value)
+
+    @field_validator("version_associations", mode="before")
+    @classmethod
+    def _valid_version_associations(
+        cls, value: list
+    ) -> list[ObservedVersionAssociation]:
+        return _bounded_associations(value)
 
     @field_validator("sources")
     @classmethod

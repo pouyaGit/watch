@@ -403,6 +403,10 @@ class TestBackendRealCorpus(unittest.TestCase):
                 for row in item[key]:
                     self.assertIn(row["source"], INVENTORY_SOURCES)
                     self.assertIn(row["evidence_type"], EVIDENCE_TYPES)
+            for row in item.get("version_associations") or []:
+                self.assertIn(row["source"], INVENTORY_SOURCES)
+                self.assertIn(row["evidence_type"], EVIDENCE_TYPES)
+                self.assertTrue(row["version"])
             blob = json.dumps(item).lower()
             for token in ("http://", "https://", "dellnetworkingvr",
                           "hiringlab", ".com"):
@@ -505,6 +509,12 @@ class TestR301Integration(unittest.TestCase):
                     {"value": "1.0", "source": "TECHNOLOGY_INVENTORY",
                      "evidence_type": "STRUCTURED_TECHNOLOGY"},
                 ],
+                "version_associations": [
+                    {"version": "1.0", "technology_family": "WordPress",
+                     "component": "wp-responsive-images",
+                     "source": "COMPONENT_INVENTORY",
+                     "evidence_type": "STRUCTURED_COMPONENT"},
+                ],
                 "parameters": [
                     {"value": "src", "source": "PARAMETER_INVENTORY",
                      "evidence_type": "STRUCTURED_PARAMETER"},
@@ -538,6 +548,36 @@ class TestR301Integration(unittest.TestCase):
         self.assertEqual(item["matched_component"], "image_handler.php")
         self.assertEqual(item["matched_version"], "1.0")
         self.assertEqual(item["matched_parameter"], "src")
+        self.assertEqual(
+            item["version_association_state"],
+            "VERSION_MATCH_WITHIN_SAME_FAMILY",
+        )
+
+    def test_unassociated_version_does_not_resolve_version_blocker(self):
+        from backend import asset_cve_matching
+
+        base = self._fake_inventory()
+
+        def without_associations(program, records=None):
+            inventory = base(program, records)
+            if inventory is not None:
+                inventory["version_associations"] = []
+            return inventory
+
+        asset_cve_matching.clear_cache()
+        with mock.patch(
+            "backend.observed_inventory.get_inventory",
+            side_effect=without_associations,
+        ):
+            data = asset_cve_matching.build_matches(cve=CVE, program="dell")
+        item = data["items"][0]
+        self.assertEqual(item["matched_version"], "")
+        self.assertIn("version_unknown", item["remaining_blockers"])
+        self.assertNotIn("version_unknown", item["resolved_blockers"])
+        self.assertEqual(
+            item["version_association_state"],
+            "VERSION_MATCH_WITHOUT_COMPONENT_ASSOCIATION",
+        )
 
     def test_blockers_resolve_only_through_r301(self):
         from ai.knowledge import asset_cve_matching as engine

@@ -5,6 +5,12 @@ synthesis documents + local ``*.cli.json`` research payloads) with the existing
 local asset/program inventory, then projects through the pure
 ``ai.knowledge.asset_cve_matching`` engine.
 
+Stage R30.3 adds an additive association step *before* the R30.1 version
+evaluation: observed versions are paired with their explicit owning
+technology family/component via ``ai.knowledge.version_component_association``
+so a family-level version match can never be promoted into a component/plugin
+match. The R30.1 engine semantics are untouched.
+
 No new scoring formula, no new numeric opportunity score, no LLM, no network,
 no DNS, no subprocess, no Nuclei, no browser, no target interaction, no
 findings, no alerts, no PoC execution, no persistence and no new Mongo
@@ -20,6 +26,11 @@ from typing import Any, Optional
 from ai.knowledge.asset_cve_matching import (
     RULE_VERSION,
     evaluate_inventory,
+    normalize_version,
+)
+from ai.knowledge.version_component_association import (
+    RULE_VERSION as ASSOCIATION_RULE_VERSION,
+    evaluate_version_association,
 )
 
 MAX_PROGRAMS = 100
@@ -180,11 +191,12 @@ def _merge_unique(*lists: object) -> list[str]:
     return out
 
 
-def _inventory_values(program: str) -> dict[str, list[str]]:
+def _inventory_values(program: str) -> dict[str, list]:
     """Stage R30.2 observed-inventory values for one program (fail-soft).
 
-    Returns plain observed value lists for the R30.1 matcher input; the R30.1
-    matching rules are untouched.
+    Returns plain observed value lists for the R30.1 matcher input plus the
+    Stage R30.3 version-association records; the R30.1 matching rules are
+    untouched.
     """
 
     try:
@@ -195,7 +207,7 @@ def _inventory_values(program: str) -> dict[str, list[str]]:
         return {}
     if not inventory:
         return {}
-    out: dict[str, list[str]] = {}
+    out: dict[str, list] = {}
     for key in (
         "products",
         "components",
@@ -211,7 +223,59 @@ def _inventory_values(program: str) -> dict[str, list[str]]:
             if value and value not in values:
                 values.append(value)
         out[key] = values
+    associations: list[dict] = []
+    for item in inventory.get("version_associations") or ():
+        if isinstance(item, dict):
+            associations.append(item)
+    out["version_associations"] = associations
     return out
+
+
+def _version_association_records(
+    inventory_observed: dict, metadata_versions: object
+) -> list[dict]:
+    """Stage R30.3 association records for one program (never inferred).
+
+    Inventory-derived associations keep their explicit owning family/component.
+    Flat inventory versions and persisted research-metadata versions carry no
+    established owner, so they enter as component-unavailable records; an owner
+    is never guessed from URLs, hostnames, parameters, keywords or CVE text.
+    """
+
+    records: list[dict] = []
+    covered: set[str] = set()
+    for item in inventory_observed.get("version_associations") or ():
+        if not isinstance(item, dict):
+            continue
+        version = str(item.get("version") or "").strip()
+        if not version:
+            continue
+        records.append(
+            {
+                "version": version,
+                "technology_family": str(
+                    item.get("technology_family") or ""
+                ).strip(),
+                "component": str(item.get("component") or "").strip(),
+                "source": str(
+                    item.get("source") or "TECHNOLOGY_INVENTORY"
+                ),
+                "evidence_type": str(
+                    item.get("evidence_type") or "STRUCTURED_TECHNOLOGY"
+                ),
+            }
+        )
+        covered.add(normalize_version(version))
+    for value in inventory_observed.get("versions") or ():
+        text = str(value or "").strip()
+        if not text or normalize_version(text) in covered:
+            continue
+        records.append({"version": text})
+    for value in metadata_versions or ():
+        text = str(value or "").strip()
+        if text:
+            records.append({"version": text})
+    return records
 
 
 def build_matches(
@@ -286,10 +350,6 @@ def build_matches(
                 observed["technologies"],
                 inventory_observed.get("technologies"),
             )
-            observed_versions = _merge_unique(
-                metadata_observed["versions"],
-                inventory_observed.get("versions"),
-            )
             observed_parameters = _merge_unique(
                 metadata_observed["parameters"],
                 inventory_observed.get("parameters"),
@@ -299,6 +359,24 @@ def build_matches(
             )
             observed_categories = _merge_unique(
                 metadata_observed["categories"]
+            )
+            # Stage R30.3: associate observed versions with their explicit
+            # owning technology family/component BEFORE the R30.1 version
+            # evaluation, so a family-level version match cannot be promoted
+            # into a component/plugin match. R30.1 matching rules are
+            # unchanged; only the observed-version input is filtered.
+            association = evaluate_version_association(
+                cve_families=_merge_unique(
+                    cve_products, profile.get("technologies") or []
+                ),
+                cve_components=cve_components,
+                cve_plugins=cve_plugins,
+                cve_versions=cve_versions,
+                observed_versions=_version_association_records(
+                    inventory_observed, metadata_observed["versions"]
+                ),
+                observed_components=observed["components"],
+                observed_plugins=observed["plugins"],
             )
             asset_ids = [
                 str(getattr(record, "asset", "") or "") for record in records
@@ -321,11 +399,23 @@ def build_matches(
                 observed_components=observed["components"],
                 observed_plugins=observed["plugins"],
                 observed_technologies=observed["technologies"],
-                observed_versions=observed_versions,
+                observed_versions=list(association.engine_versions),
                 observed_parameters=observed_parameters,
                 observed_paths=observed_paths,
                 observed_categories=observed_categories,
                 blocker_codes=blockers_by_program.get(group_name, []),
+            )
+            # Additive R30.3 context (never a new score and never combined
+            # with the R25/R26/R29 projections).
+            summary["version_association_state"] = association.state
+            summary["version_association_family"] = association.family
+            summary["version_association_component"] = association.component
+            summary["version_association_reason"] = association.reason
+            summary["version_association_evidence"] = list(
+                association.evidence
+            )
+            summary["version_association_rule_version"] = (
+                ASSOCIATION_RULE_VERSION
             )
             results.append(summary)
 
