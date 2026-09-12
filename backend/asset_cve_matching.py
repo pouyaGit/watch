@@ -42,6 +42,10 @@ from ai.knowledge.component_identity import (
     match_observed_identities,
     resolve_cve_identities,
 )
+from ai.knowledge.path_parameter_relevance import (
+    RULE_VERSION as PATH_PARAMETER_RELEVANCE_RULE_VERSION,
+    evaluate_path_parameter_relevance,
+)
 from ai.knowledge.version_component_association import (
     RULE_VERSION as ASSOCIATION_RULE_VERSION,
     evaluate_version_association,
@@ -65,6 +69,9 @@ MAX_WITHHELD_SUPPORT = 64
 
 # Bound on identity-resolution evidence rows recorded additively per match.
 MAX_IDENTITY_EVIDENCE = 64
+
+# Bound on R31.8 path/parameter relevance evidence rows per match.
+MAX_PATH_PARAMETER_EVIDENCE = 64
 
 _METADATA_OBSERVED_KEYS = (
     ("plugins", "plugins"),
@@ -723,6 +730,8 @@ def build_matches(
                 inventory_observed.get("explicit_plugins"),
                 normalize_plugin,
             )
+            provenance_scopes = _provenance_scopes(inventory_observed)
+            parameter_locations = _parameter_locations(inventory_observed)
             support_gate = _support_gate(
                 cve_components=cve_components,
                 cve_plugins=cve_plugins,
@@ -746,8 +755,8 @@ def build_matches(
                         normalize_plugin,
                     ),
                 },
-                provenance_scopes=_provenance_scopes(inventory_observed),
-                parameter_locations=_parameter_locations(inventory_observed),
+                provenance_scopes=provenance_scopes,
+                parameter_locations=parameter_locations,
             )
             # Stage R30.3: associate observed versions with their explicit
             # owning technology family/component BEFORE the R30.1 version
@@ -774,6 +783,34 @@ def build_matches(
             version_normalization = build_version_evidence(
                 cve_versions=cve_versions,
                 observed_versions=list(association.engine_versions),
+            )
+            # Stage R31.8: deterministic path/parameter/method relevance
+            # evidence over the same engine-eligible inputs, with R31.5
+            # component scopes preserved. Additive only: it never rewrites
+            # engine inputs and never changes confidence/state/blockers.
+            component_scope_values = tuple(
+                sorted(
+                    {
+                        scope
+                        for category in provenance_scopes.values()
+                        for scopes_for_value in category.values()
+                        for scope in scopes_for_value
+                    }
+                )
+            )
+            path_parameter_relevance = (
+                evaluate_path_parameter_relevance(
+                    research_paths=cve_paths,
+                    research_parameters=profile.get("parameters") or [],
+                    # No structured HTTP-method field exists in the current
+                    # research profile; absent data stays NO_EVIDENCE.
+                    research_methods=profile.get("methods") or (),
+                    observed_paths=support_gate["paths"],
+                    observed_parameters=support_gate["parameters"],
+                    parameter_locations=parameter_locations,
+                    component_scopes=component_scope_values,
+                    max_evidence=MAX_PATH_PARAMETER_EVIDENCE,
+                )
             )
             asset_ids = [
                 str(getattr(record, "asset", "") or "") for record in records
@@ -842,6 +879,13 @@ def build_matches(
             summary["version_normalization"] = version_normalization
             summary["version_normalization_rule_version"] = (
                 VERSION_NORMALIZATION_RULE_VERSION
+            )
+            # Additive R31.8 path/parameter relevance context: supporting
+            # evidence only. Never a score and never authoritative over
+            # component identity, R31.5 scope, R31.7 versions or R30.1 state.
+            summary["path_parameter_relevance"] = path_parameter_relevance
+            summary["path_parameter_relevance_rule_version"] = (
+                PATH_PARAMETER_RELEVANCE_RULE_VERSION
             )
             results.append(summary)
 
