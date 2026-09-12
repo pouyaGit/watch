@@ -46,6 +46,10 @@ from ai.knowledge.evidence_quality import (
     EVIDENCE_QUALITY_RULE_VERSION,
     evaluate_evidence_quality,
 )
+from ai.knowledge.hunt_actionability import (
+    HUNT_ACTIONABILITY_RULE_VERSION,
+    evaluate_hunt_actionability,
+)
 from ai.knowledge.hunt_priority import (
     HUNT_PRIORITY_RULE_VERSION,
     evaluate_hunt_priority,
@@ -963,6 +967,17 @@ def build_matches(
             )
             summary["hunt_priority_rule_version"] = (
                 HUNT_PRIORITY_RULE_VERSION
+            )
+            # Stage R31.11: additive actionability refinement over the R31.10
+            # projection. Consumed read-only; never rescoring, never replacing
+            # the R31.10 priority or any R29/Money/opportunity field.
+            summary["hunt_actionability"] = evaluate_hunt_actionability(
+                hunt_priority=summary["hunt_priority"],
+                evidence_provenance=support_gate["provenance"],
+                support_scope=support_gate["support_scope"],
+            )
+            summary["hunt_actionability_rule_version"] = (
+                HUNT_ACTIONABILITY_RULE_VERSION
             )
             results.append(summary)
 
