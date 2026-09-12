@@ -42,6 +42,10 @@ from ai.knowledge.component_identity import (
     match_observed_identities,
     resolve_cve_identities,
 )
+from ai.knowledge.evidence_quality import (
+    EVIDENCE_QUALITY_RULE_VERSION,
+    evaluate_evidence_quality,
+)
 from ai.knowledge.path_parameter_relevance import (
     RULE_VERSION as PATH_PARAMETER_RELEVANCE_RULE_VERSION,
     evaluate_path_parameter_relevance,
@@ -520,6 +524,16 @@ def _support_gate(
         "parameters": list(observed_parameters or ()),
         "paths": list(observed_paths or ()),
         "withheld": [],
+        # Additive R31.9 conflict-detection inputs (no behavior change):
+        # which matched observed identities were explicit vs inferred.
+        "matched_explicit": {
+            category: sorted(values)
+            for category, values in matched_explicit.items()
+        },
+        "matched_inferred": {
+            category: sorted(values)
+            for category, values in matched_inferred.items()
+        },
     }
     if not any_inferred:
         return result
@@ -886,6 +900,41 @@ def build_matches(
             summary["path_parameter_relevance"] = path_parameter_relevance
             summary["path_parameter_relevance_rule_version"] = (
                 PATH_PARAMETER_RELEVANCE_RULE_VERSION
+            )
+            # Stage R31.9: additive evidence-quality audit metadata over every
+            # dimension above. It never rewrites R30.1/R31.x fields and never
+            # exposes a numeric probability.
+            component_conflict = any(
+                support_gate["matched_explicit"].get(category)
+                and support_gate["matched_inferred"].get(category)
+                and not (
+                    set(support_gate["matched_explicit"][category])
+                    & set(support_gate["matched_inferred"][category])
+                )
+                for category in ("component", "plugin")
+            )
+            evidence_quality = evaluate_evidence_quality(
+                strongest_match_type=summary["strongest_match_type"],
+                strongest_confidence=summary["strongest_confidence"],
+                asset_match_state=summary["asset_match_state"],
+                matched_component=summary["matched_component"],
+                matched_version=summary["matched_version"],
+                matched_parameter=summary["matched_parameter"],
+                version_state=summary["version_state"],
+                version_association_state=association.state,
+                remaining_blockers=summary["remaining_blockers"],
+                resolved_blockers=summary["resolved_blockers"],
+                evidence_provenance=support_gate["provenance"],
+                support_scope=support_gate["support_scope"],
+                withheld_support=support_gate["withheld"],
+                version_normalization=version_normalization,
+                path_parameter_relevance=path_parameter_relevance,
+                identity_resolution=summary["identity_resolution"],
+                component_conflict=component_conflict,
+            )
+            summary["evidence_quality"] = evidence_quality
+            summary["evidence_quality_rule_version"] = (
+                EVIDENCE_QUALITY_RULE_VERSION
             )
             results.append(summary)
 
