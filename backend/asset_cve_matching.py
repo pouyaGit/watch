@@ -46,6 +46,10 @@ from ai.knowledge.version_component_association import (
     RULE_VERSION as ASSOCIATION_RULE_VERSION,
     evaluate_version_association,
 )
+from ai.knowledge.version_normalization import (
+    RULE_VERSION as VERSION_NORMALIZATION_RULE_VERSION,
+    build_version_evidence,
+)
 from ai.schemas.observed_inventory import (
     EVIDENCE_PROVENANCE_RULE_VERSION,
 )
@@ -763,6 +767,14 @@ def build_matches(
                 observed_components=observed["components"],
                 observed_plugins=observed["plugins"],
             )
+            # Stage R31.7: deterministic version normalization/confidence
+            # evidence over the exact inputs the R30.1 engine sees. Additive
+            # only: parsing never changes what the engine receives or any
+            # confidence/state field.
+            version_normalization = build_version_evidence(
+                cve_versions=cve_versions,
+                observed_versions=list(association.engine_versions),
+            )
             asset_ids = [
                 str(getattr(record, "asset", "") or "") for record in records
             ]
@@ -823,6 +835,13 @@ def build_matches(
             ][:MAX_IDENTITY_EVIDENCE]
             summary["identity_resolution_rule_version"] = (
                 IDENTITY_RESOLUTION_RULE_VERSION
+            )
+            # Additive R31.7 version-normalization context: structured,
+            # bounded parsing/comparison evidence. Never a score; never alters
+            # R30.1 confidence, blockers or the R31.5 support gate.
+            summary["version_normalization"] = version_normalization
+            summary["version_normalization_rule_version"] = (
+                VERSION_NORMALIZATION_RULE_VERSION
             )
             results.append(summary)
 
