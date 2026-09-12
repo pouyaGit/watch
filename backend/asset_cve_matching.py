@@ -36,6 +36,12 @@ from ai.knowledge.asset_cve_matching import (
     normalize_plugin,
     normalize_version,
 )
+from ai.knowledge.component_identity import (
+    RULE_VERSION as IDENTITY_RESOLUTION_RULE_VERSION,
+    expanded_cve_value_set,
+    match_observed_identities,
+    resolve_cve_identities,
+)
 from ai.knowledge.version_component_association import (
     RULE_VERSION as ASSOCIATION_RULE_VERSION,
     evaluate_version_association,
@@ -52,6 +58,9 @@ SUPPORT_SCOPES: tuple[str, ...] = ("COMPONENT_SCOPED", "GLOBAL", "NONE")
 
 # Bound on withheld-support evidence lines recorded additively.
 MAX_WITHHELD_SUPPORT = 64
+
+# Bound on identity-resolution evidence rows recorded additively per match.
+MAX_IDENTITY_EVIDENCE = 64
 
 _METADATA_OBSERVED_KEYS = (
     ("plugins", "plugins"),
@@ -611,6 +620,35 @@ def build_matches(
             profile, context.get("assets") or []
         )
 
+        # Stage R31.6: deterministic CVE-side identity resolution. The
+        # resolver expands the CVE-side product/plugin/component values into
+        # the alias set the unchanged R30.1 engine already understands
+        # (e.g. ``wordpress_automatic_plugin`` -> ``wordpress-automatic`` and
+        # ``automatic``). The R30.1 engine is unmodified; the adapter simply
+        # feeds it the resolved value set in addition to the originals.
+        identity_resolution = resolve_cve_identities(
+            cve_products=cve_products,
+            cve_plugins=cve_plugins,
+            cve_components=cve_components,
+        )
+        resolved_products = expanded_cve_value_set(
+            identity_resolution.resolutions, "PRODUCT"
+        )
+        resolved_plugins = expanded_cve_value_set(
+            identity_resolution.resolutions, "PLUGIN"
+        )
+        resolved_components = expanded_cve_value_set(
+            identity_resolution.resolutions, "COMPONENT"
+        )
+        if resolved_products:
+            cve_products = _merge_unique(cve_products, resolved_products)
+        if resolved_plugins:
+            cve_plugins = _merge_unique(cve_plugins, resolved_plugins)
+        if resolved_components:
+            cve_components = _merge_unique(
+                cve_components, resolved_components
+            )
+
         grouped: dict[str, list] = {}
         for record in context.get("assets") or ():
             group = str(getattr(record, "program", "") or "")
@@ -770,6 +808,21 @@ def build_matches(
             summary["withheld_support"] = list(support_gate["withheld"])
             summary["evidence_provenance_rule_version"] = (
                 EVIDENCE_PROVENANCE_RULE_VERSION
+            )
+            # Additive R31.6 identity-resolution context: structured evidence
+            # recording which CVE-side identities resolved against which
+            # observed identities, never a new score.
+            identity_matches = match_observed_identities(
+                resolutions=identity_resolution.resolutions,
+                observed_components=observed["components"],
+                observed_plugins=observed["plugins"],
+                observed_products=observed["products"],
+            )
+            summary["identity_resolution"] = [
+                row.to_dict() for row in identity_matches
+            ][:MAX_IDENTITY_EVIDENCE]
+            summary["identity_resolution_rule_version"] = (
+                IDENTITY_RESOLUTION_RULE_VERSION
             )
             results.append(summary)
 
