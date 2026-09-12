@@ -335,6 +335,62 @@ class TestDeterminism(unittest.TestCase):
         self.assertTrue(ids)
 
 
+class TestScalability(unittest.TestCase):
+    def test_no_lexicographic_path_cap(self):
+        # Regression (R31.2 MAX_PATHS=20000): >20k filler paths used to push
+        # the ruled paths out of the lexicographic window, so a real inventory
+        # inferred zero components/plugins despite matching paths existing.
+        filler = [
+            endpoint_record(f"/aaa/{index:05d}/asset.js")
+            for index in range(25000)
+        ]
+        out = infer(endpoint=filler + [
+            endpoint_record("/wp-content/plugins/test-plugin/"),
+            endpoint_record("/assets/ckeditor/plugins/"),
+        ])
+        self.assertEqual(values(out["plugins"]), ["test-plugin"])
+        self.assertEqual(values(out["components"]), ["CKEditor"])
+
+    def test_bounded_output_on_dense_matches(self):
+        # Thousands of distinct matches: emitted items and evidence stay
+        # bounded by MAX_ITEMS / MAX_EVIDENCE. The slugs use alphabetic
+        # suffixes because ``normalize_technology`` strips version-like
+        # trailing digits (a real, intended behavior).
+        letters = "abcdefghijklmnopqrstuvwxyz"
+
+        def slug(index):
+            out = ""
+            n = index
+            for _ in range(4):
+                out = letters[n % 26] + out
+                n //= 26
+            return f"plugin-{out}"
+
+        records = [
+            endpoint_record(f"/wp-content/plugins/{slug(index)}/")
+            for index in range(2500)
+        ]
+        out = infer(endpoint=records)
+        self.assertEqual(len(out["plugins"]), ci.MAX_ITEMS)
+        self.assertEqual(len(out["evidence"]), ci.MAX_EVIDENCE)
+
+    def test_canonical_path_per_value(self):
+        # The documented canonical choice (smallest matching path) is kept
+        # even though paths are no longer globally sorted.
+        out = infer(endpoint=[
+            endpoint_record("/wp-content/plugins/akismet/z.php"),
+            endpoint_record("/wp-content/plugins/akismet/a.php"),
+            endpoint_record("/wp-content/plugins/akismet/m.php"),
+        ])
+        evidence = [line for line in out["evidence"]
+                    if "akismet" in line]
+        self.assertEqual(len(evidence), 1)
+        self.assertIn("a.php", evidence[0])
+
+    def test_no_path_cap_constant_remains(self):
+        self.assertFalse(hasattr(ci, "MAX_PATHS"))
+
+
 class TestApplyInferred(unittest.TestCase):
     def _inventory(self, **over):
         kwargs = {

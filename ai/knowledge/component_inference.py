@@ -21,6 +21,11 @@ Hard boundaries encoded here:
 - Rules live only in :data:`RULES` and are individually identified by
   ``rule_id``; new rules can be added without touching the inventory loader or
   the observed inventory builders.
+- Scalability: every distinct observed path is evaluated. There is no
+  arbitrary lexicographic path truncation (a low cap used to drop ruled paths
+  behind unrelated paths); emitted items and evidence stay bounded by
+  ``MAX_ITEMS`` / ``MAX_EVIDENCE``, and per-value choices are canonical so the
+  result stays independent of input and set iteration order.
 """
 
 from __future__ import annotations
@@ -48,7 +53,6 @@ SOURCE_COMPONENT = "COMPONENT_INVENTORY"
 MAX_ITEMS = 2000
 MAX_EVIDENCE = 256
 MAX_PATH_LEN = 2048
-MAX_PATHS = 20000
 
 _SINGLE_LINE_RE = re.compile(r"[\r\n]+")
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,63}$")
@@ -210,13 +214,16 @@ def _path_from_record(record: object) -> str:
     return ""
 
 
-def _collect_paths(records: object) -> list[str]:
+def _distinct_paths(*record_groups: object) -> set[str]:
+    """One deduplicated path set across every record group (order-free)."""
+
     paths: set[str] = set()
-    for record in records or ():
-        path = _path_from_record(record)
-        if path:
-            paths.add(path)
-    return sorted(paths)
+    for records in record_groups:
+        for record in records or ():
+            path = _path_from_record(record)
+            if path:
+                paths.add(path)
+    return paths
 
 
 # ---------------------------------------------------------------------------
@@ -260,20 +267,19 @@ def infer_inventory_items(
     Returns ``{"components": [ObservedItem, ...], "plugins": [...],
     "evidence": [str, ...]}``. Every emitted item carries
     ``source=COMPONENT_INVENTORY`` and an ``INFERRED_COMPONENT`` /
-    ``INFERRED_PLUGIN`` evidence type. Input order never affects the output.
+    ``INFERRED_PLUGIN`` evidence type. Every distinct path is evaluated and
+    the result never depends on input record order or set iteration order.
     """
 
-    paths = sorted(
-        set(_collect_paths(endpoint_records))
-        | set(_collect_paths(url_records))
-        | set(_collect_paths(http_records))
-    )[:MAX_PATHS]
+    paths = _distinct_paths(endpoint_records, url_records, http_records)
 
-    values: dict[str, dict[str, str]] = {
+    # Per normalized value keep the canonical best match
+    # ``(path, rule_id, value)``: the lexicographically smallest matching path
+    # wins. This keeps the result deterministic without sorting every path.
+    values: dict[str, dict[str, tuple[str, str, str]]] = {
         CATEGORY_COMPONENT: {},
         CATEGORY_PLUGIN: {},
     }
-    evidence: list[str] = []
     for path in paths:
         for rule in RULES:
             match = rule.pattern.search(path)
@@ -288,23 +294,29 @@ def infer_inventory_items(
             if not key:
                 continue
             bucket = values[rule.category]
-            if key in bucket:
-                continue
-            bucket[key] = value
-            evidence.append(
-                f"{rule.category} {value!r} inferred from path {path!r} "
-                f"(rule {rule.rule_id})"
-            )
+            candidate = (path, rule.rule_id, value)
+            current = bucket.get(key)
+            if current is None or candidate < current:
+                bucket[key] = candidate
 
     def _build(category: str, evidence_type: str) -> list[ObservedItem]:
         out: list[ObservedItem] = []
         for key in sorted(values[category]):
-            item = _observed_item(values[category][key], evidence_type)
+            item = _observed_item(values[category][key][2], evidence_type)
             if item is not None:
                 out.append(item)
             if len(out) >= MAX_ITEMS:
                 break
         return out
+
+    evidence: list[str] = []
+    for category in (CATEGORY_COMPONENT, CATEGORY_PLUGIN):
+        for key in sorted(values[category]):
+            path, rule_id, value = values[category][key]
+            evidence.append(
+                f"{category} {value!r} inferred from path {path!r} "
+                f"(rule {rule_id})"
+            )
 
     components = _build(CATEGORY_COMPONENT, EVIDENCE_COMPONENT)
     plugins = _build(CATEGORY_PLUGIN, EVIDENCE_PLUGIN)
