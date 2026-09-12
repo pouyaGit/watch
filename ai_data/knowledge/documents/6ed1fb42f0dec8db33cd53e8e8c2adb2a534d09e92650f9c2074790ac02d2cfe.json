@@ -1,0 +1,239 @@
+{
+  "aggregate": {
+    "contexts": [],
+    "cwes": [],
+    "parameters": [],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-36ba7591d0d4a831",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-2dfb728af16ddac7"
+      },
+      {
+        "claim_id": "clm-c201d0677d904a3e",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-2dfb728af16ddac7"
+      },
+      {
+        "claim_id": "clm-b6c04e7036bc53fd",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-a438405bf6fb0db0"
+      }
+    ],
+    "summaries": [
+      {
+        "source_ids": [
+          "src-2dfb728af16ddac7"
+        ],
+        "value": "[每日信息流] 2024-05-02 · Issue #632 · Tyaoo/picker · GitHub"
+      }
+    ],
+    "tags": [
+      {
+        "source_ids": [
+          "src-2dfb728af16ddac7",
+          "src-a438405bf6fb0db0"
+        ],
+        "value": "cve:CVE-2024-27956"
+      },
+      {
+        "source_ids": [
+          "src-2dfb728af16ddac7",
+          "src-a438405bf6fb0db0"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-2dfb728af16ddac7"
+        ],
+        "value": "reference"
+      },
+      {
+        "source_ids": [
+          "src-a438405bf6fb0db0"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [],
+    "titles": [
+      {
+        "source_ids": [
+          "src-2dfb728af16ddac7"
+        ],
+        "value": "[每日信息流] 2024-05-02 · Issue #632 · Tyaoo/picker · GitHub"
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [
+      {
+        "source_ids": [
+          "src-2dfb728af16ddac7",
+          "src-a438405bf6fb0db0"
+        ],
+        "value": "code_injection"
+      },
+      {
+        "source_ids": [
+          "src-2dfb728af16ddac7",
+          "src-a438405bf6fb0db0"
+        ],
+        "value": "sql_injection"
+      }
+    ],
+    "wafs": [],
+    "xss_types": []
+  },
+  "confidence": 0.0,
+  "content": "[每日信息流] 2024-05-02 · Issue #632 · Tyaoo/picker · GitHub\nHat Security Advisory 2024-2621-03 Red Hat Security Advisory 2024-2619-03 Red Hat Security Advisory 2024-2616-03 Red Hat Security Advisory 2024-2587-03 Red Hat Security Advisory 2024-2586-03 Red Hat Security Advisory 2024-2585-03 Red Hat Security Advisory 2024-2584-03 Red Hat Security Advisory 2024-2583-03 Red Hat Security Advisory 2024-2582-03 Red Hat Security Advisory 2024-2581-03 Red Hat Security Advisory 2024-2580-03 Red Hat Security Advisory 2024-2577-03 Red Hat Security Advisory 2024-2575-03 Security Boulevard Security in the AI Sector: Understanding Infostealer Exposures and Corporate Risks Reading the Mandiant M-Trends 2024 Lawsuits After Ransomware on the Rise, Comparitech Says How Do I Protect My AI Model? Product Release: PreVeil 5.0 What’s hot at RSAC 2024: 8 SSCS talks you don’t want to miss ADCS Attack Paths in BloodHound — Part 2 It’s 3am… Do You Know Where Your Data Is? AI: Separating Fact from Fiction Zero-Day Nightmare: Palo Alto, Cisco, and MITRE Under Attack 嘶吼 RoarTalk – 网络安全行业综合服务平台,4hou.com CACTER AI实验室：AI大模型在邮件安全领域的应用 文件解读 | 工信部88号文发布，强调7大任务、6大重点 Sploitus.com Exploits RSS Feed Online Tours And Travels Management System 1.0 SQL Injection exploit Exploit for CVE-2024-27956 exploit Exploit for Code Injection in Vmware Spring Framework exploit Exploit for Improper Initialization in Linux Linux Kernel exploit Exploit for Incorrect Authorization in Pydio Cells exploit Microsoft Security Blog Microsoft named overall leader in KuppingerCole Leadership Compass for ITDR “Dirty stream” attack: Discovering and mitigating a common vulnerability pattern in Android apps InfoSec Write-ups - Medium AWS S3 Bucket Misconfiguration Exposes PII and Documents of Job Seekers darkreading Private Internet Search Is Still Finding Its Way UnitedHealth Congressional Testimony Reveals Rampant Security Fails Intel 471 Acquires Cyborg Security Cobalt's 2024 State of Pentesting Report Reveals Cybersecurity Industry Needs Shadow APIs: An Overlooked Cyber-Risk for Orgs Qantas Customers' Boarding Passes Exposed in Flight App Mishap 'Cuttlefish' Zero-Click Malware Steals Private Cloud Data The Cybersecurity Checklist That Could Save Your M&A Deal Verizon DBIR: Basic Security Gaffes Underpin Bumper Crop of Breaches Bug Bounty in InfoSec Write-ups on Medium AWS S3 Bucket Misconfiguration Exposes PII and Documents of Job Seekers FreeBuf网络安全行业门户 《网络安全技术 网络安全众测服务要求》发布 不忘初心 方得始终 Multi-thread process can't unshare pid namespace (in some old Linux version) 软件安全与逆向分析 大家五一快乐，活动开奖了，再送星球优惠券 Checkmarx.com API Security Best Practices – How to Secure APIs in Your Environment What is API Security How a CNAPP Helps Manage Cloud-Native Application Security Challenges 看雪学苑 2024鹅厂游戏安全技术竞赛决赛题解-PC客户端 清华、复旦团队教你30小时玩转CTF！ 丁爸 情报分析师的工具箱 【AI速读】揭秘假新闻：如何识别和抵抗信息误导 DataCon大数据安全分析竞赛 劳动节快乐！致敬为梦想奋斗的你 奇客Solidot–传递最新科技情报 美国政府拍卖 5.34 petaflops 退役超算 美国最高法院拒绝推翻德州的成人网站禁令 赵长鹏因洗钱指控被判入狱 4 个月 Arc Browser for Windows 1.0 GA 中国信息安全 致敬每一位劳动人民！ 硕鼠的博客站 老范读评 5月1日，问界M7追尾事故，特斯拉FSD落地探讨 Elon Musk窜访北京，李强总理，第二次挽救特斯拉。FSD真的可以在中国落地吗？如果大量中国车厂，搭载FSD行销全球，会不会想搭载着Android系统的中国智能手机那样席卷全球？ 极客公园 AI 对「劳动节」的理解，让我没太绷住 余承东卸任华为终端 BG CEO；马斯克再解雇两名特斯拉高管；天涯社区恢复访问 | 极客早知道 汲道 Pyinfra：使用Python自动化基础设施 幽默：新创业公司通过SSH销售咖啡 ASOS使用Transformer改善商品推荐用户体验 近期国外大科技公司工程文摘 Claude最新九个用户体验测试 幽默：交通标志是一种符号和交通语言 OPPO安全中心 【五月巨献】额外奖励/新人加成/出国游学，这个五月OSRC让你嗨翻天！ 某岛 BZOJ 3153. Sone1 Top Tree 学习笔记 娜璋AI安全之家 [译文] LLM安全：1.黑客如何读取您与ChatGPT或微软Copilot的聊天内容 维基萌 出发！ 大佬们这么快就巡起了《末日列车去往何方？》。明天要坐原作中的西武池袋线，虽然会路过沿线，但是不能下车... 预告：明天要来一场说走就走的旅行👏。 BMPI AI驱动开发：从Prompt到Product（直播） 懒得勤快的博客_互联网分享精神 WiseCare 365 6.7.2专业学习版 威力导演CyberLink PowerDirector 2024 Ultimate 22.4.2829多语言学习版 塞班时代经典资源管理器 x-plore pro v4.37.28 mod直装捐赠完美版 陈少文的网站 对齐 Ops，使用新思路重写 Ops Copilot 已更新 游研社 因为不想虐猫，泰国人把哆啦A梦祭天了 史上众筹金额最高的JRPG，终于和玩家正式见面了 迷途小书童的Note Ollama本地部署，离线使用大模型 沉舟侧畔 Blog 小棉袄去“上学”（日本托儿所 · 其二） Conge 折返点 2417 - 2024 隧道马训练第 12 周 心想事成 屹铭说 - LEO屹铭 - 朕弟先生的笔记 做了一个奇怪的梦 Lei Mao's Log Book 国际米兰意甲联赛二十冠 Reactions are currently unavailable Activity Sign up for free to join this conversation on GitHub. Already have an account? Sign in to comment Metadata Metadata Assignees No one assigned Labels daily Projects No projects Milestone No milestone Relationships None yet Development No branches or pull requests Issue actions Open in GitHub Copilot app You can’t perform that action at this time.",
+  "content_hash": "6ed1fb42f0dec8db33cd53e8e8c2adb2a534d09e92650f9c2074790ac02d2cfe",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "indexed_at": "2026-09-09T16:04:11.195837+00:00",
+  "intelligence_evidence": [
+    {
+      "evidence": "anagement System 1.0 SQL Injection exploit Exploit for CVE-2024-27956 exploit Exploit for Code Injection in Vmware Spring Framework exploit Exploit for Improper Initialization in Linux Linux Ker",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-code-injection",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/Tyaoo/picker/issues/632",
+      "value": "code_injection"
+    },
+    {
+      "evidence": "强调7大任务、6大重点 Sploitus.com Exploits RSS Feed Online Tours And Travels Management System 1.0 SQL Injection exploit Exploit for CVE-2024-27956 exploit Exploit for Code Injection in Vmware Spring Fr",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/Tyaoo/picker/issues/632",
+      "value": "sql_injection"
+    }
+  ],
+  "knowledge_id": "kb-6ed1fb42f0dec8db",
+  "parameters": [],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-36ba7591d0d4a831",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "[每日信息流] 2024-05-02 · Issue #632 · Tyaoo/picker · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-c201d0677d904a3e",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "[每日信息流] 2024-05-02 · Issue #632 · Tyaoo/picker · GitHub",
+          "tags": [
+            "cve:CVE-2024-27956",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "[每日信息流] 2024-05-02 · Issue #632 · Tyaoo/picker · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "sql_injection",
+            "code_injection"
+          ],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T16:04:11.195837+00:00",
+      "published_at": null,
+      "source_id": "src-2dfb728af16ddac7",
+      "source_type": "github_research",
+      "source_url": "https://github.com/Tyaoo/picker/issues/632",
+      "title": "[每日信息流] 2024-05-02 · Issue #632 · Tyaoo/picker · GitHub"
+    },
+    {
+      "claims": [
+        {
+          "claim_id": "clm-b6c04e7036bc53fd",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "sql_injection",
+            "code_injection"
+          ],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": null,
+      "published_at": null,
+      "source_id": "src-a438405bf6fb0db0",
+      "source_type": "research",
+      "source_url": "https://github.com/Tyaoo/picker/issues/632",
+      "title": null
+    }
+  ],
+  "published_at": null,
+  "schema_version": 2,
+  "source_type": "github_research",
+  "source_url": "https://github.com/Tyaoo/picker/issues/632",
+  "summary": null,
+  "tags": [
+    "cve:CVE-2024-27956",
+    "deterministic-intelligence",
+    "reference",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [],
+  "title": "[每日信息流] 2024-05-02 · Issue #632 · Tyaoo/picker · GitHub",
+  "verification_patterns": [],
+  "vulnerability_types": [
+    "code_injection",
+    "sql_injection"
+  ],
+  "wafs": [],
+  "xss_types": []
+}

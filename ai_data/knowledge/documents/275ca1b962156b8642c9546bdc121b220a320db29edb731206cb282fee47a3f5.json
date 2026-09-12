@@ -1,0 +1,384 @@
+{
+  "aggregate": {
+    "components": [],
+    "contexts": [],
+    "cwes": [],
+    "parameters": [],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-276f599f3bc8a79e",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-0508debe99a6fddd"
+      },
+      {
+        "claim_id": "clm-4b77d9ad39f41327",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-0508debe99a6fddd"
+      },
+      {
+        "claim_id": "clm-edf87dd51e1ac963",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-0508debe99a6fddd"
+      },
+      {
+        "claim_id": "clm-f342e93fbe04a89f",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-0508debe99a6fddd"
+      },
+      {
+        "claim_id": "clm-9ccf0d929e7e5315",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-86c5c5e7d4aed901"
+      },
+      {
+        "claim_id": "clm-ac87c1e37dacf8c4",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-86c5c5e7d4aed901"
+      }
+    ],
+    "summaries": [
+      {
+        "source_ids": [
+          "src-0508debe99a6fddd"
+        ],
+        "value": "Cannot start CrowdSec with (notification) plugins in a non-root container · Issue #3562 · crowdsecurity/crowdsec · GitHub"
+      }
+    ],
+    "tags": [
+      {
+        "source_ids": [
+          "src-0508debe99a6fddd",
+          "src-86c5c5e7d4aed901"
+        ],
+        "value": "cve:CVE-2024-27956"
+      },
+      {
+        "source_ids": [
+          "src-0508debe99a6fddd",
+          "src-86c5c5e7d4aed901"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-0508debe99a6fddd"
+        ],
+        "value": "reference"
+      },
+      {
+        "source_ids": [
+          "src-86c5c5e7d4aed901"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [],
+    "titles": [
+      {
+        "source_ids": [
+          "src-0508debe99a6fddd"
+        ],
+        "value": "Cannot start CrowdSec with (notification) plugins in a non-root container · Issue #3562 · crowdsecurity/crowdsec · GitHub"
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [
+      {
+        "source_ids": [
+          "src-0508debe99a6fddd",
+          "src-86c5c5e7d4aed901"
+        ],
+        "value": "sql_injection"
+      }
+    ],
+    "wafs": [],
+    "xss_types": []
+  },
+  "components": [],
+  "confidence": 0.0,
+  "content": "Cannot start CrowdSec with (notification) plugins in a non-root container · Issue #3562 · crowdsecurity/crowdsec · GitHub\nCannot start CrowdSec with (notification) plugins in a non-root container · Issue #3562 · crowdsecurity/crowdsec · GitHub\nSkip to content\nYou signed in with another tab or window.\nReload\nto refresh your session.\nYou signed out in another tab or window.\nReload\nto refresh your session.\nYou switched accounts on another tab or window.\nReload\nto refresh your session.\nDismiss alert\n{{ message }}\nUh oh!\nThere was an error while loading.\nPlease reload this page\n.\ncrowdsecurity\n/\ncrowdsec\nPublic\nNotifications\nYou must be signed in to change notification settings\nFork\n713\nStar\n14.8k\nCannot start CrowdSec with (notification) plugins in a non-root container\n#3562\nNew issue\nCopy link\nNew issue\nCopy link\nOpen\nOpen\nCannot start CrowdSec with (notification) plugins in a non-root container\n#3562\nCopy link\nLabels\nkind/bug\nSomething isn't working\nSomething isn't working\nneeds/triage\nversion/1.6.8\nDescription\ntomgehrmann\nopened\non Apr 5, 2025\nIssue body actions\nWhat happened?\nWhen using a non-root user (and (probably WLOG) in my case user namespace remapping) with the container, notification plugins don't work.\ncrowdsec | time=\"2025-04-05T20:08:07Z\" level=info msg=\"initiating plugin broker\"\ncrowdsec | time=\"2025-04-05T20:08:07Z\" level=fatal msg=\"api server init: unable to run plugin broker: while loading plugin: while getting current user: user: Current requires cgo or $USER set in environment\"\nIf\nUSER=root\nis set:\ncrowdsec | time=\"2025-04-05T20:05:12Z\" level=info msg=\"initiating plugin broker\"\ncrowdsec | time=\"2025-04-05T20:05:12Z\" level=fatal msg=\"api server init: unable to run plugin broker: while loading plugin: plugin at /usr/local/lib/crowdsec/plugins/notification-email is not owned by user 'root'\"\nBut it\nis\nalways owned by\nroot\n:\n$\nsudo docker\nexec\ncrowdsec ls -l /usr/local/lib/crowdsec/plugins\ntotal 156284\n-rwxr-xr-x 1 root root 26733528 Mar 25 15:58 notification-email\n-rwxr-xr-x 1 root root 26674488 Mar 25 15:58 notification-file\n-rwxr-xr-x 1 root root 26626296 Mar 25 15:58 notification-http\n-rwxr-xr-x 1 root root 26618040 Mar 25 15:58 notification-sentinel\n-rwxr-xr-x 1 root root 26753688 Mar 25 15:58 notification-slack\n-rwxr-xr-x 1 root root 26618136 Mar 25 15:58 notification-splunk\nAccording to the documentation, this should be sufficient:\nCrowdSec rejects the plugins if one of the following is true:\nplugin is not owned by the root user and root group.\nplugin is world-writable.\nThis behavior is triggered when any notification is defined in\nprofiles.yaml(.local)\n.\nWhat did you expect to happen?\nNotifications should work when executing the container as a non-root user.\nHow can we reproduce it (as minimally and precisely as possible)?\ncompose.yaml\n:\nservices\n:\ncrowdsec\n:\nimage\n:\ncrowdsecurity/crowdsec:latest\ncontainer_name\n:\ncrowdsec\nrestart\n:\nunless-stopped\nuser\n:\n${CROWDSEC_UID:-1004}:${CROWDSEC_GID:-1004}\n#\nread_only: true\n#\nsecurity_opt:\n#\n- apparmor=docker-crowdsec\n#\n- no-new-privileges\n#\ncap_drop:\n#\n- ALL\nexpose\n: -\n8080\n#\nhttp api for bouncers\n-\n6060\n#\nmetrics endpoint for prometheus\n-\n7422\n#\nappsec waf endpoint\nvolumes\n: -\n./crowdsec/data:/var/lib/crowdsec/data\n-\n./crowdsec/etc:/etc/crowdsec\nenvironment\n: -\n\"\nUSER=root\n\"\n#\nor any other user (like ${CROWDSEC_UID}) (or comment out for first error message)\nnetworks\n: -\ncrowdsec-net\nConsider the file permissions.\nprofiles.yaml.local\n:\nname\n:\ncustom_default_ip_remediation\ndebug\n:\ntrue\nfilters\n: -\nAlert.Remediation == true && Alert.GetScope() == \"Ip\"\ndecisions\n: -\ntype\n:\nban\nduration\n:\n4h\nduration_expr\n:\nSprintf('%dh', (GetDecisionsCount(Alert.GetValue()) + 1) * 4)\n#\nlinearly increased duration\nnotifications\n: -\nemail_default\n#\nor any other notification service\n#\n- ntfy\n#\n- slack_default # Set the webhook in /etc/crowdsec/notifications/slack.yaml before enabling this.\n#\n- splunk_default # Set the splunk url and token in /etc/crowdsec/notifications/splunk.yaml before enabling this.\n#\n- http_default # Set the required http parameters in /etc/crowdsec/notifications/http.yaml before enabling this.\n#\n- email_default # Set the required email parameters in /etc/crowdsec/notifications/email.yaml before enabling this.\non_success\n:\nbreak\nA correctly configured notification service.\nAnything else we need to know?\nThe information below is not from the minimal example above but from a more fully configured (failing) instance.\nNotifications work if only remap is used (executed inside the container as root).\nIf notifications are not enabled and a non-root UID/GID is used, it appears to work correctly.\nCrowdsec version\nDetails\nversion: v1.6.8-f209766e Codename: alphaga BuildDate: 2025-03-25_15:56:53 GoVersion: 1.24.1 Platform: docker libre2: C++ User-Agent: crowdsec/v1.6.8-f209766e-docker Constraint_parser: >= 1.0, <= 3.0 Constraint_scenario: >= 1.0, <= 3.0 Constraint_api: v1 Constraint_acquis: >= 1.0, < 2.0 Built-in optional components: cscli_setup, datasource_appsec, datasource_cloudwatch, datasource_docker, datasource_file, datasource_http, datasource_journalctl, datasource_k8s-audit, datasource_kafka, datasource_kinesis, datasource_loki, datasource_s3, datasource_syslog, datasource_victorialogs, datasource_wineventlog\nOS version\nDetails\n#\nOn Linux:\n$\ncat /etc/os-release\nPRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION=\"12 (bookworm)\"\nVERSION_CODENAME=bookworm\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n$\nuname -a\nLinux REDACTED_NAME 6.12.12+bpo-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.12-1~bpo12+1 (2025-02-23) x86_64 GNU/Linux\nEnabled collections and parsers\nDetails\nLoaded: 136 parsers, 10 postoverflows, 755 scenarios, 8 contexts, 4 appsec-configs, 102 appsec-rules, 134 collections\nname,status,version,description,type\ncrowdsecurity/appsec-logs,enabled,0.5,Parse Appsec events,parsers\ncrowdsecurity/cri-logs,enabled,0.1,CRI logging format parser,parsers\ncrowdsecurity/dateparse-enrich,enabled,0.2,,parsers\ncrowdsecurity/docker-logs,enabled,0.1,docker json logs parser,parsers\ncrowdsecurity/geoip-enrich,enabled,0.5,\"Populate event with geoloc info : as, country, coords, source range.\",parsers\ncrowdsecurity/http-logs,enabled,1.3,\"Parse more Specifically HTTP logs, such as HTTP Code, HTTP path, HTTP args and if its a static ressource\",parsers\ncrowdsecurity/sshd-logs,enabled,2.9,Parse openSSH logs,parsers\ncrowdsecurity/syslog-logs,enabled,0.8,,parsers\ncrowdsecurity/traefik-logs,enabled,0.9,Parse Traefik access logs,parsers\ncrowdsecurity/apache_log4j2_cve-2021-44228,enabled,0.6,Detect cve-2021-44228 exploitation attemps,scenarios\ncrowdsecurity/appsec-native,enabled,0.1,Identify attacks flagged by CrowdSec AppSec via native rules,scenarios\ncrowdsecurity/appsec-vpatch,enabled,0.6,Identify attacks flagged by CrowdSec AppSec,scenarios\ncrowdsecurity/CVE-2017-9841,enabled,0.2,Detect CVE-2017-9841 exploits,scenarios\ncrowdsecurity/CVE-2019-18935,enabled,0.2,Detect Telerik CVE-2019-18935 exploitation attempts,scenarios\ncrowdsecurity/CVE-2022-26134,enabled,0.2,Detect CVE-2022-26134 exploits,scenarios\ncrowdsecurity/CVE-2022-35914,enabled,0.2,Detect CVE-2022-35914 exploits,scenarios\ncrowdsecurity/CVE-2022-37042,enabled,0.2,Detect CVE-2022-37042 exploits,scenarios\ncrowdsecurity/CVE-2022-40684,enabled,0.3,Detect cve-2022-40684 exploitation attempts,scenarios\ncrowdsecurity/CVE-2022-41082,enabled,0.4,Detect CVE-2022-41082 exploits,scenarios\ncrowdsecurity/CVE-2022-41697,enabled,0.2,Detect CVE-2022-41697 enumeration,scenarios\ncrowdsecurity/CVE-2022-42889,enabled,0.3,Detect CVE-2022-42889 exploits (Text4Shell),scenarios\ncrowdsecurity/CVE-2022-44877,enabled,0.3,Detect CVE-2022-44877 exploits,scenarios\ncrowdsecurity/CVE-2022-46169,enabled,0.2,Detect CVE-2022-46169 brute forcing,scenarios\ncrowdsecurity/CVE-2023-22515,enabled,0.1,Detect CVE-2023-22515 exploitation,scenarios\ncrowdsecurity/CVE-2023-22518,enabled,0.2,Detect CVE-2023-22518 exploits,scenarios\ncrowdsecurity/CVE-2023-49103,enabled,0.3,Detect owncloud CVE-2023-49103 exploitation attempts,scenarios\ncrowdsecurity/CVE-2024-0012,enabled,0.1,Detect CVE-2024-0012 exploitation attempts,scenarios\ncrowdsecurity/CVE-2024-38475,enabled,0.1,Detect CVE-2024-38475 exploitation attempts,scenarios\ncrowdsecurity/CVE-2024-9474,enabled,0.1,Detect CVE-2024-9474 exploitation attempts,scenarios\ncrowdsecurity/f5-big-ip-cve-2020-5902,enabled,0.2,Detect cve-2020-5902 exploitation attemps,scenarios\ncrowdsecurity/fortinet-cve-2018-13379,enabled,0.3,Detect cve-2018-13379 exploitation attemps,scenarios\ncrowdsecurity/grafana-cve-2021-43798,enabled,0.2,Detect cve-2021-43798 exploitation attemps,scenarios\ncrowdsecurity/http-admin-interface-probing,enabled,0.4,Detect generic HTTP admin interface probing,scenarios\ncrowdsecurity/http-backdoors-attempts,enabled,0.6,Detect attempt to common backdoors,scenarios\ncrowdsecurity/http-bad-user-agent,enabled,1.2,Detect usage of bad User Agent,scenarios\ncrowdsecurity/http-crawl-non_statics,enabled,0.7,Detect aggressive crawl on non static resources,scenarios\ncrowdsecurity/http-cve-2021-41773,enabled,0.3,Apache - Path Traversal (CVE-2021-41773),scenarios\ncrowdsecurity/http-cve-2021-42013,enabled,0.3,Apache - Path Traversal (CVE-2021-42013),scenarios\ncrowdsecurity/http-cve-probing,enabled,0.6,Detect generic HTTP cve probing,scenarios\ncrowdsecurity/http-generic-bf,enabled,0.9,Detect generic http brute force,scenarios\ncrowdsecurity/http-open-proxy,enabled,0.5,Detect scan for open proxy,scenarios\ncrowdsecurity/http-path-traversal-probing,enabled,0.4,Detect path traversal attempt,scenarios\ncrowdsecurity/http-probing,enabled,0.4,Detect site scanning/probing from a single ip,scenarios\ncrowdsecurity/http-sensitive-files,enabled,0.4,\"Detect attempt to access to sensitive files (.log, .db ..) or folders (.git)\",scenarios\ncrowdsecurity/http-sqli-probing,enabled,0.4,A scenario that detects SQL injection probing with minimal false positives,scenarios\ncrowdsecurity/http-wordpress-scan,enabled,0.2,Detect WordPress scan: vuln hunting,scenarios\ncrowdsecurity/http-xss-probing,enabled,0.4,A scenario that detects XSS probing with minimal false positives,scenarios\ncrowdsecurity/jira_cve-2021-26086,enabled,0.3,Detect Atlassian Jira CVE-2021-26086 exploitation attemps,scenarios\ncrowdsecurity/netgear_rce,enabled,0.4,Detect Netgear RCE DGN1000/DGN220 exploitation attempts,scenarios\ncrowdsecurity/pulse-secure-sslvpn-cve-2019-11510,enabled,0.3,Detect cve-2019-11510 exploitation attemps,scenarios\ncrowdsecurity/spring4shell_cve-2022-22965,enabled,0.3,Detect cve-2022-22965 probing,scenarios\ncrowdsecurity/ssh-bf,enabled,0.3,Detect ssh bruteforce,scenarios\ncrowdsecurity/ssh-cve-2024-6387,enabled,0.2,Detect exploitation attempt of CVE-2024-6387,scenarios\ncrowdsecurity/ssh-slow-bf,enabled,0.4,Detect slow ssh bruteforce,scenarios\ncrowdsecurity/thinkphp-cve-2018-20062,enabled,0.6,Detect ThinkPHP CVE-2018-20062 exploitation attemps,scenarios\ncrowdsecurity/vmware-cve-2022-22954,enabled,0.3,Detect Vmware CVE-2022-22954 exploitation attempts,scenarios\ncrowdsecurity/vmware-vcenter-vmsa-2021-0027,enabled,0.2,Detect VMSA-2021-0027 exploitation attemps,scenarios\nltsich/http-w00tw00t,enabled,0.2,detect w00tw00t,scenarios\ncrowdsecurity/appsec_base,enabled,0.9,,contexts\ncrowdsecurity/bf_base,enabled,0.1,,contexts\ncrowdsecurity/http_base,enabled,0.3,,contexts\ncrowdsecurity/appsec-default,enabled,0.2,,appsec-configs\ncrowdsecurity/generic-rules,enabled,0.3,,appsec-configs\ncrowdsecurity/virtual-patching,enabled,0.4,,appsec-configs\ncrowdsecurity/base-config,enabled,0.1,,appsec-rules\ncrowdsecurity/generic-freemarker-ssti,enabled,0.3,Generic FreeMarker SSTI,appsec-rules\ncrowdsecurity/generic-wordpress-uploads-php,enabled,0.1,Detect php execution in wordpress uploads directory,appsec-rules\ncrowdsecurity/vpatch-connectwise-auth-bypass,enabled,0.3,Detect exploitation of auth bypass in ConnectWise ScreenConnect,appsec-rules\ncrowdsecurity/vpatch-CVE-2017-9841,enabled,0.3,PHPUnit RCE (CVE-2017-9841),appsec-rules\ncrowdsecurity/vpatch-CVE-2018-1000861,enabled,0.1,Jenkins - RCE (CVE-2018-1000861),appsec-rules\ncrowdsecurity/vpatch-CVE-2018-10562,enabled,0.2,Dasan GPON RCE (CVE-2018-10562),appsec-rules\ncrowdsecurity/vpatch-CVE-2018-13379,enabled,0.2,Fortinet FortiOS - Credentials Disclosure (CVE-2018-13379),appsec-rules\ncrowdsecurity/vpatch-CVE-2018-20062,enabled,0.1,ThinkPHP - RCE (CVE-2018-20062),appsec-rules\ncrowdsecurity/vpatch-CVE-2019-1003030,enabled,0.1,Jenkins - RCE (CVE-2019-1003030),appsec-rules\ncrowdsecurity/vpatch-CVE-2019-12989,enabled,0.3,Citrix SQLi (CVE-2019-12989),appsec-rules\ncrowdsecurity/vpatch-CVE-2019-18935,enabled,0.1,Telerik - RCE (CVE-2019-18935),appsec-rules\ncrowdsecurity/vpatch-CVE-2020-11738,enabled,0.6,Wordpress Snap Creek Duplicator - Path Traversal (CVE-2020-11738),appsec-rules\ncrowdsecurity/vpatch-CVE-2020-17496,enabled,0.1,vBulletin RCE (CVE-2020-17496),appsec-rules\ncrowdsecurity/vpatch-CVE-2020-5902,enabled,0.1,F5 BIG-IP TMUI - RCE (CVE-2020-5902),appsec-rules\ncrowdsecurity/vpatch-CVE-2020-9054,enabled,0.1,Detects pre-authentication command injection in Zyxel NAS devices via weblogin.cgi,appsec-rules\ncrowdsecurity/vpatch-CVE-2021-22941,enabled,0.3,Citrix RCE (CVE-2021-22941),appsec-rules\ncrowdsecurity/vpatch-CVE-2021-26086,enabled,0.1,Atlassian Jira Server/Data Center 8.4.0 - Limited Remote File Read/Include (CVE-2021-26086),appsec-rules\ncrowdsecurity/vpatch-CVE-2021-3129,enabled,0.4,Laravel with Ignition Debug Mode RCE (CVE-2021-3129),appsec-rules\ncrowdsecurity/vpatch-CVE-2021-44529,enabled,0.2,Detects code injection in Ivanti EPM CSA via cookie manipulation (CVE-2021-44529),appsec-rules\ncrowdsecurity/vpatch-CVE-2022-22954,enabled,0.2,VMWare Workspace ONE Access RCE (CVE-2022-22954),appsec-rules\ncrowdsecurity/vpatch-CVE-2022-22965,enabled,0.2,Spring4Shell - RCE (CVE-2022-22965),appsec-rules\ncrowdsecurity/vpatch-CVE-2022-25488,enabled,0.4,Atom CMS - SQLi (CVE-2022-25488),appsec-rules\ncrowdsecurity/vpatch-CVE-2022-26134,enabled,0.2,Confluence - RCE (CVE-2022-26134),appsec-rules\ncrowdsecurity/vpatch-CVE-2022-27926,enabled,0.4,Zimbra Collaboration XSS (CVE-2022-27926),appsec-rules\ncrowdsecurity/vpatch-CVE-2022-35914,enabled,0.5,GLPI RCE (CVE-2022-35914),appsec-rules\ncrowdsecurity/vpatch-CVE-2022-41082,enabled,0.1,Microsoft Exchange - RCE (CVE-2022-41082),appsec-rules\ncrowdsecurity/vpatch-CVE-2022-44877,enabled,0.2,CentOS Web Panel 7 RCE (CVE-2022-44877),appsec-rules\ncrowdsecurity/vpatch-CVE-2022-46169,enabled,0.5,Cacti RCE (CVE-2022-46169),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-1389,enabled,0.1,TP-Link Archer AX21 - RCE (CVE-2023-1389),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-20198,enabled,0.6,CISCO IOS XE Account Creation (CVE-2023-20198),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-22515,enabled,0.4,Atlassian Confluence Privesc (CVE-2023-22515),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-22527,enabled,0.2,RCE using SSTI in Confluence (CVE-2023-22527),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-23752,enabled,0.1,Joomla! Webservice - Password Disclosure (CVE-2023-23752),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-24489,enabled,0.2,Citrix ShareFile RCE (CVE-2023-24489),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-28121,enabled,0.1,WooCommerce auth bypass (CVE-2023-28121),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-33617,enabled,0.4,Atlassian Confluence Privesc (CVE-2023-33617),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-34362,enabled,0.6,MOVEit Transfer RCE (CVE-2023-34362),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-35078,enabled,0.1,MobileIron Core Remote Unauthenticated API Access (CVE-2023-35078),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-35082,enabled,0.2,MobileIron Core Remote Unauthenticated API Access (CVE-2023-35082),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-3519,enabled,0.3,Citrix RCE (CVE-2023-3519),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-38205,enabled,0.3,Adobe ColdFusion Access Control Bypass (CVE-2023-38205),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-40044,enabled,0.3,WS_FTP .NET deserialize RCE (CVE-2023-40044),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-42793,enabled,0.3,JetBrains Teamcity Auth Bypass (CVE-2023-42793),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-46805,enabled,0.4,Ivanti Connect Auth Bypass (CVE-2023-46805),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-47218,enabled,0.2,QNAP QTS - RCE (CVE-2023-47218),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-49070,enabled,0.1,Apache OFBiz - RCE (CVE-2023-49070),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-50164,enabled,0.6,Apache Struts2 Path Traversal (CVE-2023-50164),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-6553,enabled,0.1,Backup Migration plugin for WordPress RCE (CVE-2023-6553),appsec-rules\ncrowdsecurity/vpatch-CVE-2023-7028,enabled,0.2,Gitlab Password Reset Account Takeover (CVE-2023-7028),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-0012,enabled,0.1,PanOS - Authentication Bypass (CVE-2024-0012),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-1212,enabled,0.3,Progress Kemp LoadMaster Unauthenticated Command Injection (CVE-2024-1212),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-22024,enabled,0.1,Ivanti Connect Secure - XXE (CVE-2024-22024),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-23897,enabled,0.4,Jenkins CLI RCE (CVE-2024-23897),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-27198,enabled,0.5,Teamcity - Authentication Bypass (CVE-2024-27198),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-27292,enabled,0.2,Local File Inclusion - Docassemble,appsec-rules\ncrowdsecurity/vpatch-CVE-2024-27348,enabled,0.1,Apache HugeGraph-Server - RCE (CVE-2024-27348),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-27564,enabled,0.3,Detects SSRF attack via pictureproxy.php in ChatGPT application,appsec-rules\ncrowdsecurity/vpatch-CVE-2024-27954,enabled,0.1,WP Automatic - Path Traversal (CVE-2024-27954),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-27956,enabled,0.1,WordPress Automatic Plugin - SQLi (CVE-2024-27956),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-28255,enabled,0.1,OpenMetadata - Authentication Bypass (CVE-2024-28255),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-28987,enabled,0.1,SolarWinds WHD Hardcoded Credentials (CVE-2024-28987),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-29824,enabled,0.1,Ivanti EPM - SQLi (CVE-2024-29824),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-29849,enabled,0.5,Veeam Backup Enterprise Manager - Authentication Bypass (CVE-2024-29849),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-29973,enabled,0.1,Zyxel - RCE (CVE-2024-29973),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-32113,enabled,0.1,Apache OFBiz - Path Traversal (CVE-2024-32113),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-3272,enabled,0.1,D-Link NAS - RCE (CVE-2024-3272),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-3273,enabled,0.1,D-LINK NAS Command Injection (CVE-2024-3273),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-34102,enabled,0.1,Adobe Commerce & Magento - XXE (CVE-2024-34102),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-38816,enabled,0.2,Spring - Path Traversal (CVE-2024-38816),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-38856,enabled,0.1,Apache OFBiz Incorrect Authorization (CVE-2024-38856),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-41713,enabled,0.2,Mitel MiCollab - Path Traversal (CVE-2024-41713),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-4577,enabled,0.1,PHP CGI Command Injection - CVE-2024-4577,appsec-rules\ncrowdsecurity/vpatch-CVE-2024-51378,enabled,0.1,Cyberpanel - RCE (CVE-2024-51378),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-51567,enabled,0.1,CyberPanel RCE (CVE-2024-51567),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-52301,enabled,0.1,Laravel - Parameter Injection (CVE-2024-52301),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-57727,enabled,0.4,Detects unauthenticated path traversal attempts targeting SimpleHelp <= 5.5.7,appsec-rules\ncrowdsecurity/vpatch-CVE-2024-6205,enabled,0.2,PayPlus Payment Gateway WordPress plugin - SQL Injection (CVE-2024-6205),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-7593,enabled,0.1,Ivanti vTM - Authentication Bypass (CVE-2024-7593),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-8190,enabled,0.1,Ivanti Cloud Services Appliance - RCE (CVE-2024-8190),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-8963,enabled,0.2,Ivanti CSA - Path Traversal (CVE-2024-8963),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-9465,enabled,0.2,Palo Alto Expedition - SQL Injection (CVE-2024-9465),appsec-rules\ncrowdsecurity/vpatch-CVE-2024-9474,enabled,0.3,PanOS - Privilege Escalation (CVE-2024-9474),appsec-rules\ncrowdsecurity/vpatch-CVE-2025-24893,enabled,0.2,Detects arbitrary remote code execution vulnerability in XWiki via SolrSearch.,appsec-rules\ncrowdsecurity/vpatch-CVE-2025-29927,enabled,0.1,Next.js Middleware Bypass - (CVE-2025-29927),appsec-rules\ncrowdsecurity/vpatch-env-access,enabled,0.1,Detect access to .env files,appsec-rules\ncrowdsecurity/vpatch-git-config,enabled,0.2,Detect access to .git files,appsec-rules\ncrowdsecurity/vpatch-laravel-debug-mode,enabled,0.3,Detect bots exploiting laravel debug mode,appsec-rules\ncrowdsecurity/vpatch-symfony-profiler,enabled,0.1,Detect abuse of symfony profiler,appsec-rules\ncrowdsecurity/appsec-generic-rules,enabled,0.7,A collection of generic attack vectors for additional protection.,collections\ncrowdsecurity/appsec-virtual-patching,enabled,5.9,\"a generic virtual patching collection, suitable for most web servers.\",collections\ncrowdsecurity/base-http-scenarios,enabled,1.0,http common : scanners detection,collections\ncrowdsecurity/http-cve,enabled,2.9,Detect CVE exploitation in http logs,collections\ncrowdsecurity/linux,enabled,0.2,core linux support : syslog+geoip+ssh,collections\ncrowdsecurity/sshd,enabled,0.5,sshd support : parser and brute-force detection,collections\ncrowdsecurity/traefik,enabled,0.1,traefik support: parser and generic http scenarios,collections\nAcquisition config\nDetails\n#\nOn Linux:\n$\ncat /etc/crowdsec/acquis.yaml /etc/crowdsec/acquis.d/\n*\nlisten_addr: 0.0.0.0:7422\nappsec_config: crowdsecurity/appsec-default\nsource: appsec\nlabels:\ntype: appsec\n---\npoll_without_inotify: false\nfilenames:\n- /var/log/traefik/*.log\nlabels:\ntype: traefik\nConfig show\nDetails\n$\ncscli config show\nGlobal:\n- Configuration Folder : /etc/crowdsec\n- Data Folder : /var/lib/crowdsec/data\n- Hub Folder : /etc/crowdsec/hub\n- Simulation File : /etc/crowdsec/simulation.yaml\n- Log Folder : /var/log\n- Log level : info\n- Log Media : stdout\nCrowdsec:\n- Acquisition File : /etc/crowdsec/acquis.yaml\n- Parsers routines : 1\n- Acquisition Folder : /etc/crowdsec/acquis.d\ncscli:\n- Output : human\n- Hub Branch :\nAPI Client:\n- URL : http://0.0.0.0:8080/\n- Login : localhost\n- Credentials File : /etc/crowdsec/local_api_credentials.yaml\nLocal API Server:\n- Listen URL : 0.0.0.0:8080\n- Listen Socket :\n- Profile File : /etc/crowdsec/profiles.yaml\n- Trusted IPs:\n- 127.0.0.1\n- ::1\n- Database:\n- Type : sqlite\n- Path : /var/lib/crowdsec/data/crowdsec.db\n- Flush age : 7d\n- Flush size : 5000\nPrometheus metrics\nDetails\n$\ncscli metrics\n+----------------------------------------------------------------------------------------------------------------------------+\n| Acquisition Metrics |\n+----------------------------------+------------+--------------+----------------+------------------------+-------------------+\n| Source | Lines read | Lines parsed | Lines unparsed | Lines poured to bucket | Lines whitelisted |\n+----------------------------------+------------+--------------+----------------+------------------------+-------------------+\n| file:/var/log/traefik/access.log | 20 | 20 | - | 21 | - |\n+----------------------------------+------------+--------------+----------------+------------------------+-------------------+\n+-----------------------------------------+\n| Local API Alerts |\n+---------------------------------+-------+\n| Reason | Count |\n+---------------------------------+-------+\n| crowdsecurity/vpatch-env-access | 2 |\n+---------------------------------+-------+\n+-------------------------------------+\n| Appsec Metrics |\n+---------------+-----------+---------+\n| Appsec Engine | Processed | Blocked |\n+---------------+-----------+---------+\n| 0.0.0.0:7422/ | 19 | - |\n+---------------+-----------+---------+\n+-------------------------------------------+\n| Local API Decisions |\n+-----------------+--------+--------+-------+\n| Reason | Origin | Action | Count |\n+-----------------+--------+--------+-------+\n| http:exploit | CAPI | ban | 5274 |\n| http:scan | CAPI | ban | 4501 |\n| ssh:bruteforce | CAPI | ban | 20972 |\n| http:bruteforce | CAPI | ban | 30631 |\n| http:crawl | CAPI | ban | 50 |\n+-----------------+--------+--------+-------+\n+--------------------------------------+\n| Local API Metrics |\n+----------------------+--------+------+\n| Route | Method | Hits |\n+----------------------+--------+------+\n| /v1/allowlists | GET | 14 |\n| /v1/decisions/stream | GET | 13 |\n| /v1/decisions/stream | HEAD | 13 |\n| /v1/heartbeat | GET | 13 |\n| /v1/usage-metrics | POST | 1 |\n| /v1/watchers/login | POST | 1 |\n+----------------------+--------+------+\n+-------------------------------------------------------------------+\n| Local API Bouncers Metrics |\n+----------------------------+----------------------+--------+------+\n| Bouncer | Route | Method | Hits |\n+----------------------------+----------------------+--------+------+\n| traefik-bouncer | /v1/decisions/stream | HEAD | 13 |\n| traefik-bouncer@172.19.0.2 | /v1/decisions/stream | GET | 13 |\n+----------------------------+----------------------+--------+------+\n+--------------------------------------------+\n| Local API Machines Metrics |\n+-----------+----------------+--------+------+\n| Machine | Route | Method | Hits |\n+-----------+----------------+--------+------+\n| localhost | /v1/heartbeat | GET | 13 |\n| localhost | /v1/allowlists | GET | 14 |\n+-----------+----------------+--------+------+\n+-------------------------------------------------------------+\n| Parser Metrics |\n+----------------------------------+------+--------+----------+\n| Parsers | Hits | Parsed | Unparsed |\n+----------------------------------+------+--------+----------+\n| child-crowdsecurity/http-logs | 60 | 45 | 15 |\n| child-crowdsecurity/traefik-logs | 40 | 20 | 20 |\n| crowdsecurity/dateparse-enrich | 20 | 20 | - |\n| crowdsecurity/http-logs | 20 | 20 | - |\n| crowdsecurity/non-syslog | 20 | 20 | - |\n| crowdsecurity/traefik-logs | 20 | 20 | - |\n+----------------------------------+------+--------+----------+\n+----------------------------------------------------------------------------------------------------+\n| Scenario Metrics |\n+--------------------------------------+---------------+-----------+--------------+--------+---------+\n| Scenario | Current Count | Overflows | Instantiated | Poured | Expired |\n+--------------------------------------+---------------+-----------+--------------+--------+---------+\n| crowdsecurity/http-crawl-non_statics | 1 | - | 17 | 19 | 16 |\n| crowdsecurity/http-probing | - | - | 2 | 2 | 2 |\n+--------------------------------------+---------------+-----------+--------------+--------+---------+\nRelated custom configs versions (if applicable) : notification plugins, custom scenarios, parsers etc.\nDetails\nNot necessary for reproduction but included for completeness.\ntype\n:\nhttp\n#\nDon't change\nname\n:\nntfy\n#\nMust match the registered plugin in the profile\n#\nOne of \"trace\", \"debug\", \"info\", \"warn\", \"error\", \"off\"\nlog_level\n:\ndebug\ngroup_wait\n:\n30m\n#\nTime to wait collecting alerts before relaying a message to this plugin, eg \"30s\"\ngroup_threshold\n:\n30\n#\nAmount of alerts that triggers a message before <group_wait> has expired, eg \"10\"\nmax_retry\n:\n100\n#\nNumber of attempts to relay messages to plugins in case of error\ntimeout\n:\n5m\n#\nTime to wait for response from the plugin before considering the attempt a failure, eg \"10s\"\n#\n-------------------------\n#\nplugin-specific options\n#\nThe following template receives a list of models.Alert objects\n#\nThe output goes in the http request body\nformat\n:\n|\n{{range . -}}{{$alert := . -}}{{range .Decisions -}}{{.Value}} will get {{.Type}} for next {{.Duration}} for triggering {{.Scenario}}\nhttps://www.shodan.io/host/{{.Value}}\nhttps://app.crowdsec.net/cti/{{.Value}}{{end -}}{{end -}}\nurl\n:\nhttps://${NTFY_DOMAINNAME}/${NTFY_TOPIC}\nmethod\n:\nPOST\nheaders\n:\nAuthorization\n:\n${NTFY_AUTH_METHOD} ${NTFY_TOKEN}\n#\nContent-Type: \"text/plain\"\nTitle\n:\n\"\nCrowdSec Trigger\n\"\nTags\n:\n\"\nwarning\n\"\nReactions are currently unavailable\nActivity\nSign up for free\nto join this conversation on GitHub.\nAlready have an account?\nSign in to comment\nMetadata\nMetadata\nAssignees\nNo one assigned\nLabels\nkind/bug\nSomething isn't working\nSomething isn't working\nneeds/triage\nversion/1.6.8\nType\nNo type\nProjects\nNo projects\nMilestone\nNo milestone\nRelationships\nNone yet\nDevelopment\nNo branches or pull requests\nIssue actions\nOpen in GitHub Copilot app\nYou can’t perform that action at this time.\nappsec-rules crowdsecurity/vpatch-CVE-2023-7028,enabled,0.2,Gitlab Password Reset Account Takeover (CVE-2023-7028),appsec-rules crowdsecurity/vpatch-CVE-2024-0012,enabled,0.1,PanOS - Authentication Bypass (CVE-2024-0012),appsec-rules crowdsecurity/vpatch-CVE-2024-1212,enabled,0.3,Progress Kemp LoadMaster Unauthenticated Command Injection (CVE-2024-1212),appsec-rules crowdsecurity/vpatch-CVE-2024-22024,enabled,0.1,Ivanti Connect Secure - XXE (CVE-2024-22024),appsec-rules crowdsecurity/vpatch-CVE-2024-23897,enabled,0.4,Jenkins CLI RCE (CVE-2024-23897),appsec-rules crowdsecurity/vpatch-CVE-2024-27198,enabled,0.5,Teamcity - Authentication Bypass (CVE-2024-27198),appsec-rules crowdsecurity/vpatch-CVE-2024-27292,enabled,0.2,Local File Inclusion - Docassemble,appsec-rules crowdsecurity/vpatch-CVE-2024-27348,enabled,0.1,Apache HugeGraph-Server - RCE (CVE-2024-27348),appsec-rules crowdsecurity/vpatch-CVE-2024-27564,enabled,0.3,Detects SSRF attack via pictureproxy.php in ChatGPT application,appsec-rules crowdsecurity/vpatch-CVE-2024-27954,enabled,0.1,WP Automatic - Path Traversal (CVE-2024-27954),appsec-rules crowdsecurity/vpatch-CVE-2024-27956,enabled,0.1,WordPress Automatic Plugin - SQLi (CVE-2024-27956),appsec-rules crowdsecurity/vpatch-CVE-2024-28255,enabled,0.1,OpenMetadata - Authentication Bypass (CVE-2024-28255),appsec-rules crowdsecurity/vpatch-CVE-2024-28987,enabled,0.1,SolarWinds WHD Hardcoded Credentials (CVE-2024-28987),appsec-rules crowdsecurity/vpatch-CVE-2024-29824,enabled,0.1,Ivanti EPM - SQLi (CVE-2024-29824),appsec-rules crowdsecurity/vpatch-CVE-2024-29849,enabled,0.5,Veeam Backup Enterprise Manager - Authentication Bypass (CVE-2024-29849),appsec-rules crowdsecurity/vpatch-CVE-2024-29973,enabled,0.1,Zyxel - RCE (CVE-2024-29973),appsec-rules crowdsecurity/vpatch-CVE-2024-32113,enabled,0.1,Apache OFBiz - Path Traversal (CVE-2024-32113),appsec-rules crowdsecurity/vpatch-CVE-2024-3272,enabled,0.1,D-Link NAS - RCE (CVE-2024-3272),appsec-rules crowdsecurity/vpatch-CVE-2024-3273,enabled,0.1,D-LINK NAS Command Injection (CVE-2024-3273),appsec-rules crowdsecurity/vpatch-CVE-2024-34102,enabled,0.1,Adobe Commerce & Magento - XXE (CVE-2024-34102),appsec-rules crowdsecurity/vpatch-CVE-2024-38816,enabled,0.2,Spring - Path Traversal (CVE-2024-38816),appsec-rules crowdsecurity/vpatch-CVE-2024-38856,enabled,0.1,Apache OFBiz Incorrect Authorization (CVE-2024-38856),appsec-rules crowdsecurity/vpatch-CVE-2024-41713,enabled,0.2,Mitel MiCollab - Path Traversal (CVE-2024-41713),appsec-rules crowdsecurity/vpatch-CVE-2024-4577,enabled,0.1,PHP CGI Command Injection - CVE-2024-4577,appsec-rules crowdsecurity/vpatch-CVE-2024-51378,enabled,0.1,Cyberpanel - RCE (CVE-2024-51378),appsec-rules crowdsecurity/vpatch-CVE-2024-51567,enabled,0.1,CyberPanel RCE (CVE-2024-51567),appsec-rules crowdsecurity/vpatch-CVE-2024-52301,enabled,0.1,Laravel - Parameter Injection (CVE-2024-52301),appsec-rules crowdsecurity/vpatch-CVE-2024-57727,enabled,0.4,Detects unauthenticated path traversal attempts targeting SimpleHelp <= 5.5.7,appsec-rules crowdsecurity/vpatch-CVE-2024-6205,enabled,0.2,PayPlus Payment Gateway WordPress plugin - SQL Injection (CVE-2024-6205),appsec-rules crowdsecurity/vpatch-CVE-2024-7593,enabled,0.1,Ivanti vTM - Authentication Bypass (CVE-2024-7593),appsec-rules crowdsecurity/vpatch-CVE-2024-8190,enabled,0.1,Ivanti Cloud Services Appliance - RCE (CVE-2024-8190),appsec-rules crowdsecurity/vpatch-CVE-2024-8963,enabled,0.2,Ivanti CSA - Path Traversal (CVE-2024-8963),appsec-rules crowdsecurity/vpatch-CVE-2024-9465,enabled,0.2,Palo Alto Expedition - SQL Injection (CVE-2024-9465),appsec-rules crowdsecurity/vpatch-CVE-2024-9474,enabled,0.3,PanOS - Privilege Escalation (CVE-2024-9474),appsec-rules crowdsecurity/vpatch-CVE-2025-24893,enabled,0.2,Detects arbitrary remote code execution vulnerability in XWiki via SolrSearch.,appsec-rules crowdsecurity/vpatch-CVE-2025-29927,enabled,0.1,Next.js Middleware Bypass - (CVE-2025-29927),appsec-rules crowdsecurity/vpatch-env-access,enabled,0.1,Detect access to .env files,appsec-rules crowdsecurity/vpatch-git-config,enabled,0.2,Detect access to .git files,appsec-rules crowdsecurity/vpatch-laravel-debug-mode,enabled,0.3,Detect bots exploiting laravel debug mode,appsec-rules crowdsecurity/vpatch-symfony-profiler,enabled,0.1,Detect abuse of symfony profiler,appsec-rules crowdsecurity/appsec-generic-rules,enabled,0.7,A collection of generic attack vectors for additional protection.,collections crowdsecurity/appsec-virtual-patching,enabled,5.9,\"a generic virtual patching collection, suitable for most web servers.\",collections crowdsecurity/base-http-scenarios,enabled,1.0,http common : scanners detection,collections crowdsecurity/http-cve,enabled,2.9,Detect CVE exploitation in http logs,collections crowdsecurity/linux,enabled,0.2,core linux support : syslog+geoip+ssh,collections crowdsecurity/sshd,enabled,0.5,sshd support : parser and brute-force detection,collections crowdsecurity/traefik,enabled,0.1,traefik support: parser and generic http scenarios,collections Acquisition config Details # On Linux: $ cat /etc/crowdsec/acquis.yaml /etc/crowdsec/acquis.d/ * listen_addr: 0.0.0.0:7422 appsec_config: crowdsecurity/appsec-default source: appsec labels: type: appsec --- poll_without_inotify: false filenames: - /var/log/traefik/*.log labels: type: traefik Config show Details $ cscli config show Global: - Configuration Folder : /etc/crowdsec - Data Folder : /var/lib/crowdsec/data - Hub Folder : /etc/crowdsec/hub - Simulation File : /etc/crowdsec/simulation.yaml - Log Folder : /var/log - Log level : info - Log Media : stdout Crowdsec: - Acquisition File : /etc/crowdsec/acquis.yaml - Parsers routines : 1 - Acquisition Folder : /etc/crowdsec/acquis.d cscli: - Output : human - Hub Branch : API Client: - URL : http://0.0.0.0:8080/ - Login : localhost - Credentials File : /etc/crowdsec/local_api_credentials.yaml Local API Server: - Listen URL : 0.0.0.0:8080 - Listen Socket : - Profile File : /etc/crowdsec/profiles.yaml - Trusted IPs: - 127.0.0.1 - ::1 - Database: - Type : sqlite - Path : /var/lib/crowdsec/data/crowdsec.db - Flush age : 7d - Flush size : 5000 Prometheus metrics Details $ cscli metrics +----\nReference content hash: 48fde4022087aaede229e3becbfc823f4521e7e78bdfc46f54e80615cc7173c8",
+  "content_hash": "275ca1b962156b8642c9546bdc121b220a320db29edb731206cb282fee47a3f5",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "exploitability": {
+    "active_exploitation": "unknown",
+    "authentication_required": "unknown",
+    "conflicts": [],
+    "cvss": {
+      "attack_complexity": "unknown",
+      "attack_requirements": "unknown",
+      "attack_vector": "unknown",
+      "privileges_required": "unknown",
+      "source": "unknown",
+      "user_interaction": "unknown"
+    },
+    "exploit_available": "unknown",
+    "exploit_complexity": "unknown",
+    "exploitability_evidence": [],
+    "privilege_required": "unknown",
+    "public_poc": "unknown",
+    "user_interaction_required": "unknown"
+  },
+  "indexed_at": "2026-09-09T17:05:46.345843+00:00",
+  "intelligence_evidence": [
+    {
+      "evidence": "appsec-rules crowdsecurity/vpatch-CVE-2024-27956,enabled,0.1,WordPress Automatic Plugin - SQLi (CVE-2024-27956),appsec-rules crowdsecurity/vpatch-CVE-2024-28255,enabled,0.1,OpenMetadat",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/crowdsecurity/crowdsec/issues/3562",
+      "value": "sql_injection"
+    },
+    {
+      "evidence": "appsec-rules crowdsecurity/vpatch-CVE-2024-27956,enabled,0.1,WordPress Automatic Plugin - SQLi (CVE-2024-27956),appsec-rules crowdsecurity/vpatch-CVE-2024-28255,enabled,0.1,OpenMetadat",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r14-1",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/crowdsecurity/crowdsec/issues/3562",
+      "value": "sql_injection"
+    },
+    {
+      "evidence": "appsec-rules crowdsecurity/vpatch-CVE-2024-27956,enabled,0.1,WordPress Automatic Plugin - SQLi (CVE-2024-27956),appsec-rules crowdsecurity/vpatch-CVE-2024-28255,enabled,0.1,OpenMetadat",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/crowdsecurity/crowdsec/issues/3562",
+      "value": "sql_injection"
+    }
+  ],
+  "knowledge_id": "kb-275ca1b962156b86",
+  "parameters": [],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-276f599f3bc8a79e",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Cannot start CrowdSec with (notification) plugins in a non-root container · Issue #3562 · crowdsecurity/crowdsec · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-4b77d9ad39f41327",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "Cannot start CrowdSec with (notification) plugins in a non-root container · Issue #3562 · crowdsecurity/crowdsec · GitHub",
+          "tags": [
+            "cve:CVE-2024-27956",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Cannot start CrowdSec with (notification) plugins in a non-root container · Issue #3562 · crowdsecurity/crowdsec · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "sql_injection"
+          ],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-edf87dd51e1ac963",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Cannot start CrowdSec with (notification) plugins in a non-root container · Issue #3562 · crowdsecurity/crowdsec · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-f342e93fbe04a89f",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "Cannot start CrowdSec with (notification) plugins in a non-root container · Issue #3562 · crowdsecurity/crowdsec · GitHub",
+          "tags": [
+            "cve:CVE-2024-27956",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Cannot start CrowdSec with (notification) plugins in a non-root container · Issue #3562 · crowdsecurity/crowdsec · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "sql_injection"
+          ],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T17:05:46.345843+00:00",
+      "published_at": null,
+      "source_id": "src-0508debe99a6fddd",
+      "source_type": "github_research",
+      "source_url": "https://github.com/crowdsecurity/crowdsec/issues/3562",
+      "title": "Cannot start CrowdSec with (notification) plugins in a non-root container · Issue #3562 · crowdsecurity/crowdsec · GitHub"
+    },
+    {
+      "claims": [
+        {
+          "claim_id": "clm-9ccf0d929e7e5315",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "sql_injection"
+          ],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-ac87c1e37dacf8c4",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "sql_injection"
+          ],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": null,
+      "published_at": null,
+      "source_id": "src-86c5c5e7d4aed901",
+      "source_type": "research",
+      "source_url": "https://github.com/crowdsecurity/crowdsec/issues/3562",
+      "title": null
+    }
+  ],
+  "published_at": null,
+  "research_priority": {
+    "evidence": [
+      {
+        "evidence": "appsec-rules crowdsecurity/vpatch-CVE-2024-27956,enabled,0.1,WordPress Automatic Plugin - SQLi (CVE-2024-27956),appsec-rules crowdsecurity/vpatch-CVE-2024-28255,enabled,0.1,OpenMetadat",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-sql-injection",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2024-27956.cli.json",
+        "source_type": "github_research",
+        "source_url": "https://github.com/crowdsecurity/crowdsec/issues/3562",
+        "value": "sql_injection"
+      }
+    ],
+    "negative_factors": [],
+    "priority": "LOW_RESEARCH",
+    "reasons": [
+      "vulnerability type identified"
+    ],
+    "rule_version": "r16-1",
+    "score": 3,
+    "unknown_factors": [
+      "active exploitation status unknown",
+      "public proof-of-concept status unknown",
+      "exploit availability status unknown",
+      "authentication requirement unknown",
+      "privilege requirement unknown",
+      "user interaction requirement unknown",
+      "exploit complexity unknown",
+      "attack vector unknown"
+    ]
+  },
+  "schema_version": 2,
+  "source_type": "github_research",
+  "source_url": "https://github.com/crowdsecurity/crowdsec/issues/3562",
+  "summary": null,
+  "tags": [
+    "cve:CVE-2024-27956",
+    "deterministic-intelligence",
+    "reference",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [],
+  "title": "Cannot start CrowdSec with (notification) plugins in a non-root container · Issue #3562 · crowdsecurity/crowdsec · GitHub",
+  "verification_patterns": [],
+  "vulnerability_types": [
+    "sql_injection"
+  ],
+  "wafs": [],
+  "xss_types": []
+}

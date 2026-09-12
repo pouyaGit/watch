@@ -1,0 +1,1256 @@
+{
+  "aggregate": {
+    "components": [
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "image_handler.php"
+      },
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "plugins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/wpresponsiveimages.php"
+      },
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "wp-config.php"
+      },
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "wp-content/plugins/wp-responsive-images/image_handler.php"
+      }
+    ],
+    "contexts": [],
+    "cwes": [],
+    "parameters": [
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "secondary"
+      },
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "src"
+      }
+    ],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-0b503e028269a2ce",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-6c63aafb80b4c869"
+      },
+      {
+        "claim_id": "clm-346fa2240d94f12b",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-6c63aafb80b4c869"
+      },
+      {
+        "claim_id": "clm-3aefee7f632459d4",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-6c63aafb80b4c869"
+      },
+      {
+        "claim_id": "clm-dc1072bc8db4b7a8",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-6c63aafb80b4c869"
+      }
+    ],
+    "summaries": [
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "Path traversal vulnerability in the WP Responsive Images WordPress plugin allowing unauthenticated attackers to read arbitrary files on the server via the 'src' parameter passed to image_handler.php. Affects all versions up to and including 1.0."
+      }
+    ],
+    "tags": [
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "cve:CVE-2026-1557"
+      },
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "WordPress"
+      }
+    ],
+    "titles": [
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "WP Responsive Images plugin <=1.0 unauthenticated path traversal via 'src' parameter"
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [
+      {
+        "source_ids": [
+          "src-6c63aafb80b4c869"
+        ],
+        "value": "path_traversal"
+      }
+    ],
+    "wafs": [],
+    "xss_types": []
+  },
+  "components": [
+    "image_handler.php",
+    "plugins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/wpresponsiveimages.php",
+    "wp-config.php",
+    "wp-content/plugins/wp-responsive-images/image_handler.php"
+  ],
+  "confidence": 0.0,
+  "content": "Title: WP Responsive Images plugin <=1.0 unauthenticated path traversal via 'src' parameter\nCVE: CVE-2026-1557\nVendor: stuartbates\nProducts: WP Responsive Images\nCVSS: 7.5 CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N\nSeverity: High (CVSS 7.5)\nVulnerability type: Path Traversal (CWE-22)\nAffected products:\n- WP Responsive Images (WordPress plugin)\nAffected versions:\n- <=1.0\nSummary: Path traversal vulnerability in the WP Responsive Images WordPress plugin allowing unauthenticated attackers to read arbitrary files on the server via the 'src' parameter passed to image_handler.php. Affects all versions up to and including 1.0.\nRoot cause: Improper sanitization of the 'src' query parameter in image_handler.php allows directory traversal sequences (../) to escape the intended directory and read arbitrary files.\nAttack requirements:\n- Target must run WordPress with the WP Responsive Images plugin installed and active\n- Vulnerable endpoint /wp-content/plugins/wp-responsive-images/image_handler.php must be reachable\n- No authentication required (unauthenticated attack)\nImpact:\n- Arbitrary file read by unauthenticated remote attackers\n- Potential disclosure of sensitive files (e.g., wp-config.php containing database credentials)\n- Confidentiality breach\nEvidence:\n- CONFIRMED: CVE-2026-1557 describes a path traversal in WP Responsive Images plugin <=1.0 via the 'src' parameter, allowing unauthenticated arbitrary file read (CWE-22, CVSS 7.5)\n- CONFIRMED: Vendor/product is the WP Responsive Images WordPress plugin by stuartbates\n- CONFIRMED: The vulnerable endpoint is image_handler.php at /wp-content/plugins/wp-responsive-images/image_handler.php, as documented in CrowdSec vpatch rule and Nuclei template\n- CONFIRMED: Attack is unauthenticated (no credentials required)\n- CONFIRMED: A Nuclei detection template has been published and merged (projectdiscovery/nuclei-templates PR #15592, merged Mar 18 2026), constituting a public PoC/detection artifact\n- CONFIRMED: A CrowdSec virtual patching rule (vpatch-CVE-2026-1557) has been merged (crowdsecurity/hub PR #1749, merged Apr 1 2026), matching requests to image_handler.php with '../' in the 'src' argument\n- SECONDARY: Watch evidence indicates the observed assets (dellnetworkingvr.dell.com, dellservervr.dell.com, hiringlab.indeed.com, indeedflex.com) are associated with programs (dell, indeed) and use WordPress technology, but no evidence shows these specific assets are running the WP Responsive Images plugin\n- NOT OBSERVED: No evidence in the supplied material shows active exploitation of this CVE in the wild; CrowdSec/Nuclei artifacts are defensive detection tools, not proof of exploitation\n- UNKNOWN: Whether a patched version exists beyond 1.0; the CVE states 'all versions up to, and including, 1.0' but does not specify a fix version\n- NOT OBSERVED: No vendor advisory or patch details were provided beyond the WordPress plugin source code links\nPublic exploit: True\nReferences:\n- https://plugins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/image_handler.php#L28\n- https://plugins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/SBOutputFile.php#L33\n- https://plugins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/WPResponsiveImages.php#L265\n- https://www.wordfence.com/threat-intel/vulnerabilities/id/22c6f81b-d456-44b9-ba6c-8b207a9ee6e1?source=cve\n- https://github.com/projectdiscovery/nuclei-templates/pull/15592\n- https://github.com/crowdsecurity/hub/pull/1749",
+  "content_hash": "609f38e9c57c05928b504e3e46f8cb01457cc354820e5c080fbe3e948558a05a",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "exploitability": {
+    "active_exploitation": "false",
+    "authentication_required": "false",
+    "conflicts": [],
+    "cvss": {
+      "attack_complexity": "L",
+      "attack_requirements": "unknown",
+      "attack_vector": "N",
+      "privileges_required": "N",
+      "source": "structured",
+      "user_interaction": "N"
+    },
+    "exploit_available": "true",
+    "exploit_complexity": "low",
+    "exploitability_evidence": [
+      {
+        "evidence": "nce shows these specific assets are running the WP Responsive Images plugin NOT OBSERVED: No evidence in the supplied material shows active exploitation of this CVE in the wild; CrowdSec/Nuclei artifacts are defensive detection tools, not p",
+        "field": "exploitability.active_exploitation",
+        "rule_id": "exploitability-no-active-exploitation",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "ble endpoint /wp-content/plugins/wp-responsive-images/image_handler.php must be reachable No authentication required (unauthenticated attack)",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-not-required",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "umented in CrowdSec vpatch rule and Nuclei template CONFIRMED: Attack is unauthenticated (no credentials required) CONFIRMED: A Nuclei detection template has been published and merged (projectdiscovery/n",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-not-required",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "Arbitrary file read by unauthenticated remote attackers Potential disclosure of sensitive files (e.g., wp-config.php containing",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-unauthenticated",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "Path traversal vulnerability in the WP Responsive Images WordPress plugin allowing unauthenticated attackers to read arbitrary files on the server via the 'src' parameter passed to image_h",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-unauthenticated",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "WP Responsive Images plugin <=1.0 unauthenticated path traversal via 'src' parameter",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-unauthenticated",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "gins/wp-responsive-images/image_handler.php must be reachable No authentication required (unauthenticated attack)",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-unauthenticated",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "ndler.php, as documented in CrowdSec vpatch rule and Nuclei template CONFIRMED: Attack is unauthenticated (no credentials required) CONFIRMED: A Nuclei detection template has been published and m",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-unauthenticated",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "s a path traversal in WP Responsive Images plugin <=1.0 via the 'src' parameter, allowing unauthenticated arbitrary file read (CWE-22, CVSS 7.5) CONFIRMED: Vendor/product is the WP Responsive Ima",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-unauthenticated",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "field": "exploitability.cvss.attack_complexity",
+        "rule_id": "exploitability-cvss-structured-attack_complexity",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "L"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "field": "exploitability.cvss.attack_vector",
+        "rule_id": "exploitability-cvss-structured-attack_vector",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "N"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "field": "exploitability.cvss.privileges_required",
+        "rule_id": "exploitability-cvss-structured-privileges_required",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "N"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "field": "exploitability.cvss.user_interaction",
+        "rule_id": "exploitability-cvss-structured-user_interaction",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "N"
+      },
+      {
+        "evidence": "merged (projectdiscovery/nuclei-templates PR #15592, merged Mar 18 2026), constituting a public PoC/detection artifact CONFIRMED: A CrowdSec virtual patching rule (vpatch-CVE-2026-1557) has",
+        "field": "exploitability.exploit_available",
+        "rule_id": "exploitability-poc-public",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "true"
+      },
+      {
+        "evidence": "research.public_exploit=true",
+        "field": "exploitability.exploit_available",
+        "rule_id": "exploitability-structured-public-exploit",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "true"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "field": "exploitability.exploit_complexity",
+        "rule_id": "exploitability-cvss-structured-exploit-complexity",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "low"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "field": "exploitability.privilege_required",
+        "rule_id": "exploitability-cvss-structured-privilege-required",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "merged (projectdiscovery/nuclei-templates PR #15592, merged Mar 18 2026), constituting a public PoC/detection artifact CONFIRMED: A CrowdSec virtual patching rule (vpatch-CVE-2026-1557) has",
+        "field": "exploitability.public_poc",
+        "rule_id": "exploitability-poc-public",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "true"
+      },
+      {
+        "evidence": "research.public_exploit=true",
+        "field": "exploitability.public_poc",
+        "rule_id": "exploitability-structured-public-exploit",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "true"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "field": "exploitability.user_interaction_required",
+        "rule_id": "exploitability-cvss-structured-user-interaction",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "false"
+      }
+    ],
+    "privilege_required": "false",
+    "public_poc": "true",
+    "user_interaction_required": "false"
+  },
+  "indexed_at": "2026-09-09T16:04:12.707656+00:00",
+  "intelligence_evidence": [
+    {
+      "evidence": "Vendor/product is the WP Responsive Images WordPress plugin by stuartbates CONFIRMED: The vulnerable endpoint is image_handler.php at /wp-content/plugins/wp-responsive-images/image_handler.php, as documented in CrowdSec",
+      "field": "component",
+      "rule_id": "component-vulnerable-labeled",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "image_handler.php"
+    },
+    {
+      "evidence": "ins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/SBOutputFile.php#L33 https://plugins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/WPResponsiveImages.php#L265 https://www.wordfence.com/threat-intel/vulnerabilities/id",
+      "field": "component",
+      "rule_id": "component-file-context",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "plugins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/wpresponsiveimages.php"
+    },
+    {
+      "evidence": "e read by unauthenticated remote attackers Potential disclosure of sensitive files (e.g., wp-config.php containing database credentials) Confidentiality breach",
+      "field": "component",
+      "rule_id": "component-file-context",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "wp-config.php"
+    },
+    {
+      "evidence": "t must run WordPress with the WP Responsive Images plugin installed and active Vulnerable endpoint /wp-content/plugins/wp-responsive-images/image_handler.php must be reachable No authentication required (unauthenticated attack)",
+      "field": "component",
+      "rule_id": "component-endpoint-named",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "wp-content/plugins/wp-responsive-images/image_handler.php"
+    },
+    {
+      "evidence": "nce shows these specific assets are running the WP Responsive Images plugin NOT OBSERVED: No evidence in the supplied material shows active exploitation of this CVE in the wild; CrowdSec/Nuclei artifacts are defensive detection tools, not p",
+      "field": "exploitability.active_exploitation",
+      "rule_id": "exploitability-no-active-exploitation",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "false"
+    },
+    {
+      "evidence": "Arbitrary file read by unauthenticated remote attackers Potential disclosure of sensitive files (e.g., wp-config.php containing",
+      "field": "exploitability.authentication_required",
+      "rule_id": "exploitability-auth-unauthenticated",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "false"
+    },
+    {
+      "evidence": "Path traversal vulnerability in the WP Responsive Images WordPress plugin allowing unauthenticated attackers to read arbitrary files on the server via the 'src' parameter passed to image_h",
+      "field": "exploitability.authentication_required",
+      "rule_id": "exploitability-auth-unauthenticated",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "false"
+    },
+    {
+      "evidence": "WP Responsive Images plugin <=1.0 unauthenticated path traversal via 'src' parameter",
+      "field": "exploitability.authentication_required",
+      "rule_id": "exploitability-auth-unauthenticated",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "false"
+    },
+    {
+      "evidence": "ble endpoint /wp-content/plugins/wp-responsive-images/image_handler.php must be reachable No authentication required (unauthenticated attack)",
+      "field": "exploitability.authentication_required",
+      "rule_id": "exploitability-auth-not-required",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "false"
+    },
+    {
+      "evidence": "gins/wp-responsive-images/image_handler.php must be reachable No authentication required (unauthenticated attack)",
+      "field": "exploitability.authentication_required",
+      "rule_id": "exploitability-auth-unauthenticated",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "false"
+    },
+    {
+      "evidence": "ndler.php, as documented in CrowdSec vpatch rule and Nuclei template CONFIRMED: Attack is unauthenticated (no credentials required) CONFIRMED: A Nuclei detection template has been published and m",
+      "field": "exploitability.authentication_required",
+      "rule_id": "exploitability-auth-unauthenticated",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "false"
+    },
+    {
+      "evidence": "s a path traversal in WP Responsive Images plugin <=1.0 via the 'src' parameter, allowing unauthenticated arbitrary file read (CWE-22, CVSS 7.5) CONFIRMED: Vendor/product is the WP Responsive Ima",
+      "field": "exploitability.authentication_required",
+      "rule_id": "exploitability-auth-unauthenticated",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "false"
+    },
+    {
+      "evidence": "umented in CrowdSec vpatch rule and Nuclei template CONFIRMED: Attack is unauthenticated (no credentials required) CONFIRMED: A Nuclei detection template has been published and merged (projectdiscovery/n",
+      "field": "exploitability.authentication_required",
+      "rule_id": "exploitability-auth-not-required",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "false"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "field": "exploitability.cvss.attack_complexity",
+      "rule_id": "exploitability-cvss-structured-attack_complexity",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "L"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "field": "exploitability.cvss.attack_vector",
+      "rule_id": "exploitability-cvss-structured-attack_vector",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "N"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "field": "exploitability.cvss.privileges_required",
+      "rule_id": "exploitability-cvss-structured-privileges_required",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "N"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "field": "exploitability.cvss.user_interaction",
+      "rule_id": "exploitability-cvss-structured-user_interaction",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "N"
+    },
+    {
+      "evidence": "merged (projectdiscovery/nuclei-templates PR #15592, merged Mar 18 2026), constituting a public PoC/detection artifact CONFIRMED: A CrowdSec virtual patching rule (vpatch-CVE-2026-1557) has",
+      "field": "exploitability.exploit_available",
+      "rule_id": "exploitability-poc-public",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "true"
+    },
+    {
+      "evidence": "research.public_exploit=true",
+      "field": "exploitability.exploit_available",
+      "rule_id": "exploitability-structured-public-exploit",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "true"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "field": "exploitability.exploit_complexity",
+      "rule_id": "exploitability-cvss-structured-exploit-complexity",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "low"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "field": "exploitability.privilege_required",
+      "rule_id": "exploitability-cvss-structured-privilege-required",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "false"
+    },
+    {
+      "evidence": "merged (projectdiscovery/nuclei-templates PR #15592, merged Mar 18 2026), constituting a public PoC/detection artifact CONFIRMED: A CrowdSec virtual patching rule (vpatch-CVE-2026-1557) has",
+      "field": "exploitability.public_poc",
+      "rule_id": "exploitability-poc-public",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "true"
+    },
+    {
+      "evidence": "research.public_exploit=true",
+      "field": "exploitability.public_poc",
+      "rule_id": "exploitability-structured-public-exploit",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "true"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "field": "exploitability.user_interaction_required",
+      "rule_id": "exploitability-cvss-structured-user-interaction",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "false"
+    },
+    {
+      "evidence": "#1749, merged Apr 1 2026), matching requests to image_handler.php with '../' in the 'src' argument SECONDARY: Watch evidence indicates the observed assets (dellnetworkingvr.dell.com, dellservervr.de",
+      "field": "parameter",
+      "rule_id": "parameter-name-forward",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "secondary"
+    },
+    {
+      "evidence": "D: CVE-2026-1557 describes a path traversal in WP Responsive Images plugin <=1.0 via the 'src' parameter, allowing unauthenticated arbitrary file read (CWE-22, CVSS 7.5) CONFIRMED: Vendor/produc",
+      "field": "parameter",
+      "rule_id": "parameter-name-bare",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "src"
+    },
+    {
+      "evidence": "FIRMED: CVE-2026-1557 describes a path traversal in WP Responsive Images plugin <=1.0 via the 'src' parameter, allowing unauthenticated arbitrary file read (CWE-22, CVSS 7.5) CONFIRMED: Vendor/produc",
+      "field": "parameter",
+      "rule_id": "parameter-named-explicit",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "src"
+    },
+    {
+      "evidence": "Improper sanitization of the 'src' query parameter in image_handler.php allows directory traversal sequences (../) to escape the intended di",
+      "field": "parameter",
+      "rule_id": "parameter-named-explicit",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "src"
+    },
+    {
+      "evidence": "Press plugin allowing unauthenticated attackers to read arbitrary files on the server via the 'src' parameter passed to image_handler.php. Affects all versions up to and including 1.0.",
+      "field": "parameter",
+      "rule_id": "parameter-named-explicit",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "src"
+    },
+    {
+      "evidence": "ty/hub PR #1749, merged Apr 1 2026), matching requests to image_handler.php with '../' in the 'src' argument SECONDARY: Watch evidence indicates the observed assets (dellnetworkingvr.dell.com, dells",
+      "field": "parameter",
+      "rule_id": "parameter-named-explicit",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "src"
+    },
+    {
+      "evidence": "CONFIRMED: CVE-2026-1557 describes a path traversal in WP Responsive Images plugin <=1.0 via the 'src' parameter, allowing unauthenticated ar",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-path-traversal",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "path_traversal"
+    },
+    {
+      "evidence": "CONFIRMED: CVE-2026-1557 describes a path traversal in WP Responsive Images plugin <=1.0 via the 'src' parameter, allowing unauthenticated ar",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-path-traversal",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "path_traversal"
+    },
+    {
+      "evidence": "Improper sanitization of the 'src' query parameter in image_handler.php allows directory traversal sequences (../) to escape the intended directory and read arbitrary files.",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-path-traversal",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "path_traversal"
+    },
+    {
+      "evidence": "Improper sanitization of the 'src' query parameter in image_handler.php allows directory traversal sequences (../) to escape the intended directory and read arbitrary files.",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-path-traversal",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "path_traversal"
+    },
+    {
+      "evidence": "Path Traversal (CWE-22)",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-path-traversal",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "path_traversal"
+    },
+    {
+      "evidence": "Path Traversal (CWE-22)",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-path-traversal",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "path_traversal"
+    },
+    {
+      "evidence": "Path traversal vulnerability in the WP Responsive Images WordPress plugin allowing unauthenticated attac",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-path-traversal",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "path_traversal"
+    },
+    {
+      "evidence": "Path traversal vulnerability in the WP Responsive Images WordPress plugin allowing unauthenticated attac",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-path-traversal",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "path_traversal"
+    },
+    {
+      "evidence": "WP Responsive Images plugin <=1.0 unauthenticated path traversal via 'src' parameter",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-path-traversal",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "path_traversal"
+    },
+    {
+      "evidence": "WP Responsive Images plugin <=1.0 unauthenticated path traversal via 'src' parameter",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-path-traversal",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2026-1557.cli.json",
+      "source_type": "research",
+      "source_url": null,
+      "value": "path_traversal"
+    }
+  ],
+  "knowledge_id": "kb-609f38e9c57c0592",
+  "parameters": [
+    "secondary",
+    "src"
+  ],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-0b503e028269a2ce",
+          "components": [
+            "wp-content/plugins/wp-responsive-images/image_handler.php",
+            "image_handler.php",
+            "wp-config.php",
+            "plugins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/wpresponsiveimages.php"
+          ],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [
+            "src",
+            "secondary"
+          ],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2026-1557",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "path_traversal"
+          ],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-346fa2240d94f12b",
+          "components": [
+            "wp-content/plugins/wp-responsive-images/image_handler.php",
+            "image_handler.php",
+            "wp-config.php",
+            "plugins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/wpresponsiveimages.php"
+          ],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [
+            "src",
+            "secondary"
+          ],
+          "payload_patterns": [],
+          "summary": "Path traversal vulnerability in the WP Responsive Images WordPress plugin allowing unauthenticated attackers to read arbitrary files on the server via the 'src' parameter passed to image_handler.php. Affects all versions up to and including 1.0.",
+          "tags": [
+            "cve:CVE-2026-1557",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [
+            "WordPress"
+          ],
+          "title": "WP Responsive Images plugin <=1.0 unauthenticated path traversal via 'src' parameter",
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "path_traversal"
+          ],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-3aefee7f632459d4",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [
+            "src"
+          ],
+          "payload_patterns": [],
+          "summary": "Path traversal vulnerability in the WP Responsive Images WordPress plugin allowing unauthenticated attackers to read arbitrary files on the server via the 'src' parameter passed to image_handler.php. Affects all versions up to and including 1.0.",
+          "tags": [
+            "cve:CVE-2026-1557",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [
+            "WordPress"
+          ],
+          "title": "WP Responsive Images plugin <=1.0 unauthenticated path traversal via 'src' parameter",
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "path_traversal"
+          ],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-dc1072bc8db4b7a8",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [
+            "src"
+          ],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2026-1557",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "path_traversal"
+          ],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T16:04:12.707656+00:00",
+      "published_at": null,
+      "source_id": "src-6c63aafb80b4c869",
+      "source_type": "research",
+      "source_url": "local://ai_data/research/CVE-2026-1557.cli.json",
+      "title": "WP Responsive Images plugin <=1.0 unauthenticated path traversal via 'src' parameter"
+    }
+  ],
+  "published_at": null,
+  "research_priority": {
+    "evidence": [
+      {
+        "evidence": "Vendor/product is the WP Responsive Images WordPress plugin by stuartbates CONFIRMED: The vulnerable endpoint is image_handler.php at /wp-content/plugins/wp-responsive-images/image_handler.php, as documented in CrowdSec",
+        "field": "component",
+        "rule_id": "component-vulnerable-labeled",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "image_handler.php"
+      },
+      {
+        "evidence": "ins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/SBOutputFile.php#L33 https://plugins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/WPResponsiveImages.php#L265 https://www.wordfence.com/threat-intel/vulnerabilities/id",
+        "field": "component",
+        "rule_id": "component-file-context",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "plugins.trac.wordpress.org/browser/wp-responsive-images/tags/1.0/wpresponsiveimages.php"
+      },
+      {
+        "evidence": "e read by unauthenticated remote attackers Potential disclosure of sensitive files (e.g., wp-config.php containing database credentials) Confidentiality breach",
+        "field": "component",
+        "rule_id": "component-file-context",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "wp-config.php"
+      },
+      {
+        "evidence": "t must run WordPress with the WP Responsive Images plugin installed and active Vulnerable endpoint /wp-content/plugins/wp-responsive-images/image_handler.php must be reachable No authentication required (unauthenticated attack)",
+        "field": "component",
+        "rule_id": "component-endpoint-named",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "wp-content/plugins/wp-responsive-images/image_handler.php"
+      },
+      {
+        "evidence": "Arbitrary file read by unauthenticated remote attackers Potential disclosure of sensitive files (e.g., wp-config.php containing",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-unauthenticated",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "Path traversal vulnerability in the WP Responsive Images WordPress plugin allowing unauthenticated attackers to read arbitrary files on the server via the 'src' parameter passed to image_h",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-unauthenticated",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "WP Responsive Images plugin <=1.0 unauthenticated path traversal via 'src' parameter",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-unauthenticated",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "ble endpoint /wp-content/plugins/wp-responsive-images/image_handler.php must be reachable No authentication required (unauthenticated attack)",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-not-required",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "gins/wp-responsive-images/image_handler.php must be reachable No authentication required (unauthenticated attack)",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-unauthenticated",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "ndler.php, as documented in CrowdSec vpatch rule and Nuclei template CONFIRMED: Attack is unauthenticated (no credentials required) CONFIRMED: A Nuclei detection template has been published and m",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-unauthenticated",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "s a path traversal in WP Responsive Images plugin <=1.0 via the 'src' parameter, allowing unauthenticated arbitrary file read (CWE-22, CVSS 7.5) CONFIRMED: Vendor/product is the WP Responsive Ima",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-unauthenticated",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "umented in CrowdSec vpatch rule and Nuclei template CONFIRMED: Attack is unauthenticated (no credentials required) CONFIRMED: A Nuclei detection template has been published and merged (projectdiscovery/n",
+        "field": "exploitability.authentication_required",
+        "rule_id": "exploitability-auth-not-required",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "field": "exploitability.cvss.attack_vector",
+        "rule_id": "exploitability-cvss-structured-attack_vector",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "N"
+      },
+      {
+        "evidence": "merged (projectdiscovery/nuclei-templates PR #15592, merged Mar 18 2026), constituting a public PoC/detection artifact CONFIRMED: A CrowdSec virtual patching rule (vpatch-CVE-2026-1557) has",
+        "field": "exploitability.exploit_available",
+        "rule_id": "exploitability-poc-public",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "true"
+      },
+      {
+        "evidence": "research.public_exploit=true",
+        "field": "exploitability.exploit_available",
+        "rule_id": "exploitability-structured-public-exploit",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "true"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "field": "exploitability.exploit_complexity",
+        "rule_id": "exploitability-cvss-structured-exploit-complexity",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "low"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "field": "exploitability.privilege_required",
+        "rule_id": "exploitability-cvss-structured-privilege-required",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "merged (projectdiscovery/nuclei-templates PR #15592, merged Mar 18 2026), constituting a public PoC/detection artifact CONFIRMED: A CrowdSec virtual patching rule (vpatch-CVE-2026-1557) has",
+        "field": "exploitability.public_poc",
+        "rule_id": "exploitability-poc-public",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "true"
+      },
+      {
+        "evidence": "research.public_exploit=true",
+        "field": "exploitability.public_poc",
+        "rule_id": "exploitability-structured-public-exploit",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "true"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "field": "exploitability.user_interaction_required",
+        "rule_id": "exploitability-cvss-structured-user-interaction",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "#1749, merged Apr 1 2026), matching requests to image_handler.php with '../' in the 'src' argument SECONDARY: Watch evidence indicates the observed assets (dellnetworkingvr.dell.com, dellservervr.de",
+        "field": "parameter",
+        "rule_id": "parameter-name-forward",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "secondary"
+      },
+      {
+        "evidence": "D: CVE-2026-1557 describes a path traversal in WP Responsive Images plugin <=1.0 via the 'src' parameter, allowing unauthenticated arbitrary file read (CWE-22, CVSS 7.5) CONFIRMED: Vendor/produc",
+        "field": "parameter",
+        "rule_id": "parameter-name-bare",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "src"
+      },
+      {
+        "evidence": "FIRMED: CVE-2026-1557 describes a path traversal in WP Responsive Images plugin <=1.0 via the 'src' parameter, allowing unauthenticated arbitrary file read (CWE-22, CVSS 7.5) CONFIRMED: Vendor/produc",
+        "field": "parameter",
+        "rule_id": "parameter-named-explicit",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "src"
+      },
+      {
+        "evidence": "Improper sanitization of the 'src' query parameter in image_handler.php allows directory traversal sequences (../) to escape the intended di",
+        "field": "parameter",
+        "rule_id": "parameter-named-explicit",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "src"
+      },
+      {
+        "evidence": "Press plugin allowing unauthenticated attackers to read arbitrary files on the server via the 'src' parameter passed to image_handler.php. Affects all versions up to and including 1.0.",
+        "field": "parameter",
+        "rule_id": "parameter-named-explicit",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "src"
+      },
+      {
+        "evidence": "ty/hub PR #1749, merged Apr 1 2026), matching requests to image_handler.php with '../' in the 'src' argument SECONDARY: Watch evidence indicates the observed assets (dellnetworkingvr.dell.com, dells",
+        "field": "parameter",
+        "rule_id": "parameter-named-explicit",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "src"
+      },
+      {
+        "evidence": "CONFIRMED: CVE-2026-1557 describes a path traversal in WP Responsive Images plugin <=1.0 via the 'src' parameter, allowing unauthenticated ar",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-path-traversal",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "path_traversal"
+      },
+      {
+        "evidence": "Improper sanitization of the 'src' query parameter in image_handler.php allows directory traversal sequences (../) to escape the intended directory and read arbitrary files.",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-path-traversal",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "path_traversal"
+      },
+      {
+        "evidence": "Path Traversal (CWE-22)",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-path-traversal",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "path_traversal"
+      },
+      {
+        "evidence": "Path traversal vulnerability in the WP Responsive Images WordPress plugin allowing unauthenticated attac",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-path-traversal",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "path_traversal"
+      },
+      {
+        "evidence": "WP Responsive Images plugin <=1.0 unauthenticated path traversal via 'src' parameter",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-path-traversal",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2026-1557.cli.json",
+        "source_type": "research",
+        "source_url": null,
+        "value": "path_traversal"
+      }
+    ],
+    "negative_factors": [],
+    "priority": "CRITICAL_RESEARCH",
+    "reasons": [
+      "public proof-of-concept available",
+      "exploit availability reported",
+      "no authentication required",
+      "no privileges required",
+      "no user interaction required",
+      "low exploit complexity",
+      "network attack vector",
+      "vulnerability type identified",
+      "affected component identified",
+      "affected parameter identified"
+    ],
+    "rule_version": "r16-1",
+    "score": 80,
+    "unknown_factors": []
+  },
+  "schema_version": 2,
+  "source_type": "research",
+  "source_url": "local://ai_data/research/CVE-2026-1557.cli.json",
+  "summary": null,
+  "tags": [
+    "cve:CVE-2026-1557",
+    "deterministic-intelligence",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [
+    "WordPress"
+  ],
+  "title": "WP Responsive Images plugin <=1.0 unauthenticated path traversal via 'src' parameter",
+  "verification_patterns": [],
+  "vulnerability_types": [
+    "path_traversal"
+  ],
+  "wafs": [],
+  "xss_types": []
+}

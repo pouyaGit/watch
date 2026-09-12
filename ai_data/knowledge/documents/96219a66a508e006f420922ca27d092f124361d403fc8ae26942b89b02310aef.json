@@ -1,0 +1,194 @@
+{
+  "aggregate": {
+    "contexts": [],
+    "cwes": [],
+    "parameters": [],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-833f4bc10d602fde",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-73ee4fe20e92fac9"
+      },
+      {
+        "claim_id": "clm-422c251e86423eef",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-943acc2f5519393c"
+      },
+      {
+        "claim_id": "clm-6f5c8887ea7de516",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-943acc2f5519393c"
+      }
+    ],
+    "summaries": [
+      {
+        "source_ids": [
+          "src-943acc2f5519393c"
+        ],
+        "value": "CVE-2024-27956 WordPress Automatic · Issue #1 · robbin0919/WordPressLab · GitHub"
+      }
+    ],
+    "tags": [
+      {
+        "source_ids": [
+          "src-73ee4fe20e92fac9",
+          "src-943acc2f5519393c"
+        ],
+        "value": "cve:CVE-2024-27956"
+      },
+      {
+        "source_ids": [
+          "src-73ee4fe20e92fac9",
+          "src-943acc2f5519393c"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-943acc2f5519393c"
+        ],
+        "value": "reference"
+      },
+      {
+        "source_ids": [
+          "src-73ee4fe20e92fac9"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [],
+    "titles": [
+      {
+        "source_ids": [
+          "src-943acc2f5519393c"
+        ],
+        "value": "CVE-2024-27956 WordPress Automatic · Issue #1 · robbin0919/WordPressLab · GitHub"
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [],
+    "wafs": [],
+    "xss_types": []
+  },
+  "confidence": 0.0,
+  "content": "CVE-2024-27956 WordPress Automatic · Issue #1 · robbin0919/WordPressLab · GitHub\nCVE-2024-27956 WordPress Automatic · Issue #1 · robbin0919/WordPressLab · GitHub Skip to content You signed in with another tab or window. Reload to refresh your session. You signed out in another tab or window. Reload to refresh your session. You switched accounts on another tab or window. Reload to refresh your session. Dismiss alert {{ message }} robbin0919 / WordPressLab Public Notifications You must be signed in to change notification settings Fork 0 Star 0 CVE-2024-27956 WordPress Automatic #1 New issue Copy link New issue Copy link Open Open CVE-2024-27956 WordPress Automatic #1 Copy link Labels CVE Description robbin0919 opened on May 3, 2024 Issue body actions WordPress Automatic https://www.techbang.com/posts/114987-hackers-the-wordpress-plugin Reactions are currently unavailable Activity Sign up for free to join this conversation on GitHub. Already have an account? Sign in to comment Metadata Metadata Assignees No one assigned Labels CVE Projects No projects Milestone No milestone Relationships None yet Development No branches or pull requests Issue actions Open in GitHub Copilot app You can’t perform that action at this time.",
+  "content_hash": "96219a66a508e006f420922ca27d092f124361d403fc8ae26942b89b02310aef",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "indexed_at": "2026-09-09T16:04:11.216045+00:00",
+  "intelligence_evidence": [],
+  "knowledge_id": "kb-96219a66a508e006",
+  "parameters": [],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-833f4bc10d602fde",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": null,
+      "published_at": null,
+      "source_id": "src-73ee4fe20e92fac9",
+      "source_type": "research",
+      "source_url": "https://github.com/robbin0919/WordPressLab/issues/1",
+      "title": null
+    },
+    {
+      "claims": [
+        {
+          "claim_id": "clm-422c251e86423eef",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "CVE-2024-27956 WordPress Automatic · Issue #1 · robbin0919/WordPressLab · GitHub",
+          "tags": [
+            "cve:CVE-2024-27956",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "CVE-2024-27956 WordPress Automatic · Issue #1 · robbin0919/WordPressLab · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-6f5c8887ea7de516",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "CVE-2024-27956 WordPress Automatic · Issue #1 · robbin0919/WordPressLab · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T16:04:11.216045+00:00",
+      "published_at": null,
+      "source_id": "src-943acc2f5519393c",
+      "source_type": "github_issue",
+      "source_url": "https://github.com/robbin0919/WordPressLab/issues/1",
+      "title": "CVE-2024-27956 WordPress Automatic · Issue #1 · robbin0919/WordPressLab · GitHub"
+    }
+  ],
+  "published_at": null,
+  "schema_version": 2,
+  "source_type": "research",
+  "source_url": "https://github.com/robbin0919/WordPressLab/issues/1",
+  "summary": null,
+  "tags": [
+    "cve:CVE-2024-27956",
+    "deterministic-intelligence",
+    "reference",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [],
+  "title": "CVE-2024-27956 WordPress Automatic · Issue #1 · robbin0919/WordPressLab · GitHub",
+  "verification_patterns": [],
+  "vulnerability_types": [],
+  "wafs": [],
+  "xss_types": []
+}

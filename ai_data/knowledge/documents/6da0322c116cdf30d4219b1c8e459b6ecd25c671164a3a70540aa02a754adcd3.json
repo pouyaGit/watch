@@ -1,0 +1,219 @@
+{
+  "aggregate": {
+    "contexts": [],
+    "cwes": [],
+    "parameters": [],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-81545aebf7f9467f",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-0db62632b7292984"
+      },
+      {
+        "claim_id": "clm-326b24bf9ed018e7",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-e3df3480116546aa"
+      },
+      {
+        "claim_id": "clm-500bcb9816e23a4f",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-e3df3480116546aa"
+      }
+    ],
+    "summaries": [
+      {
+        "source_ids": [
+          "src-e3df3480116546aa"
+        ],
+        "value": "Loading..."
+      }
+    ],
+    "tags": [
+      {
+        "source_ids": [
+          "src-0db62632b7292984",
+          "src-e3df3480116546aa"
+        ],
+        "value": "cve:CVE-2024-42327"
+      },
+      {
+        "source_ids": [
+          "src-0db62632b7292984",
+          "src-e3df3480116546aa"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-e3df3480116546aa"
+        ],
+        "value": "reference"
+      },
+      {
+        "source_ids": [
+          "src-0db62632b7292984"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [],
+    "titles": [
+      {
+        "source_ids": [
+          "src-e3df3480116546aa"
+        ],
+        "value": "Loading..."
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [
+      {
+        "source_ids": [
+          "src-0db62632b7292984",
+          "src-e3df3480116546aa"
+        ],
+        "value": "sql_injection"
+      }
+    ],
+    "wafs": [],
+    "xss_types": []
+  },
+  "confidence": 0.0,
+  "content": "Loading...\nLoading... Cookie Notice/Disclaimer Details Type: Defect (Security) Resolution: Fixed Priority: Critical Fix Version/s: 6.0.32rc1 , 6.4.17rc1 , 7.0.1rc1 Affects Version/s: None Component/s: API (A) Labels: None Description A non-admin user account on the Zabbix frontend with the default User role, or with any other role that gives API access can exploit this vulnerability. An SQLi exists in the CUser class in the addRelatedObjects function, this function is being called from the CUser.get function which is available for every user who has API access. Attachments Activity People Assignee: Zabbix Support Team Reporter: Vjaceslavs Bogdanovs Votes : 0 Vote for this issue Watchers: 9 Start watching this issue Dates Created: 2024 Nov 27 13:37 Updated: 2025 Feb 24 21:07 Resolved: 2024 Nov 27 13:39",
+  "content_hash": "6da0322c116cdf30d4219b1c8e459b6ecd25c671164a3a70540aa02a754adcd3",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "indexed_at": "2026-09-09T16:04:11.608824+00:00",
+  "intelligence_evidence": [
+    {
+      "evidence": "ser role, or with any other role that gives API access can exploit this vulnerability. An SQLi exists in the CUser class in the addRelatedObjects function, this function is being calle",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-42327.cli.json",
+      "source_type": "other",
+      "source_url": "https://support.zabbix.com/browse/ZBX-25623",
+      "value": "sql_injection"
+    }
+  ],
+  "knowledge_id": "kb-6da0322c116cdf30",
+  "parameters": [],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-81545aebf7f9467f",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-42327",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "sql_injection"
+          ],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": null,
+      "published_at": null,
+      "source_id": "src-0db62632b7292984",
+      "source_type": "research",
+      "source_url": "https://support.zabbix.com/browse/ZBX-25623",
+      "title": null
+    },
+    {
+      "claims": [
+        {
+          "claim_id": "clm-326b24bf9ed018e7",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-42327",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Loading...",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-500bcb9816e23a4f",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "Loading...",
+          "tags": [
+            "cve:CVE-2024-42327",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Loading...",
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "sql_injection"
+          ],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T16:04:11.608824+00:00",
+      "published_at": null,
+      "source_id": "src-e3df3480116546aa",
+      "source_type": "other",
+      "source_url": "https://support.zabbix.com/browse/ZBX-25623",
+      "title": "Loading..."
+    }
+  ],
+  "published_at": null,
+  "schema_version": 2,
+  "source_type": "research",
+  "source_url": "https://support.zabbix.com/browse/ZBX-25623",
+  "summary": null,
+  "tags": [
+    "cve:CVE-2024-42327",
+    "deterministic-intelligence",
+    "reference",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [],
+  "title": "Loading...",
+  "verification_patterns": [],
+  "vulnerability_types": [
+    "sql_injection"
+  ],
+  "wafs": [],
+  "xss_types": []
+}

@@ -1,0 +1,423 @@
+{
+  "aggregate": {
+    "components": [],
+    "contexts": [],
+    "cwes": [],
+    "parameters": [],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-14817eb0647c5574",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-3564829f5790e0eb"
+      },
+      {
+        "claim_id": "clm-215db0da38116142",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-3564829f5790e0eb"
+      },
+      {
+        "claim_id": "clm-a0b5ee7b9e51b7c9",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-3564829f5790e0eb"
+      },
+      {
+        "claim_id": "clm-ed9d170876264f76",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-3564829f5790e0eb"
+      }
+    ],
+    "summaries": [],
+    "tags": [
+      {
+        "source_ids": [
+          "src-3564829f5790e0eb"
+        ],
+        "value": "cve:CVE-2025-3102"
+      },
+      {
+        "source_ids": [
+          "src-3564829f5790e0eb"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-3564829f5790e0eb"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [],
+    "titles": [
+      {
+        "source_ids": [
+          "src-3564829f5790e0eb"
+        ],
+        "value": "Research synthesis: CVE-2025-3102"
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [],
+    "wafs": [],
+    "xss_types": []
+  },
+  "components": [],
+  "confidence": 0.0,
+  "content": "CVE: CVE-2025-3102\nVendor: brainstormforce\nProducts: OttoKit: All-in-One Automation Platform\nCVSS: 8.1 CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+  "content_hash": "244dfa877488f680050a8ad8d776616ce4a18b8acf4ff391cbd9669b3feaa1f3",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "exploitability": {
+    "active_exploitation": "unknown",
+    "authentication_required": "unknown",
+    "conflicts": [],
+    "cvss": {
+      "attack_complexity": "H",
+      "attack_requirements": "unknown",
+      "attack_vector": "N",
+      "privileges_required": "N",
+      "source": "structured",
+      "user_interaction": "N"
+    },
+    "exploit_available": "unknown",
+    "exploit_complexity": "high",
+    "exploitability_evidence": [
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "field": "exploitability.cvss.attack_complexity",
+        "rule_id": "exploitability-cvss-structured-attack_complexity",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2025-3102.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "H"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "field": "exploitability.cvss.attack_vector",
+        "rule_id": "exploitability-cvss-structured-attack_vector",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2025-3102.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "N"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "field": "exploitability.cvss.privileges_required",
+        "rule_id": "exploitability-cvss-structured-privileges_required",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2025-3102.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "N"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "field": "exploitability.cvss.user_interaction",
+        "rule_id": "exploitability-cvss-structured-user_interaction",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2025-3102.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "N"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "field": "exploitability.exploit_complexity",
+        "rule_id": "exploitability-cvss-structured-exploit-complexity",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2025-3102.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "high"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "field": "exploitability.privilege_required",
+        "rule_id": "exploitability-cvss-structured-privilege-required",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2025-3102.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "field": "exploitability.user_interaction_required",
+        "rule_id": "exploitability-cvss-structured-user-interaction",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2025-3102.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "false"
+      }
+    ],
+    "privilege_required": "false",
+    "public_poc": "unknown",
+    "user_interaction_required": "false"
+  },
+  "indexed_at": "2026-09-09T16:04:11.934175+00:00",
+  "intelligence_evidence": [
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "field": "exploitability.cvss.attack_complexity",
+      "rule_id": "exploitability-cvss-structured-attack_complexity",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2025-3102.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "H"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "field": "exploitability.cvss.attack_vector",
+      "rule_id": "exploitability-cvss-structured-attack_vector",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2025-3102.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "N"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "field": "exploitability.cvss.privileges_required",
+      "rule_id": "exploitability-cvss-structured-privileges_required",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2025-3102.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "N"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "field": "exploitability.cvss.user_interaction",
+      "rule_id": "exploitability-cvss-structured-user_interaction",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2025-3102.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "N"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "field": "exploitability.exploit_complexity",
+      "rule_id": "exploitability-cvss-structured-exploit-complexity",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2025-3102.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "high"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "field": "exploitability.privilege_required",
+      "rule_id": "exploitability-cvss-structured-privilege-required",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2025-3102.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "false"
+    },
+    {
+      "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "field": "exploitability.user_interaction_required",
+      "rule_id": "exploitability-cvss-structured-user-interaction",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2025-3102.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "false"
+    }
+  ],
+  "knowledge_id": "kb-244dfa877488f680",
+  "parameters": [],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-14817eb0647c5574",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2025-3102",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-215db0da38116142",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2025-3102",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-a0b5ee7b9e51b7c9",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2025-3102",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Research synthesis: CVE-2025-3102",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-ed9d170876264f76",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2025-3102",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Research synthesis: CVE-2025-3102",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T16:04:11.934175+00:00",
+      "published_at": null,
+      "source_id": "src-3564829f5790e0eb",
+      "source_type": "research",
+      "source_url": "local://ai_data/research/CVE-2025-3102.cli.json",
+      "title": "Research synthesis: CVE-2025-3102"
+    }
+  ],
+  "published_at": null,
+  "research_priority": {
+    "evidence": [
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "field": "exploitability.cvss.attack_vector",
+        "rule_id": "exploitability-cvss-structured-attack_vector",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2025-3102.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "N"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "field": "exploitability.exploit_complexity",
+        "rule_id": "exploitability-cvss-structured-exploit-complexity",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2025-3102.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "high"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "field": "exploitability.privilege_required",
+        "rule_id": "exploitability-cvss-structured-privilege-required",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2025-3102.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "false"
+      },
+      {
+        "evidence": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "field": "exploitability.user_interaction_required",
+        "rule_id": "exploitability-cvss-structured-user-interaction",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2025-3102.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "false"
+      }
+    ],
+    "negative_factors": [
+      "high exploit complexity"
+    ],
+    "priority": "LOW_RESEARCH",
+    "reasons": [
+      "no privileges required",
+      "no user interaction required",
+      "network attack vector"
+    ],
+    "rule_version": "r16-1",
+    "score": 18,
+    "unknown_factors": [
+      "active exploitation status unknown",
+      "public proof-of-concept status unknown",
+      "exploit availability status unknown",
+      "authentication requirement unknown"
+    ]
+  },
+  "schema_version": 2,
+  "source_type": "research",
+  "source_url": "local://ai_data/research/CVE-2025-3102.cli.json",
+  "summary": null,
+  "tags": [
+    "cve:CVE-2025-3102",
+    "deterministic-intelligence",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [],
+  "title": "Research synthesis: CVE-2025-3102",
+  "verification_patterns": [],
+  "vulnerability_types": [],
+  "wafs": [],
+  "xss_types": []
+}

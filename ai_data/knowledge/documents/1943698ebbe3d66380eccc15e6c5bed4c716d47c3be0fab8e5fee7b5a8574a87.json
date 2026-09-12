@@ -1,0 +1,464 @@
+{
+  "aggregate": {
+    "components": [],
+    "contexts": [],
+    "cwes": [],
+    "parameters": [],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-6814a2b168bb8a09",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-41fa3f357c158e2a"
+      },
+      {
+        "claim_id": "clm-8ee601b2fc7fb278",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-41fa3f357c158e2a"
+      },
+      {
+        "claim_id": "clm-bd48df4d38cda6ed",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-41fa3f357c158e2a"
+      },
+      {
+        "claim_id": "clm-fc0827cd6b47221c",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-41fa3f357c158e2a"
+      },
+      {
+        "claim_id": "clm-9ccf0d929e7e5315",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-7cf4f073394b9a4c"
+      },
+      {
+        "claim_id": "clm-ac87c1e37dacf8c4",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-7cf4f073394b9a4c"
+      }
+    ],
+    "summaries": [
+      {
+        "source_ids": [
+          "src-41fa3f357c158e2a"
+        ],
+        "value": "Add WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub"
+      }
+    ],
+    "tags": [
+      {
+        "source_ids": [
+          "src-41fa3f357c158e2a",
+          "src-7cf4f073394b9a4c"
+        ],
+        "value": "cve:CVE-2024-27956"
+      },
+      {
+        "source_ids": [
+          "src-41fa3f357c158e2a",
+          "src-7cf4f073394b9a4c"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-41fa3f357c158e2a"
+        ],
+        "value": "reference"
+      },
+      {
+        "source_ids": [
+          "src-7cf4f073394b9a4c"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [],
+    "titles": [
+      {
+        "source_ids": [
+          "src-41fa3f357c158e2a"
+        ],
+        "value": "Add WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub"
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [
+      {
+        "source_ids": [
+          "src-41fa3f357c158e2a",
+          "src-7cf4f073394b9a4c"
+        ],
+        "value": "sql_injection"
+      }
+    ],
+    "wafs": [],
+    "xss_types": []
+  },
+  "components": [],
+  "confidence": 0.0,
+  "content": "Add WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub\nAdd WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub\nSkip to content\nYou signed in with another tab or window.\nReload\nto refresh your session.\nYou signed out in another tab or window.\nReload\nto refresh your session.\nYou switched accounts on another tab or window.\nReload\nto refresh your session.\nDismiss alert\n{{ message }}\ngunh0\n/\nkr-vulhub\nPublic\nNotifications\nYou must be signed in to change notification settings\nFork\n701\nStar\n50\nConversation\nkimwm5377\ncommented\nJul 8, 2026\nCopy link\nCopy Markdown\nSummary\nCVE-2024-27956\nWordPress Automatic Plugin SQL Injection 실습 환경을 추가했습니다.\nWordPress와 MariaDB를 Docker Compose로 구성했습니다.\n실제 유료 플러그인 ZIP은 포함하지 않았습니다.\nCVE-2024-27956\n의 핵심 요청 흐름인 q, auth, integ, inc/csv.php 구조를 재현하는 교육용 플러그인을 컨테이너 내부에서 생성하도록 구성했습니다.\nPoC 스크립트와 README 보고서, 실행 증빙 이미지를 추가했습니다.\nTest\nDocker Compose v2 기준으로 다음 명령어를 사용합니다.\ndocker compose up -d --build\ndocker compose ps\ndocker compose logs wordpress\nbash poc.sh\ndocker compose down -v\nPoC 실행 결과는 다음과 같습니다.\naction,data,date\n\"\nCVE-2024-27956\nExploit\",10.6.27-MariaDB-ubu2204,\"2024-11-5 04:49:51\"\nSorry, something went wrong.\nUh oh!\nThere was an error while loading.\nPlease reload this page\n.\nAll reactions\nkimwm5377\nadded\n2\ncommits\nJuly 8, 2026 10:18\nAdd WordPress\nCVE-2024-27956\nSQL injection lab\n4032d32\nadd\nCVE-2024-27956\nWordPress Automatic SQL injection lab\n618e0c4\nThis file contains hidden or bidirectional Unicode text that may be interpreted or compiled differently than what appears below. To review, open the file in an editor that reveals hidden Unicode characters.\nLearn more about bidirectional Unicode characters\nShow hidden characters\nSign up for free\nto join this conversation on GitHub\n. Already have an account?\nSign in to comment\nReviewers\nNo reviews\nAssignees\nNo one assigned\nLabels\nNone yet\nProjects\nNone yet\nMilestone\nNo milestone\nDevelopment\nSuccessfully merging this pull request may close these issues.\nUh oh!\nThere was an error while loading.\nPlease reload this page\n.\n1 participant\nAdd this suggestion to a batch that can be applied as a single commit.\nThis suggestion is invalid because no changes were made to the code.\nSuggestions cannot be applied while the pull request is closed.\nSuggestions cannot be applied while viewing a subset of changes.\nOnly one suggestion per line can be applied in a batch.\nAdd this suggestion to a batch that can be applied as a single commit.\nApplying suggestions on deleted lines is not supported.\nYou must change the existing code in this line in order to create a valid suggestion.\nOutdated suggestions cannot be applied.\nThis suggestion has been applied or marked resolved.\nSuggestions cannot be applied from pending reviews.\nSuggestions cannot be applied on multi-line comments.\nSuggestions cannot be applied while the pull request is queued to merge.\nSuggestion cannot be applied right now. Please check back later.\nYou can’t perform that action at this time.\nu signed in with another tab or window. Reload to refresh your session. You signed out in another tab or window. Reload to refresh your session. You switched accounts on another tab or window. Reload to refresh your session. Dismiss alert {{ message }} gunh0 / kr-vulhub Public Notifications You must be signed in to change notification settings Fork 701 Star 50 Conversation kimwm5377 commented Jul 8, 2026 Copy link Copy Markdown Summary CVE-2024-27956 WordPress Automatic Plugin SQL Injection 실습 환경을 추가했습니다. WordPress와 MariaDB를 Docker Compose로 구성했습니다. 실제 유료 플러그인 ZIP은 포함하지 않았습니다. CVE-2024-27956 의 핵심 요청 흐름인 q, auth, integ, inc/csv.php 구조를 재현하는 교육용 플러그인을 컨테이너 내부에서 생성하도록 구성했습니다. PoC 스크립트와 README 보고서, 실행 증빙 이미지를 추가했습니다. Test Docker Compose v2 기준으로 다음 명령어를 사용합니다. docker compose up -d --build docker compose ps docker compose logs wordpress bash poc.sh docker compose down -v PoC 실행 결과는 다음과 같습니다. action,data,date \" CVE-2024-27956 Exploit\",10.6.27-MariaDB-ubu2204,\"2024-11-5 04:49:51\" Sorry, something went wrong. Uh oh! There was an error while loading. Please reload this page . All reactions kimwm5377 added 2 commits July 8, 2026 10:18 Add WordPress CVE-2024-27956 SQL injection lab 4032d32 add CVE-2024-27956 WordPress Automatic SQL injection lab 618e0c4 This file contains hidden or bidirectional Unicode text that may be interpreted or compiled differently than what appears below. To review, open the file in an editor that reveals hidden Unicode characters. Learn more about bidirectional Unicode characters Show hidden characters Sign up for free to join this conversation on GitHub . Already have an account? Sign in to comment Reviewers No reviews Assignees No one assigned Labels None yet Projects None yet Milestone No milestone Development Successfully merging this pull request may close these issues. Uh oh! There was an error while loading. Please reload this page . 1 participant Add this suggestion to a batch that can be applied as a single commit. This suggestion is invalid because no changes were made to the code. Suggestions cannot be applied while the pull request is closed. Suggestions cannot be applied while viewing a subset of changes. Only one suggestion per line can be applied in a batch. Add this suggestion to a batch that can be applied as a single commit. Applying suggestions on deleted lines is not supported. You must change the existing code in this line in order to create a valid suggestion. Outdated suggestions cannot be applied. This suggestion has been applied or marked resolved. Suggestions cannot be applied from pending reviews. Suggestions cannot be applied on multi-line comments. Suggestions cannot be applied while the pull request is queued to merge. Suggestion cannot be applied right now. Please check back later. You can’t perform that action at this time.\nReference content hash: 8848c72e69c3387628b84963adde0a0c63c41753fb32964accfe8b563bf318d4",
+  "content_hash": "1943698ebbe3d66380eccc15e6c5bed4c716d47c3be0fab8e5fee7b5a8574a87",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "exploitability": {
+    "active_exploitation": "unknown",
+    "authentication_required": "unknown",
+    "conflicts": [],
+    "cvss": {
+      "attack_complexity": "unknown",
+      "attack_requirements": "unknown",
+      "attack_vector": "unknown",
+      "privileges_required": "unknown",
+      "source": "unknown",
+      "user_interaction": "unknown"
+    },
+    "exploit_available": "unknown",
+    "exploit_complexity": "unknown",
+    "exploitability_evidence": [],
+    "privilege_required": "unknown",
+    "public_poc": "unknown",
+    "user_interaction_required": "unknown"
+  },
+  "indexed_at": "2026-09-09T17:05:46.349563+00:00",
+  "intelligence_evidence": [
+    {
+      "evidence": ". All reactions kimwm5377 added 2 commits July 8, 2026 10:18 Add WordPress CVE-2024-27956 SQL injection lab 4032d32 add CVE-2024-27956 WordPress Automatic SQL injection lab 618e0c4 This file co",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+      "value": "sql_injection"
+    },
+    {
+      "evidence": ". All reactions kimwm5377 added 2 commits July 8, 2026 10:18 Add WordPress CVE-2024-27956 SQL injection lab 4032d32 add CVE-2024-27956 WordPress Automatic SQL injection lab 618e0c4 This file co",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r14-1",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+      "value": "sql_injection"
+    },
+    {
+      "evidence": ". All reactions kimwm5377 added 2 commits July 8, 2026 10:18 Add WordPress CVE-2024-27956 SQL injection lab 4032d32 add CVE-2024-27956 WordPress Automatic SQL injection lab 618e0c4 This file co",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+      "value": "sql_injection"
+    },
+    {
+      "evidence": "WordPress CVE-2024-27956 SQL injection lab 4032d32 add CVE-2024-27956 WordPress Automatic SQL injection lab 618e0c4 This file contains hidden or bidirectional Unicode text that may be interpret",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+      "value": "sql_injection"
+    },
+    {
+      "evidence": "WordPress CVE-2024-27956 SQL injection lab 4032d32 add CVE-2024-27956 WordPress Automatic SQL injection lab 618e0c4 This file contains hidden or bidirectional Unicode text that may be interpret",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r14-1",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+      "value": "sql_injection"
+    },
+    {
+      "evidence": "WordPress CVE-2024-27956 SQL injection lab 4032d32 add CVE-2024-27956 WordPress Automatic SQL injection lab 618e0c4 This file contains hidden or bidirectional Unicode text that may be interpret",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+      "value": "sql_injection"
+    },
+    {
+      "evidence": "ted Jul 8, 2026 Copy link Copy Markdown Summary CVE-2024-27956 WordPress Automatic Plugin SQL Injection 실습 환경을 추가했습니다. WordPress와 MariaDB를 Docker Compose로 구성했습니다. 실제 유료 플러그인 ZIP은 포함하지 않았습니다. CV",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+      "value": "sql_injection"
+    },
+    {
+      "evidence": "ted Jul 8, 2026 Copy link Copy Markdown Summary CVE-2024-27956 WordPress Automatic Plugin SQL Injection 실습 환경을 추가했습니다. WordPress와 MariaDB를 Docker Compose로 구성했습니다. 실제 유료 플러그인 ZIP은 포함하지 않았습니다. CV",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r14-1",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+      "value": "sql_injection"
+    },
+    {
+      "evidence": "ted Jul 8, 2026 Copy link Copy Markdown Summary CVE-2024-27956 WordPress Automatic Plugin SQL Injection 실습 환경을 추가했습니다. WordPress와 MariaDB를 Docker Compose로 구성했습니다. 실제 유료 플러그인 ZIP은 포함하지 않았습니다. CV",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-sql-injection",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-27956.cli.json",
+      "source_type": "github_research",
+      "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+      "value": "sql_injection"
+    }
+  ],
+  "knowledge_id": "kb-1943698ebbe3d663",
+  "parameters": [],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-6814a2b168bb8a09",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "Add WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub",
+          "tags": [
+            "cve:CVE-2024-27956",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Add WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "sql_injection"
+          ],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-8ee601b2fc7fb278",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Add WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-bd48df4d38cda6ed",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "Add WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub",
+          "tags": [
+            "cve:CVE-2024-27956",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Add WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "sql_injection"
+          ],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-fc0827cd6b47221c",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Add WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T17:05:46.349563+00:00",
+      "published_at": null,
+      "source_id": "src-41fa3f357c158e2a",
+      "source_type": "github_research",
+      "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+      "title": "Add WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub"
+    },
+    {
+      "claims": [
+        {
+          "claim_id": "clm-9ccf0d929e7e5315",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "sql_injection"
+          ],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-ac87c1e37dacf8c4",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "sql_injection"
+          ],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": null,
+      "published_at": null,
+      "source_id": "src-7cf4f073394b9a4c",
+      "source_type": "research",
+      "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+      "title": null
+    }
+  ],
+  "published_at": null,
+  "research_priority": {
+    "evidence": [
+      {
+        "evidence": ". All reactions kimwm5377 added 2 commits July 8, 2026 10:18 Add WordPress CVE-2024-27956 SQL injection lab 4032d32 add CVE-2024-27956 WordPress Automatic SQL injection lab 618e0c4 This file co",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-sql-injection",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2024-27956.cli.json",
+        "source_type": "github_research",
+        "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+        "value": "sql_injection"
+      },
+      {
+        "evidence": "WordPress CVE-2024-27956 SQL injection lab 4032d32 add CVE-2024-27956 WordPress Automatic SQL injection lab 618e0c4 This file contains hidden or bidirectional Unicode text that may be interpret",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-sql-injection",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2024-27956.cli.json",
+        "source_type": "github_research",
+        "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+        "value": "sql_injection"
+      },
+      {
+        "evidence": "ted Jul 8, 2026 Copy link Copy Markdown Summary CVE-2024-27956 WordPress Automatic Plugin SQL Injection 실습 환경을 추가했습니다. WordPress와 MariaDB를 Docker Compose로 구성했습니다. 실제 유료 플러그인 ZIP은 포함하지 않았습니다. CV",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-sql-injection",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2024-27956.cli.json",
+        "source_type": "github_research",
+        "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+        "value": "sql_injection"
+      }
+    ],
+    "negative_factors": [],
+    "priority": "LOW_RESEARCH",
+    "reasons": [
+      "vulnerability type identified"
+    ],
+    "rule_version": "r16-1",
+    "score": 3,
+    "unknown_factors": [
+      "active exploitation status unknown",
+      "public proof-of-concept status unknown",
+      "exploit availability status unknown",
+      "authentication requirement unknown",
+      "privilege requirement unknown",
+      "user interaction requirement unknown",
+      "exploit complexity unknown",
+      "attack vector unknown"
+    ]
+  },
+  "schema_version": 2,
+  "source_type": "github_research",
+  "source_url": "https://github.com/gunh0/kr-vulhub/pull/367",
+  "summary": "Add WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub",
+  "tags": [
+    "cve:CVE-2024-27956",
+    "deterministic-intelligence",
+    "reference",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [],
+  "title": "Add WordPress CVE-2024-27956 lab by kimwm5377 · Pull Request #367 · gunh0/kr-vulhub · GitHub",
+  "verification_patterns": [],
+  "vulnerability_types": [
+    "sql_injection"
+  ],
+  "wafs": [],
+  "xss_types": []
+}

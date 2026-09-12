@@ -1,0 +1,194 @@
+{
+  "aggregate": {
+    "contexts": [],
+    "cwes": [],
+    "parameters": [],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-833f4bc10d602fde",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-a312ab7ff3025253"
+      },
+      {
+        "claim_id": "clm-93b6466a7f179c66",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-d9fce0de056f1aa7"
+      },
+      {
+        "claim_id": "clm-f978c545794cf1fa",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-d9fce0de056f1aa7"
+      }
+    ],
+    "summaries": [
+      {
+        "source_ids": [
+          "src-d9fce0de056f1aa7"
+        ],
+        "value": "[每日信息流] 2024-05-02 · Issue #962 · BruceFeIix/picker · GitHub"
+      }
+    ],
+    "tags": [
+      {
+        "source_ids": [
+          "src-a312ab7ff3025253",
+          "src-d9fce0de056f1aa7"
+        ],
+        "value": "cve:CVE-2024-27956"
+      },
+      {
+        "source_ids": [
+          "src-a312ab7ff3025253",
+          "src-d9fce0de056f1aa7"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-d9fce0de056f1aa7"
+        ],
+        "value": "reference"
+      },
+      {
+        "source_ids": [
+          "src-a312ab7ff3025253"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [],
+    "titles": [
+      {
+        "source_ids": [
+          "src-d9fce0de056f1aa7"
+        ],
+        "value": "[每日信息流] 2024-05-02 · Issue #962 · BruceFeIix/picker · GitHub"
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [],
+    "wafs": [],
+    "xss_types": []
+  },
+  "confidence": 0.0,
+  "content": "[每日信息流] 2024-05-02 · Issue #962 · BruceFeIix/picker · GitHub\n走向“整车” 2023超级CSO年度评选：直播回顾 【開山安全笔记】WAF略知一二 五一老学员续杯活动 漏洞复现 || SpringBlade dict-biz/list接口SQL注入 新疆，两个驻场 车辆网络安全架构—安全通信协议 MPU机制与实现详解 清华、复旦团队教你30小时玩转CTF！ 2024鹅厂游戏安全技术竞赛决赛题解-PC客户端 （CVE-2024-25648）福昕阅读器 ComboBox 小部件格式事件 UAF （CVE-2024-31852）福昕阅读器条形码小部件 Calculate 事件 Moriarty 旨在枚举缺失的 KB、检测各种漏洞并建议 Windows 环境中的权限升级的潜在漏洞 PPPwn - PlayStation 4 至 FW 11.00 的内核远程代码执行漏洞 明朝万达IPO终止，原拟募资3.6亿元 安卓高版本HTTPS抓包：终极解决方案 Android项目中添加Dobby(inline hook) 反洗钱法（修订草案）全文正式公布 有了这个网络安全面试题，面试就像开了挂！（附PDF） 一款红队自动化工具 原创 Paper | xz-utils 后门代码分析 什么是DDoS攻击？怎么防御DDoS攻击？ 研究人员发现对Docker Hub的协同攻击，以植入数百万个恶意存储库 GBT 43697-2024《数据安全技术 数据分类分级规则》市场监管总局、国标委 GB T 汽车信息安全应急响应管理指南-市场监督总局、国标委 (征求意见稿） 2024 北京市高级别自动驾驶示范区数据安全治理白皮书 HTB-Intuition笔记 劳动节，向劳动者致敬 【AI速读】揭秘假新闻：如何识别和抵抗信息误导 【商密测评】ASN.1 解码神器 web-asn 本地部署 墨云科技｜致敬每一位劳动者 荷兰郑州的房子越来越卖不动了，3月新房成交腰斩 大家五一快乐，活动开奖了，再送星球优惠券 RSAC 2024创新沙盒｜Dropzone AI：自动化安全运营研判 大多数人仍然依靠记忆或笔和纸来管理密码 面试经验分享 | 某普科技网络安全工程师 任意文件读取&下载漏洞的全面解析及利用 朝鲜APT组织瞄准韩国国防承包商 安洵信息公司内部绝密文件泄露，渗透海外政府部门，包括印，泰，越，韩，北约等。 工联众测平台祝您劳动节快乐 五一劳动节 | 致敬平凡 • 致敬奋斗者 ISC祝大家劳动节快乐！ 五一劳动节快乐！ 【漏洞复现】LiveGBS user/save存在逻辑缺陷漏洞(CNVD-2023-72138) 【漏洞复现】YzmCMS pay_callback.html存在远程命令执行漏洞 【漏洞复现】Cisco IOS XE Web UI存在权限提升漏洞(CVE-2023-20198) 【漏洞复现】WordPress Automatic插件存在SQL注入漏洞(CVE-2024-27956) Google的url采集工具 实战中一些快速审计挖洞技巧 揭开OSINT的神秘面纱 【五月巨献】额外奖励/新人加成/出国游学，这个五月OSRC让你嗨翻天！ 禅道最新身份认证绕过漏洞利用工具 加密请求的口令爆破 免杀的艺术：浅谈驱动对抗EDR 五一快乐 | 致敬每一位辛勤付出的劳动者 【五一活动】大白哥免杀课2期 五一 | 致敬劳动者，安全到万家 这个五月，让我们相约杭城、论剑安全 奇安信技术研究院祝您劳动节快乐！ 🤑五一福利袭来！最高可领“20000元的奖学金”! 劳动节快乐！致敬为梦想奋斗的你 联想全球安全实验室祝您劳动节快乐 [译文] LLM安全：1.黑客如何读取您与ChatGPT或微软Copilot的聊天内容 理解数据 网安简报【2024/4/30】 快速获取Windows机器杀软程序（进程比对） Noisy：一款功能强大的DNS和HTTPS网络流量噪声生成工具 为遏制网络诈骗，日本警方在便利店投放虚假支付卡 CoralRaider 利用 CDN 缓存传播恶意软件 近5成营收增长，净利润最高涨5倍 | 2023中国网安上市企业年报速览 R 编程语言中的漏洞可能助长供应链攻击 陕西首单 数据资产入表 融资获批500万元 ICMP协议：互联网控制消息协议详解 防虫喷雾 夏季户外蜱虫预防小百科 WAF绕过-漏洞利用篇-sql注入+文件上传-过狗 精进之路：Python 框架实战心得与策略 四月书单推荐 《ATT&CK视角下的红蓝对抗实战指南》抽奖活动，泾弦安全公众号感恩回馈！ 手上3个offer怎么选，深信服的技服、奇安信的安全服务、绿盟的渗透工程师 五一快乐之星球优惠卷 文章投稿 不负韶华，不负心 五一劳动节 |xa0致敬每一位平凡而伟大的你 赛事答疑 | 参赛选手必看~关于2024数据安全大赛的常见问题! 学“五”止境丨送给每一位网安人的劳动（xuéxí）礼物（结尾有惊喜） DXMSRC｜祝白帽师傅们五一假期愉快～ 致敬劳动者 五四青年节丨创信青年这样书写青春 五一快乐，致敬劳动者！ 如何利用关键 Ray 框架漏洞来入侵全球 AI 机器？ 五一劳动节 | 致敬不凡，致敬平凡！ 德国［暗网］论坛犯罪市场被查获 劳动节快乐！ 中孚信息发布《中孚信息2024年4月网络安全月报》 五一劳动节 | 致敬每一位追梦人 尊重每一份努力 致敬每一份坚守 致敬每一位劳动者 五一快乐丨守护数据安全，致敬每一位劳动者 美国网络司令部计划向网络防御部队提供“联合网络狩猎套件” 网安企业 TOP 10 （图作者 | @Aoemax） 五一劳动节｜致敬坚守 铸就安全 五一快乐丨一分耕耘一份收获，为用户提供体系化网络安全人才培养解决方案！ 5·1劳动节 | 平凡岁月闪光的你 向劳动者致敬！ 亚信安全祝大家五一劳动节快乐！ “五一”劳动节丨致敬每一位劳动者 工具 | Proxyman 漏洞预警 | 大华智慧园区综合管理平台远程代码执行漏洞 漏洞预警 | JeecgBoot任意文件上传漏洞 漏洞预警 | 若依druid未授权访问漏洞 不忘初心 方得始终 Multi-thread process can't unshare pid namespace (in some old Linux version) Forcepoint Is Your Organization Ready for a Copliot for Microsoft 365 Rollout? Bug Bounty in InfoSec Write-ups on Medium AWS S3 Bucket Misconfiguration Exposes PII and Documents of Job Seekers Reverse Engineering /r/ReverseEngineering's Triannual Hiring Thread The Decompilation Wiki Virtualizing iOS on Apple Silicon A python package designed to ease data manipulation tasks and improve efficiency when handling binary data. SentinelOne macOS Adload | Prolific Adware Pivots Just Days After Apple’s XProtect Clampdown Malwarebytes Wireless carriers fined $200 million after illegally sharing customer location data FreeBuf网络安全行业门户 《网络安全技术 网络安全众测服务要求》发布 奇客Solidot–传递最新科技情报 美国政府拍卖 5.34 petaflops 退役超算 美国最高法院拒绝推翻德州的成人网站禁令 赵长鹏因洗钱指控被判入狱 4 个月 Arc Browser for Windows 1.0 GA rtl-sdr.com Antennas Explained: Finding the Best Antenna for HackRF, RTL-SDR and Other Receivers 软件安全与逆向分析 大家五一快乐，活动开奖了，再送星球优惠券 KitPloit - PenTest & Hacking Tools OSTE-Web-Log-Analyzer - Automate The Process Of Analyzing Web Server Logs With The Python Web Log Analyzer Checkmarx.com API Security Best Practices – How to Secure APIs in Your Environment What is API Security How a CNAPP Helps Manage Cloud-Native Application Security Challenges 丁爸 情报分析师的工具箱 【AI速读】揭秘假新闻：如何识别和抵抗信息误导 DataCon大数据安全分析竞赛 劳动节快乐！致敬为梦想奋斗的你 中国信息安全 致敬每一位劳动人民！ 看雪学苑 2024鹅厂游戏安全技术竞赛决赛题解-PC客户端 清华、复旦团队教你30小时玩转CTF！ OPPO安全中心 【五月巨献】额外奖励/新人加成/出国游学，这个五月OSRC让你嗨翻天！ 极客公园 AI 对「劳动节」的理解，让我没太绷住 余承东卸任华为终端 BG CEO；马斯克再解雇两名特斯拉高管；天涯社区恢复访问 | 极客早知道 Over Security - Cybersecurity news aggregator HPE Aruba Networking fixes four critical RCE flaws in ArubaOS DropBox says hackers stole customer data, auth secrets from eSignature service Dropbox says hacker accessed passwords, authentication info during breach United HealthCare CEO says ‘maybe a third’ of U.S. citizens were affected by recent hack Webinar Recap: Data-Driven Insights to Navigate Today’s Security Challenges Critical infrastructure operators urged to harden systems against pro-Russia hackers Zelensky officially dismisses Ukrainian security services' cyber chief US govt warns of pro-Russian hacktivists targeting water facilities UnitedHealth CEO confirms company paid $22 million ransom in heated Senate hearing It’s time to rethink the national vulnerabilities database for the AI era, senators say Panda Restaurants discloses data breach after corporate systems hack French hospital CHC-SV refuses to pay LockBit extortion demand CISA says GitLab account takeover bug is actively exploited in attacks Vulnerabilities in employee management system could lead to remote code execution, login credential theft More than 100 arrested in Spain in $900,000 WhatsApp scheme UnitedHealth CEO tells Senate all systems now have multi-factor authentication after hack Microsoft: April Windows Server updates cause NTLM auth failures Microsoft says April Windows updates break VPN connections Recovering from ransomware attack could cost remote Scottish council £500,000 New Cuttlefish malware infects routers to monitor traffic for credentials Qantas app exposed sensitive traveler details to random users SANS Internet Storm Center, InfoCON: green ISC Stormcast For Wednesday, May 1st, 2024 https://isc.sans.edu/podcastdetail/8962, (Wed, May 1st) Linux Trojan - Xorddos with Filename eyshcjdmzg, (Mon, Apr 29th) Schneier on Security AI Voice Scam 迪哥讲事 漏洞挖掘之某厂商OAuth2.0认证缺陷 Posts By SpecterOps Team Members - Medium ADCS Attack Paths in BloodHound — Part 2 Full Disclosure Microsoft PlayReady white-box cryptography weakness BorderGate Mimikatz 娜璋AI安全之家 [译文] LLM安全：1.黑客如何读取您与ChatGPT或微软Copilot的聊天内容 Computer Forensics Doing a DFIR Job survey for 2024 APNS",
+  "content_hash": "4c0c187e8d658c95ed71ecb3df55ac824d706cb8e942295c442651f06d4ab126",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "indexed_at": "2026-09-09T16:04:11.193015+00:00",
+  "intelligence_evidence": [],
+  "knowledge_id": "kb-4c0c187e8d658c95",
+  "parameters": [],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-833f4bc10d602fde",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": null,
+      "published_at": null,
+      "source_id": "src-a312ab7ff3025253",
+      "source_type": "research",
+      "source_url": "https://github.com/BruceFeIix/picker/issues/962",
+      "title": null
+    },
+    {
+      "claims": [
+        {
+          "claim_id": "clm-93b6466a7f179c66",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "[每日信息流] 2024-05-02 · Issue #962 · BruceFeIix/picker · GitHub",
+          "tags": [
+            "cve:CVE-2024-27956",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "[每日信息流] 2024-05-02 · Issue #962 · BruceFeIix/picker · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-f978c545794cf1fa",
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-27956",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "[每日信息流] 2024-05-02 · Issue #962 · BruceFeIix/picker · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T16:04:11.193015+00:00",
+      "published_at": null,
+      "source_id": "src-d9fce0de056f1aa7",
+      "source_type": "github_research",
+      "source_url": "https://github.com/BruceFeIix/picker/issues/962",
+      "title": "[每日信息流] 2024-05-02 · Issue #962 · BruceFeIix/picker · GitHub"
+    }
+  ],
+  "published_at": null,
+  "schema_version": 2,
+  "source_type": "research",
+  "source_url": "https://github.com/BruceFeIix/picker/issues/962",
+  "summary": null,
+  "tags": [
+    "cve:CVE-2024-27956",
+    "deterministic-intelligence",
+    "reference",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [],
+  "title": "[每日信息流] 2024-05-02 · Issue #962 · BruceFeIix/picker · GitHub",
+  "verification_patterns": [],
+  "vulnerability_types": [],
+  "wafs": [],
+  "xss_types": []
+}

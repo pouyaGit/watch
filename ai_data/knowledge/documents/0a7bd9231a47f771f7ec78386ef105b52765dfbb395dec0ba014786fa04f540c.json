@@ -1,0 +1,431 @@
+{
+  "aggregate": {
+    "components": [],
+    "contexts": [],
+    "cwes": [],
+    "parameters": [],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-139e584d8ad5040e",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-9f29d7fd66001f7e"
+      },
+      {
+        "claim_id": "clm-1cc60a1d4c2186b0",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-9f29d7fd66001f7e"
+      },
+      {
+        "claim_id": "clm-666b704e345751ee",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-9f29d7fd66001f7e"
+      },
+      {
+        "claim_id": "clm-c8a05e593189a45e",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-9f29d7fd66001f7e"
+      }
+    ],
+    "summaries": [],
+    "tags": [
+      {
+        "source_ids": [
+          "src-9f29d7fd66001f7e"
+        ],
+        "value": "cve:CVE-2024-5376"
+      },
+      {
+        "source_ids": [
+          "src-9f29d7fd66001f7e"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-9f29d7fd66001f7e"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [],
+    "titles": [
+      {
+        "source_ids": [
+          "src-9f29d7fd66001f7e"
+        ],
+        "value": "Research synthesis: CVE-2024-5376"
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [],
+    "wafs": [],
+    "xss_types": []
+  },
+  "components": [],
+  "confidence": 0.0,
+  "content": "CVE: CVE-2024-5376\nVendor: Kashipara; kashipara\nProducts: College Management System; college_management_system\nCVSS: 5.3 CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+  "content_hash": "0a7bd9231a47f771f7ec78386ef105b52765dfbb395dec0ba014786fa04f540c",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "exploitability": {
+    "active_exploitation": "unknown",
+    "authentication_required": "unknown",
+    "conflicts": [],
+    "cvss": {
+      "attack_complexity": "L",
+      "attack_requirements": "N",
+      "attack_vector": "N",
+      "privileges_required": "L",
+      "source": "structured",
+      "user_interaction": "N"
+    },
+    "exploit_available": "unknown",
+    "exploit_complexity": "low",
+    "exploitability_evidence": [
+      {
+        "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+        "field": "exploitability.cvss.attack_complexity",
+        "rule_id": "exploitability-cvss-structured-attack_complexity",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "L"
+      },
+      {
+        "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+        "field": "exploitability.cvss.attack_requirements",
+        "rule_id": "exploitability-cvss-structured-attack_requirements",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "N"
+      },
+      {
+        "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+        "field": "exploitability.cvss.attack_vector",
+        "rule_id": "exploitability-cvss-structured-attack_vector",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "N"
+      },
+      {
+        "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+        "field": "exploitability.cvss.privileges_required",
+        "rule_id": "exploitability-cvss-structured-privileges_required",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "L"
+      },
+      {
+        "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+        "field": "exploitability.cvss.user_interaction",
+        "rule_id": "exploitability-cvss-structured-user_interaction",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "N"
+      },
+      {
+        "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+        "field": "exploitability.exploit_complexity",
+        "rule_id": "exploitability-cvss-structured-exploit-complexity",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "low"
+      },
+      {
+        "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+        "field": "exploitability.privilege_required",
+        "rule_id": "exploitability-cvss-structured-privilege-required",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "true"
+      },
+      {
+        "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+        "field": "exploitability.user_interaction_required",
+        "rule_id": "exploitability-cvss-structured-user-interaction",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "false"
+      }
+    ],
+    "privilege_required": "true",
+    "public_poc": "unknown",
+    "user_interaction_required": "false"
+  },
+  "indexed_at": "2026-09-09T16:04:10.883256+00:00",
+  "intelligence_evidence": [
+    {
+      "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+      "field": "exploitability.cvss.attack_complexity",
+      "rule_id": "exploitability-cvss-structured-attack_complexity",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "L"
+    },
+    {
+      "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+      "field": "exploitability.cvss.attack_requirements",
+      "rule_id": "exploitability-cvss-structured-attack_requirements",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "N"
+    },
+    {
+      "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+      "field": "exploitability.cvss.attack_vector",
+      "rule_id": "exploitability-cvss-structured-attack_vector",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "N"
+    },
+    {
+      "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+      "field": "exploitability.cvss.privileges_required",
+      "rule_id": "exploitability-cvss-structured-privileges_required",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "L"
+    },
+    {
+      "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+      "field": "exploitability.cvss.user_interaction",
+      "rule_id": "exploitability-cvss-structured-user_interaction",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "N"
+    },
+    {
+      "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+      "field": "exploitability.exploit_complexity",
+      "rule_id": "exploitability-cvss-structured-exploit-complexity",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "low"
+    },
+    {
+      "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+      "field": "exploitability.privilege_required",
+      "rule_id": "exploitability-cvss-structured-privilege-required",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "true"
+    },
+    {
+      "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+      "field": "exploitability.user_interaction_required",
+      "rule_id": "exploitability-cvss-structured-user-interaction",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "structured",
+      "source_url": null,
+      "value": "false"
+    }
+  ],
+  "knowledge_id": "kb-0a7bd9231a47f771",
+  "parameters": [],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-139e584d8ad5040e",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-5376",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-1cc60a1d4c2186b0",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-5376",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-666b704e345751ee",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-5376",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Research synthesis: CVE-2024-5376",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-c8a05e593189a45e",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-5376",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "Research synthesis: CVE-2024-5376",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T16:04:10.883256+00:00",
+      "published_at": null,
+      "source_id": "src-9f29d7fd66001f7e",
+      "source_type": "research",
+      "source_url": "local://ai_data/research/CVE-2024-5376.cli.json",
+      "title": "Research synthesis: CVE-2024-5376"
+    }
+  ],
+  "published_at": null,
+  "research_priority": {
+    "evidence": [
+      {
+        "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+        "field": "exploitability.cvss.attack_vector",
+        "rule_id": "exploitability-cvss-structured-attack_vector",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "N"
+      },
+      {
+        "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+        "field": "exploitability.exploit_complexity",
+        "rule_id": "exploitability-cvss-structured-exploit-complexity",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "low"
+      },
+      {
+        "evidence": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+        "field": "exploitability.user_interaction_required",
+        "rule_id": "exploitability-cvss-structured-user-interaction",
+        "rule_version": "r15-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "structured",
+        "source_url": null,
+        "value": "false"
+      }
+    ],
+    "negative_factors": [],
+    "priority": "LOW_RESEARCH",
+    "reasons": [
+      "no user interaction required",
+      "low exploit complexity",
+      "network attack vector"
+    ],
+    "rule_version": "r16-1",
+    "score": 28,
+    "unknown_factors": [
+      "active exploitation status unknown",
+      "public proof-of-concept status unknown",
+      "exploit availability status unknown",
+      "authentication requirement unknown"
+    ]
+  },
+  "schema_version": 2,
+  "source_type": "research",
+  "source_url": "local://ai_data/research/CVE-2024-5376.cli.json",
+  "summary": null,
+  "tags": [
+    "cve:CVE-2024-5376",
+    "deterministic-intelligence",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [],
+  "title": "Research synthesis: CVE-2024-5376",
+  "verification_patterns": [],
+  "vulnerability_types": [],
+  "wafs": [],
+  "xss_types": []
+}

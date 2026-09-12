@@ -57,3 +57,12 @@ programs/*
 !programs/watch_sync_programs.pyai_data/raw/
 ai_data/research/
 ai_data/cve/
+
+# Local tooling
+.commandcode/
+
+# Runtime crawler output
+crawl/output/
+
+# DNS brute force runtime workspace
+dns-bruteforce/work/

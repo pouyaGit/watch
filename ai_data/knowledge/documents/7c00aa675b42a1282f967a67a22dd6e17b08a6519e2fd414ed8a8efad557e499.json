@@ -1,0 +1,322 @@
+{
+  "aggregate": {
+    "components": [],
+    "contexts": [],
+    "cwes": [],
+    "parameters": [],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-59a3bbb5da1b67c1",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-3ca723971807b47c"
+      },
+      {
+        "claim_id": "clm-7bd11e136c0db5c5",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-3ca723971807b47c"
+      },
+      {
+        "claim_id": "clm-0538a881cbde451b",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-f07f116b3ee1ff3b"
+      },
+      {
+        "claim_id": "clm-7ac34421beb4b9fe",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-f07f116b3ee1ff3b"
+      },
+      {
+        "claim_id": "clm-bb52e96222bd9fc1",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-f07f116b3ee1ff3b"
+      },
+      {
+        "claim_id": "clm-e47741099927c448",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-f07f116b3ee1ff3b"
+      }
+    ],
+    "summaries": [
+      {
+        "source_ids": [
+          "src-f07f116b3ee1ff3b"
+        ],
+        "value": "zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 by LeSuisse · Pull Request #361882 · NixOS/nixpkgs · GitHub"
+      }
+    ],
+    "tags": [
+      {
+        "source_ids": [
+          "src-3ca723971807b47c",
+          "src-f07f116b3ee1ff3b"
+        ],
+        "value": "cve:CVE-2024-42327"
+      },
+      {
+        "source_ids": [
+          "src-3ca723971807b47c",
+          "src-f07f116b3ee1ff3b"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-f07f116b3ee1ff3b"
+        ],
+        "value": "reference"
+      },
+      {
+        "source_ids": [
+          "src-3ca723971807b47c"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [],
+    "titles": [
+      {
+        "source_ids": [
+          "src-f07f116b3ee1ff3b"
+        ],
+        "value": "zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 by LeSuisse · Pull Request #361882 · NixOS/nixpkgs · GitHub"
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [],
+    "wafs": [],
+    "xss_types": []
+  },
+  "components": [],
+  "confidence": 0.0,
+  "content": "zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 by LeSuisse · Pull Request #361882 · NixOS/nixpkgs · GitHub\nzabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 by LeSuisse · Pull Request #361882 · NixOS/nixpkgs · GitHub\nSkip to content\nYou signed in with another tab or window.\nReload\nto refresh your session.\nYou signed out in another tab or window.\nReload\nto refresh your session.\nYou switched accounts on another tab or window.\nReload\nto refresh your session.\nDismiss alert\n{{ message }}\nUh oh!\nThere was an error while loading.\nPlease reload this page\n.\nNixOS\n/\nnixpkgs\nPublic\nUh oh!\nThere was an error while loading.\nPlease reload this page\n.\nNotifications\nYou must be signed in to change notification settings\nFork\n20k\nStar\n26.1k\nConversation\nLeSuisse\ncommented\nDec 4, 2024\n•\nedited\nLoading\nUh oh!\nThere was an error while loading.\nPlease reload this page\n.\nCopy link\nCopy Markdown\nMember\nFixes\nCVE-2024-42327\n/\nhttps://support.zabbix.com/browse/ZBX-25623\nChanges 6.0.x:\nhttps://www.zabbix.com/rn/rn6.0.36\nhttps://www.zabbix.com/rn/rn6.0.35\nhttps://www.zabbix.com/rn/rn6.0.34\nhttps://www.zabbix.com/rn/rn6.0.33\nhttps://www.zabbix.com/rn/rn6.0.32\nhttps://www.zabbix.com/rn/rn6.0.31\nhttps://www.zabbix.com/rn/rn6.0.30\nhttps://www.zabbix.com/rn/rn6.0.29\nhttps://www.zabbix.com/rn/rn6.0.28\nhttps://www.zabbix.com/rn/rn6.0.27\nChanges 6.4.x:\nhttps://www.zabbix.com/rn/rn6.4.20\nhttps://www.zabbix.com/rn/rn6.4.19\nhttps://www.zabbix.com/rn/rn6.4.18\nhttps://www.zabbix.com/rn/rn6.4.17\nhttps://www.zabbix.com/rn/rn6.4.16\nThings done\nBuilt on platform(s)\nx86_64-linux\naarch64-linux\nx86_64-darwin\naarch64-darwin\nFor non-Linux: Is sandboxing enabled in\nnix.conf\n? (See\nNix manual\n)\nsandbox = relaxed\nsandbox = true\nTested, as applicable:\nNixOS test(s)\n(look inside\nnixos/tests\n)\nand/or\npackage tests\nor, for functions and \"core\" functionality, tests in\nlib/tests\nor\npkgs/test\nmade sure NixOS tests are\nlinked\nto the relevant packages\nTested compilation of all packages that depend on this change using\nnix-shell -p nixpkgs-review --run \"nixpkgs-review rev HEAD\"\n. Note: all changes have to be committed, also see\nnixpkgs-review usage\nTested basic functionality of all binary files (usually in\n./result/bin/\n)\n25.05 Release Notes\n(or backporting\n24.11\nand\n25.05\nRelease notes)\n(Package updates) Added a release notes entry if the change is major or breaking\n(Module updates) Added a release notes entry if the change is significant\n(Module addition) Added a release notes entry if adding a new NixOS module\nFits\nCONTRIBUTING.md\n.\nnixpkgs-review\nresult\nGenerated using\nnixpkgs-review\n.\nCommand:\nnixpkgs-review pr 361882\nx86_64-linux\n✅ 16 packages built:\nzabbix.agent\nzabbix.agent2\nzabbix.proxy-mysql\nzabbix.proxy-pgsql\nzabbix.proxy-sqlite\nzabbix.server\nzabbix.server-mysql\nzabbix.web\nzabbix64.agent\nzabbix64.agent2\nzabbix64.proxy-mysql\nzabbix64.proxy-pgsql\nzabbix64.proxy-sqlite\nzabbix64.server\nzabbix64.server-mysql\nzabbix64.web\nAdd a 👍\nreaction\nto\npull requests you find important\n.\nSorry, something went wrong.\nUh oh!\nThere was an error while loading.\nPlease reload this page\n.\nAll reactions\nLeSuisse\nadded\n2\ncommits\nDecember 4, 2024 22:10\nzabbix60: 6.0.26 -> 6.0.36\n…\nde13b1e\nFixes\nCVE-2024-42327\n. Changes:\nhttps://www.zabbix.com/rn/rn6.0.36\nhttps://www.zabbix.com/rn/rn6.0.35\nhttps://www.zabbix.com/rn/rn6.0.34\nhttps://www.zabbix.com/rn/rn6.0.33\nhttps://www.zabbix.com/rn/rn6.0.32\nhttps://www.zabbix.com/rn/rn6.0.31\nhttps://www.zabbix.com/rn/rn6.0.30\nhttps://www.zabbix.com/rn/rn6.0.29\nhttps://www.zabbix.com/rn/rn6.0.28\nhttps://www.zabbix.com/rn/rn6.0.27\nzabbix64: 6.4.15 -> 6.4.20\n…\n5ddd7bf\nFixes\nCVE-2024-42327\n. Changes:\nhttps://www.zabbix.com/rn/rn6.4.20\nhttps://www.zabbix.com/rn/rn6.4.19\nhttps://www.zabbix.com/rn/rn6.4.18\nhttps://www.zabbix.com/rn/rn6.4.17\nhttps://www.zabbix.com/rn/rn6.4.16\nLeSuisse\nadded\n1.severity: security\nIssues which raise a security issue, or PRs that fix one\nbackport release-24.11\nlabels\nDec 4, 2024\ngithub-actions\nBot\nadded\n10.rebuild-darwin: 1-10\nThis PR causes between 1 and 10 packages to rebuild on Darwin.\n10.rebuild-linux: 11-100\nThis PR causes between 11 and 100 packages to rebuild on Linux.\nlabels\nDec 4, 2024\nvcunat\nmerged commit\nf674839\ninto\nNixOS\n:\nmaster\nDec 23, 2024\nnixpkgs-ci\nBot\nmentioned this pull request\nDec 23, 2024\n[Backport release-24.11] zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20\n#367600\nMerged\n1 task\nnixpkgs-ci\nBot\ncommented\nDec 23, 2024\nCopy link\nCopy Markdown\nContributor\nSuccessfully created backport PR for\nrelease-24.11\n:\n[Backport release-24.11] zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20\n#367600\nAll reactions\nSorry, something went wrong.\nUh oh!\nThere was an error while loading.\nPlease reload this page\n.\nLeSuisse\ndeleted the\nzabbix-CVE-2024-42327\nbranch\nDecember 24, 2024 08:32\nThis file contains hidden or bidirectional Unicode text that may be interpreted or compiled differently than what appears below. To review, open the file in an editor that reveals hidden Unicode characters.\nLearn more about bidirectional Unicode characters\nShow hidden characters\nSign up for free\nto join this conversation on GitHub\n. Already have an account?\nSign in to comment\nReviewers\nNo reviews\nAssignees\nNo one assigned\nLabels\n1.severity: security\nIssues which raise a security issue, or PRs that fix one\n10.rebuild-darwin: 1-10\nThis PR causes between 1 and 10 packages to rebuild on Darwin.\n10.rebuild-linux: 11-100\nThis PR causes between 11 and 100 packages to rebuild on Linux.\nProjects\nNone yet\nMilestone\nNo milestone\nDevelopment\nSuccessfully merging this pull request may close these issues.\nUh oh!\nThere was an error while loading.\nPlease reload this page\n.\n2 participants\nAdd this suggestion to a batch that can be applied as a single commit.\nThis suggestion is invalid because no changes were made to the code.\nSuggestions cannot be applied while the pull request is closed.\nSuggestions cannot be applied while viewing a subset of changes.\nOnly one suggestion per line can be applied in a batch.\nAdd this suggestion to a batch that can be applied as a single commit.\nApplying suggestions on deleted lines is not supported.\nYou must change the existing code in this line in order to create a valid suggestion.\nOutdated suggestions cannot be applied.\nThis suggestion has been applied or marked resolved.\nSuggestions cannot be applied from pending reviews.\nSuggestions cannot be applied on multi-line comments.\nSuggestions cannot be applied while the pull request is queued to merge.\nSuggestion cannot be applied right now. Please check back later.\nYou can’t perform that action at this time.\n/www.zabbix.com/rn/rn6.0.27 zabbix64: 6.4.15 -> 6.4.20 … 5ddd7bf Fixes CVE-2024-42327 . Changes: https://www.zabbix.com/rn/rn6.4.20 https://www.zabbix.com/rn/rn6.4.19 https://www.zabbix.com/rn/rn6.4.18 https://www.zabbix.com/rn/rn6.4.17 https://www.zabbix.com/rn/rn6.4.16 LeSuisse added 1.severity: security Issues which raise a security issue, or PRs that fix one backport release-24.11 labels Dec 4, 2024 github-actions Bot added 10.rebuild-darwin: 1-10 This PR causes between 1 and 10 packages to rebuild on Darwin. 10.rebuild-linux: 11-100 This PR causes between 11 and 100 packages to rebuild on Linux. labels Dec 4, 2024 vcunat merged commit f674839 into NixOS : master Dec 23, 2024 nixpkgs-ci Bot mentioned this pull request Dec 23, 2024 [Backport release-24.11] zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 #367600 Merged 1 task nixpkgs-ci Bot commented Dec 23, 2024 Copy link Copy Markdown Contributor Successfully created backport PR for release-24.11 : [Backport release-24.11] zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 #367600 All reactions Sorry, something went wrong. Uh oh! There was an error while loading. Please reload this page . LeSuisse deleted the zabbix-CVE-2024-42327 branch December 24, 2024 08:32 This file contains hidden or bidirectional Unicode text that may be interpreted or compiled differently than what appears below. To review, open the file in an editor that reveals hidden Unicode characters. Learn more about bidirectional Unicode characters Show hidden characters Sign up for free to join this conversation on GitHub . Already have an account? Sign in to comment Reviewers No reviews Assignees No one assigned Labels 1.severity: security Issues which raise a security issue, or PRs that fix one 10.rebuild-darwin: 1-10 This PR causes between 1 and 10 packages to rebuild on Darwin. 10.rebuild-linux: 11-100 This PR causes between 11 and 100 packages to rebuild on Linux. Projects None yet Milestone No milestone Development Successfully merging this pull request may close these issues. Uh oh! There was an error while loading. Please reload this page . 2 participants Add this suggestion to a batch that can be applied as a single commit. This suggestion is invalid because no changes were made to the code. Suggestions cannot be applied while the pull request is closed. Suggestions cannot be applied while viewing a subset of changes. Only one suggestion per line can be applied in a batch. Add this suggestion to a batch that can be applied as a single commit. Applying suggestions on deleted lines is not supported. You must change the existing code in this line in order to create a valid suggestion. Outdated suggestions cannot be applied. This suggestion has been applied or marked resolved. Suggestions cannot be applied from pending reviews. Suggestions cannot be applied on multi-line comments. Suggestions cannot be applied while the pull request is queued to merge. Suggestion cannot be applied right now. Please check back later. You can’t perform that action at this time.\nReference content hash: 598fe3baaab0999daf591a3006dbed1df5d9423e35fe84ef1085ef0fb598ea38",
+  "content_hash": "7c00aa675b42a1282f967a67a22dd6e17b08a6519e2fd414ed8a8efad557e499",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "exploitability": {
+    "active_exploitation": "unknown",
+    "authentication_required": "unknown",
+    "conflicts": [],
+    "cvss": {
+      "attack_complexity": "unknown",
+      "attack_requirements": "unknown",
+      "attack_vector": "unknown",
+      "privileges_required": "unknown",
+      "source": "unknown",
+      "user_interaction": "unknown"
+    },
+    "exploit_available": "unknown",
+    "exploit_complexity": "unknown",
+    "exploitability_evidence": [],
+    "privilege_required": "unknown",
+    "public_poc": "unknown",
+    "user_interaction_required": "unknown"
+  },
+  "indexed_at": "2026-09-09T17:05:46.686609+00:00",
+  "intelligence_evidence": [],
+  "knowledge_id": "kb-7c00aa675b42a128",
+  "parameters": [],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-59a3bbb5da1b67c1",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-42327",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-7bd11e136c0db5c5",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-42327",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": null,
+      "published_at": null,
+      "source_id": "src-3ca723971807b47c",
+      "source_type": "research",
+      "source_url": "https://github.com/NixOS/nixpkgs/pull/361882",
+      "title": null
+    },
+    {
+      "claims": [
+        {
+          "claim_id": "clm-0538a881cbde451b",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-42327",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 by LeSuisse · Pull Request #361882 · NixOS/nixpkgs · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-7ac34421beb4b9fe",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 by LeSuisse · Pull Request #361882 · NixOS/nixpkgs · GitHub",
+          "tags": [
+            "cve:CVE-2024-42327",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 by LeSuisse · Pull Request #361882 · NixOS/nixpkgs · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-bb52e96222bd9fc1",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 by LeSuisse · Pull Request #361882 · NixOS/nixpkgs · GitHub",
+          "tags": [
+            "cve:CVE-2024-42327",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 by LeSuisse · Pull Request #361882 · NixOS/nixpkgs · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-e47741099927c448",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-42327",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 by LeSuisse · Pull Request #361882 · NixOS/nixpkgs · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T17:05:46.686609+00:00",
+      "published_at": null,
+      "source_id": "src-f07f116b3ee1ff3b",
+      "source_type": "github_issue",
+      "source_url": "https://github.com/NixOS/nixpkgs/pull/361882",
+      "title": "zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 by LeSuisse · Pull Request #361882 · NixOS/nixpkgs · GitHub"
+    }
+  ],
+  "published_at": null,
+  "research_priority": {
+    "evidence": [],
+    "negative_factors": [],
+    "priority": "INSUFFICIENT_DATA",
+    "reasons": [],
+    "rule_version": "r16-1",
+    "score": 0,
+    "unknown_factors": [
+      "active exploitation status unknown",
+      "public proof-of-concept status unknown",
+      "exploit availability status unknown",
+      "authentication requirement unknown",
+      "privilege requirement unknown",
+      "user interaction requirement unknown",
+      "exploit complexity unknown",
+      "attack vector unknown"
+    ]
+  },
+  "schema_version": 2,
+  "source_type": "research",
+  "source_url": "https://github.com/NixOS/nixpkgs/pull/361882",
+  "summary": null,
+  "tags": [
+    "cve:CVE-2024-42327",
+    "deterministic-intelligence",
+    "reference",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [],
+  "title": "zabbix60: 6.0.26 -> 6.0.36, zabbix64: 6.4.15 -> 6.4.20 by LeSuisse · Pull Request #361882 · NixOS/nixpkgs · GitHub",
+  "verification_patterns": [],
+  "vulnerability_types": [],
+  "wafs": [],
+  "xss_types": []
+}

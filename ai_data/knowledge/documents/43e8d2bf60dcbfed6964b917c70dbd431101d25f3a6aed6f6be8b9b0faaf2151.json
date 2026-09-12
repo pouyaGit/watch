@@ -1,0 +1,634 @@
+{
+  "aggregate": {
+    "components": [
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe",
+          "src-d263b5d5ff9635b4"
+        ],
+        "value": "view_each_faculty.php"
+      }
+    ],
+    "contexts": [],
+    "cwes": [],
+    "parameters": [
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe",
+          "src-d263b5d5ff9635b4"
+        ],
+        "value": "id"
+      }
+    ],
+    "payload_patterns": [],
+    "source_confidence": [
+      {
+        "claim_id": "clm-3080c4377e0b3864",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-02e6c85746bf3ffe"
+      },
+      {
+        "claim_id": "clm-aee4619dc14f7ca4",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-02e6c85746bf3ffe"
+      },
+      {
+        "claim_id": "clm-b8b59ce97bfb2403",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-02e6c85746bf3ffe"
+      },
+      {
+        "claim_id": "clm-b9667ec7bab0fa3b",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-02e6c85746bf3ffe"
+      },
+      {
+        "claim_id": "clm-7427b0dfba9dd11f",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-d263b5d5ff9635b4"
+      },
+      {
+        "claim_id": "clm-91c6238e788d1cb4",
+        "confidence": 0.0,
+        "evidence_quality": "UNKNOWN",
+        "source_id": "src-d263b5d5ff9635b4"
+      }
+    ],
+    "summaries": [
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe"
+        ],
+        "value": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub"
+      }
+    ],
+    "tags": [
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe",
+          "src-d263b5d5ff9635b4"
+        ],
+        "value": "cve:CVE-2024-5376"
+      },
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe",
+          "src-d263b5d5ff9635b4"
+        ],
+        "value": "deterministic-intelligence"
+      },
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe"
+        ],
+        "value": "reference"
+      },
+      {
+        "source_ids": [
+          "src-d263b5d5ff9635b4"
+        ],
+        "value": "research"
+      }
+    ],
+    "techniques": [],
+    "technologies": [],
+    "titles": [
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe"
+        ],
+        "value": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub"
+      }
+    ],
+    "verification_patterns": [],
+    "vulnerability_types": [
+      {
+        "source_ids": [
+          "src-02e6c85746bf3ffe",
+          "src-d263b5d5ff9635b4"
+        ],
+        "value": "xss"
+      }
+    ],
+    "wafs": [],
+    "xss_types": []
+  },
+  "components": [
+    "view_each_faculty.php"
+  ],
+  "confidence": 0.0,
+  "content": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub\nXSS injection vulnerability exists in id parameter of view_each_faculty.php file of College\nManagement System\nWith XSS,cybercriminals can turn trusted websites into malicious ones,thus causing inordinate\nharm and damage not only to the victims but also to the reputation of the trusted website's owner.\nWebsites that are compromised by XSS can cause any number of threats to attack a user's\nsystem.This can involve anything from inappropriate content being displayed to malware being\ndownloaded onto the system without the user knowing.\nPayload: id=1'\"()%26%25<zzz><ScRiPt%20>alert(9900)</ScRiPt>\nSource Download：\nhttps://www.kashipara.com/project/php/12746/college-management-system-php-project-sourc\ne-code\ncve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub Skip to content You signed in with another tab or window. Reload to refresh your session. You signed out in another tab or window. Reload to refresh your session. You switched accounts on another tab or window. Reload to refresh your session. Dismiss alert {{ message }} E1CHO / cve_hub Public Notifications You must be signed in to change notification settings Fork 3 Star 22 Files Expand file tree main / College Management System - vuln 10.pdf Copy path More file actions More file actions Latest commit History History History 203 KB main / College Management System - vuln 10.pdf Copy path Top File metadata and controls 203 KB Download raw file Edit and raw actions Loading You can’t perform that action at this time.\nReference content hash: fa7a7caa66afb0ec8f384e43491bb8e3c267f00e16a6fe4b4dfd7dd3a38516f6",
+  "content_hash": "43e8d2bf60dcbfed6964b917c70dbd431101d25f3a6aed6f6be8b9b0faaf2151",
+  "contexts": [],
+  "cwes": [],
+  "evidence_quality": "UNKNOWN",
+  "exploitability": {
+    "active_exploitation": "unknown",
+    "authentication_required": "unknown",
+    "conflicts": [],
+    "cvss": {
+      "attack_complexity": "unknown",
+      "attack_requirements": "unknown",
+      "attack_vector": "unknown",
+      "privileges_required": "unknown",
+      "source": "unknown",
+      "user_interaction": "unknown"
+    },
+    "exploit_available": "unknown",
+    "exploit_complexity": "unknown",
+    "exploitability_evidence": [],
+    "privilege_required": "unknown",
+    "public_poc": "unknown",
+    "user_interaction_required": "unknown"
+  },
+  "indexed_at": "2026-09-09T17:03:20.856787+00:00",
+  "intelligence_evidence": [
+    {
+      "evidence": "df at main · E1CHO/cve_hub · GitHub XSS injection vulnerability exists in id parameter of view_each_faculty.php file of College Management System With XSS,cybercriminals can turn trusted websites into",
+      "field": "component",
+      "rule_id": "component-file-context",
+      "rule_version": "r14-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "view_each_faculty.php"
+    },
+    {
+      "evidence": "df at main · E1CHO/cve_hub · GitHub XSS injection vulnerability exists in id parameter of view_each_faculty.php file of College Management System With XSS,cybercriminals can turn trusted websites into",
+      "field": "component",
+      "rule_id": "component-file-context",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "view_each_faculty.php"
+    },
+    {
+      "evidence": "stem - vuln 10.pdf at main · E1CHO/cve_hub · GitHub XSS injection vulnerability exists in id parameter of view_each_faculty.php file of College Management System With XSS,cybercriminals can tu",
+      "field": "parameter",
+      "rule_id": "parameter-name-bare",
+      "rule_version": "r14-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "id"
+    },
+    {
+      "evidence": "stem - vuln 10.pdf at main · E1CHO/cve_hub · GitHub XSS injection vulnerability exists in id parameter of view_each_faculty.php file of College Management System With XSS,cybercriminals can tu",
+      "field": "parameter",
+      "rule_id": "parameter-name-bare",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "id"
+    },
+    {
+      "evidence": "46/college-management-system-php-project-sourc e-code cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub Skip to content",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "46/college-management-system-php-project-sourc e-code cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub Skip to content",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r14-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "46/college-management-system-php-project-sourc e-code cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub Skip to content",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub XSS injection vu",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub XSS injection vu",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r14-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub XSS injection vu",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "ent System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub XSS injection vulnerability exists in id parameter of view_each_faculty.php file of College M",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "ent System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub XSS injection vulnerability exists in id parameter of view_each_faculty.php file of College M",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r14-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "ent System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub XSS injection vulnerability exists in id parameter of view_each_faculty.php file of College M",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "t also to the reputation of the trusted website's owner. Websites that are compromised by XSS can cause any number of threats to attack a user's system.This can involve anything from",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "t also to the reputation of the trusted website's owner. Websites that are compromised by XSS can cause any number of threats to attack a user's system.This can involve anything from",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r14-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "t also to the reputation of the trusted website's owner. Websites that are compromised by XSS can cause any number of threats to attack a user's system.This can involve anything from",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "ty exists in id parameter of view_each_faculty.php file of College Management System With XSS,cybercriminals can turn trusted websites into malicious ones,thus causing inordinate harm",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r12-2",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "ty exists in id parameter of view_each_faculty.php file of College Management System With XSS,cybercriminals can turn trusted websites into malicious ones,thus causing inordinate harm",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r14-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    },
+    {
+      "evidence": "ty exists in id parameter of view_each_faculty.php file of College Management System With XSS,cybercriminals can turn trusted websites into malicious ones,thus causing inordinate harm",
+      "field": "vulnerability_type",
+      "rule_id": "vulnerability-type-cross-site-scripting",
+      "rule_version": "r15-1",
+      "source_artifact": "CVE-2024-5376.cli.json",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "value": "xss"
+    }
+  ],
+  "knowledge_id": "kb-43e8d2bf60dcbfed",
+  "parameters": [
+    "id"
+  ],
+  "payload_patterns": [],
+  "provenance": [
+    {
+      "claims": [
+        {
+          "claim_id": "clm-3080c4377e0b3864",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-5376",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-aee4619dc14f7ca4",
+          "components": [
+            "view_each_faculty.php"
+          ],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [
+            "id"
+          ],
+          "payload_patterns": [],
+          "summary": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub",
+          "tags": [
+            "cve:CVE-2024-5376",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "xss"
+          ],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-b8b59ce97bfb2403",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub",
+          "tags": [
+            "cve:CVE-2024-5376",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "xss"
+          ],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-b9667ec7bab0fa3b",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-5376",
+            "deterministic-intelligence",
+            "reference"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub",
+          "verification_patterns": [],
+          "vulnerability_types": [],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": "2026-09-09T17:03:20.856787+00:00",
+      "published_at": null,
+      "source_id": "src-02e6c85746bf3ffe",
+      "source_type": "github",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "title": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub"
+    },
+    {
+      "claims": [
+        {
+          "claim_id": "clm-7427b0dfba9dd11f",
+          "components": [
+            "view_each_faculty.php"
+          ],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [
+            "id"
+          ],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-5376",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "xss"
+          ],
+          "wafs": [],
+          "xss_types": []
+        },
+        {
+          "claim_id": "clm-91c6238e788d1cb4",
+          "components": [],
+          "confidence": 0.0,
+          "contexts": [],
+          "cwes": [],
+          "evidence_quality": "UNKNOWN",
+          "parameters": [],
+          "payload_patterns": [],
+          "summary": null,
+          "tags": [
+            "cve:CVE-2024-5376",
+            "deterministic-intelligence",
+            "research"
+          ],
+          "techniques": [],
+          "technologies": [],
+          "title": null,
+          "verification_patterns": [],
+          "vulnerability_types": [
+            "xss"
+          ],
+          "wafs": [],
+          "xss_types": []
+        }
+      ],
+      "ingested_at": null,
+      "published_at": null,
+      "source_id": "src-d263b5d5ff9635b4",
+      "source_type": "research",
+      "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+      "title": null
+    }
+  ],
+  "published_at": null,
+  "research_priority": {
+    "evidence": [
+      {
+        "evidence": "df at main · E1CHO/cve_hub · GitHub XSS injection vulnerability exists in id parameter of view_each_faculty.php file of College Management System With XSS,cybercriminals can turn trusted websites into",
+        "field": "component",
+        "rule_id": "component-file-context",
+        "rule_version": "r14-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "github",
+        "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+        "value": "view_each_faculty.php"
+      },
+      {
+        "evidence": "stem - vuln 10.pdf at main · E1CHO/cve_hub · GitHub XSS injection vulnerability exists in id parameter of view_each_faculty.php file of College Management System With XSS,cybercriminals can tu",
+        "field": "parameter",
+        "rule_id": "parameter-name-bare",
+        "rule_version": "r14-1",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "github",
+        "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+        "value": "id"
+      },
+      {
+        "evidence": "46/college-management-system-php-project-sourc e-code cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub Skip to content",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-cross-site-scripting",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "github",
+        "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+        "value": "xss"
+      },
+      {
+        "evidence": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub XSS injection vu",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-cross-site-scripting",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "github",
+        "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+        "value": "xss"
+      },
+      {
+        "evidence": "ent System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub XSS injection vulnerability exists in id parameter of view_each_faculty.php file of College M",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-cross-site-scripting",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "github",
+        "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+        "value": "xss"
+      },
+      {
+        "evidence": "t also to the reputation of the trusted website's owner. Websites that are compromised by XSS can cause any number of threats to attack a user's system.This can involve anything from",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-cross-site-scripting",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "github",
+        "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+        "value": "xss"
+      },
+      {
+        "evidence": "ty exists in id parameter of view_each_faculty.php file of College Management System With XSS,cybercriminals can turn trusted websites into malicious ones,thus causing inordinate harm",
+        "field": "vulnerability_type",
+        "rule_id": "vulnerability-type-cross-site-scripting",
+        "rule_version": "r12-2",
+        "source_artifact": "CVE-2024-5376.cli.json",
+        "source_type": "github",
+        "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+        "value": "xss"
+      }
+    ],
+    "negative_factors": [],
+    "priority": "LOW_RESEARCH",
+    "reasons": [
+      "vulnerability type identified",
+      "affected component identified",
+      "affected parameter identified"
+    ],
+    "rule_version": "r16-1",
+    "score": 10,
+    "unknown_factors": [
+      "active exploitation status unknown",
+      "public proof-of-concept status unknown",
+      "exploit availability status unknown",
+      "authentication requirement unknown",
+      "privilege requirement unknown",
+      "user interaction requirement unknown",
+      "exploit complexity unknown",
+      "attack vector unknown"
+    ]
+  },
+  "schema_version": 2,
+  "source_type": "github",
+  "source_url": "https://github.com/E1CHO/cve_hub/blob/main/College%20Management%20System%20-%20xss/College%20Management%20System%20-%20vuln%2010.pdf",
+  "summary": null,
+  "tags": [
+    "cve:CVE-2024-5376",
+    "deterministic-intelligence",
+    "reference",
+    "research"
+  ],
+  "techniques": [],
+  "technologies": [],
+  "title": "cve_hub/College Management System - xss/College Management System - vuln 10.pdf at main · E1CHO/cve_hub · GitHub",
+  "verification_patterns": [],
+  "vulnerability_types": [
+    "xss"
+  ],
+  "wafs": [],
+  "xss_types": []
+}
