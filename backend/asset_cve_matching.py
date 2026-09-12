@@ -46,6 +46,10 @@ from ai.knowledge.evidence_quality import (
     EVIDENCE_QUALITY_RULE_VERSION,
     evaluate_evidence_quality,
 )
+from ai.knowledge.hunt_priority import (
+    HUNT_PRIORITY_RULE_VERSION,
+    evaluate_hunt_priority,
+)
 from ai.knowledge.path_parameter_relevance import (
     RULE_VERSION as PATH_PARAMETER_RELEVANCE_RULE_VERSION,
     evaluate_path_parameter_relevance,
@@ -935,6 +939,30 @@ def build_matches(
             summary["evidence_quality"] = evidence_quality
             summary["evidence_quality_rule_version"] = (
                 EVIDENCE_QUALITY_RULE_VERSION
+            )
+            # Stage R31.10: additive evidence-aware hunt-ordering signal.
+            # Consumes R30.1/R31.5/R31.7/R31.8/R31.9 read-only; never replaces
+            # the Money Score, R26/R29 priority or the R30.1 confidence.
+            summary["hunt_priority"] = evaluate_hunt_priority(
+                evidence_quality=evidence_quality,
+                strongest_match_type=summary["strongest_match_type"],
+                strongest_confidence=summary["strongest_confidence"],
+                asset_match_state=summary["asset_match_state"],
+                matched_component=summary["matched_component"],
+                matched_version=summary["matched_version"],
+                matched_parameter=summary["matched_parameter"],
+                version_state=summary["version_state"],
+                version_association_state=association.state,
+                remaining_blockers=summary["remaining_blockers"],
+                resolved_blockers=summary["resolved_blockers"],
+                evidence_provenance=support_gate["provenance"],
+                support_scope=support_gate["support_scope"],
+                version_normalization=version_normalization,
+                path_parameter_relevance=path_parameter_relevance,
+                cve_id=cve_id,
+            )
+            summary["hunt_priority_rule_version"] = (
+                HUNT_PRIORITY_RULE_VERSION
             )
             results.append(summary)
 
