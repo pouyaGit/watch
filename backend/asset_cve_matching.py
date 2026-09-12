@@ -46,6 +46,10 @@ from ai.knowledge.evidence_quality import (
     EVIDENCE_QUALITY_RULE_VERSION,
     evaluate_evidence_quality,
 )
+from ai.knowledge.hunt_action_planner import (
+    HUNT_ACTION_PLANNER_RULE_VERSION,
+    plan_hunt_action,
+)
 from ai.knowledge.hunt_actionability import (
     HUNT_ACTIONABILITY_RULE_VERSION,
     evaluate_hunt_actionability,
@@ -978,6 +982,19 @@ def build_matches(
             )
             summary["hunt_actionability_rule_version"] = (
                 HUNT_ACTIONABILITY_RULE_VERSION
+            )
+            # Stage R31.12: additive recommended-next-action plan over the
+            # R31.10/R31.11 projections. Planning only; never executes,
+            # rescoring or replacing any existing field.
+            summary["hunt_action_plan"] = plan_hunt_action(
+                hunt_priority=summary["hunt_priority"],
+                hunt_actionability=summary["hunt_actionability"],
+                evidence_provenance=support_gate["provenance"],
+                support_scope=support_gate["support_scope"],
+                strongest_match_type=summary["strongest_match_type"],
+            )
+            summary["hunt_action_plan_rule_version"] = (
+                HUNT_ACTION_PLANNER_RULE_VERSION
             )
             results.append(summary)
 
