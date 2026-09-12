@@ -8,7 +8,8 @@ Locks the Systemd runtime hardening for the core pipeline installer
   - a real timeout that actually applies to ``Type=oneshot``
     (``TimeoutStartSec=``, NOT the ignored ``RuntimeMaxSec=``)
   - unchanged ExecStart / KillMode / TimeoutStopSec
-  - unchanged timer cadence (00:00/12:00 Asia/Tehran, Persistent=false)
+  - schedule-separated timer cadence: 00:00 Asia/Tehran daily, Persistent=false,
+    with NO 12:00 core-pipeline trigger (12:00-00:00 belongs to AI/research)
 
 No service is installed, started, or contacted; the unit text is parsed out of
 the installer script and (when available) checked with ``systemd-analyze
@@ -85,16 +86,46 @@ class TestCoreServiceUnit(unittest.TestCase):
             r"/opt/watch/run-pipeline\.sh$",
         )
 
-    def test_timer_cadence_unchanged(self):
+    def test_timer_cadence_aligned(self):
         self.assertRegex(self.timer, r"(?m)^Unit=watch\.service$")
         self.assertRegex(
             self.timer, r"(?m)^OnCalendar=\*-\*-\* 00:00:00 Asia/Tehran$"
         )
-        self.assertRegex(
-            self.timer, r"(?m)^OnCalendar=\*-\*-\* 12:00:00 Asia/Tehran$"
-        )
         self.assertRegex(self.timer, r"(?m)^Persistent=false$")
         self.assertNotIn("RandomizedDelaySec", self.timer)
+
+    def test_exactly_one_core_oncalendar(self):
+        # The core pipeline owns exactly one trigger: the 00:00 recon slot.
+        calendars = re.findall(r"(?m)^OnCalendar=(.+)$", self.timer)
+        self.assertEqual(
+            calendars,
+            ["*-*-* 00:00:00 Asia/Tehran"],
+            "watch.timer must have exactly the 00:00 core trigger",
+        )
+
+    def test_no_12_00_core_pipeline_trigger(self):
+        # Schedule separation: 12:00-00:00 Tehran is the AI/research window,
+        # so neither the timer body nor the installer may schedule the core
+        # pipeline at 12:00.
+        self.assertIsNone(
+            re.search(r"(?m)^OnCalendar=.*12:00", self.timer),
+            "watch.timer must not trigger the core pipeline at 12:00",
+        )
+        text = SCRIPT.read_text()
+        self.assertIsNone(
+            re.search(r"(?m)^OnCalendar=\*-\*-\* 12:00", text),
+            "setup-core-pipeline.sh must not define a 12:00 OnCalendar",
+        )
+        self.assertNotIn("Run Watch Core Pipeline every 12 hours", text)
+
+    def test_research_hourly_timer_unchanged(self):
+        # The AI/research window owner stays untouched (hourly tick; the
+        # 12:00-00:00 application window is enforced by the scheduler).
+        research_timer = (
+            REPO_ROOT / "systemd" / "watch-research.timer"
+        ).read_text()
+        self.assertIn("OnCalendar=hourly", research_timer)
+        self.assertIn("Persistent=true", research_timer)
 
     @unittest.skipUnless(shutil.which("systemd-analyze"), "systemd-analyze not available")
     def test_systemd_analyze_verify(self):

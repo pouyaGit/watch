@@ -35,7 +35,8 @@ ExecStart=/usr/bin/flock -n /run/watch-pipeline.lock /opt/watch/run-pipeline.sh
 # supported mechanism is TimeoutStartSec=: for a oneshot service the start job
 # is not complete until ExecStart exits, and systemd terminates the unit if that
 # exceeds this value. Type=oneshot disables this timeout by default; 6h is
-# longer than the 5.5h heavy-job ceiling and leaves ~6h before the next 12h run.
+# longer than the 5.5h heavy-job ceiling and leaves ~18h before the next daily
+# core run (00:00 Tehran).
 TimeoutStartSec=6h
 
 KillMode=control-group
@@ -48,14 +49,14 @@ UNIT
 
 sudo tee "${SYSTEMD_DIR}/watch.timer" > /dev/null << 'UNIT'
 [Unit]
-Description=Run Watch Core Pipeline every 12 hours (Asia/Tehran)
+Description=Run Watch Core Pipeline daily at 00:00 (Asia/Tehran)
 
 [Timer]
 Unit=watch.service
 
-# EXACTLY 00:00 and 12:00 Tehran time.
+# EXACTLY 00:00 Tehran time (core pipeline / recon window 00:00-06:00).
+# The 12:00-00:00 window belongs to AI/research; there is no 12:00 core trigger.
 OnCalendar=*-*-* 00:00:00 Asia/Tehran
-OnCalendar=*-*-* 12:00:00 Asia/Tehran
 
 # Never execute a missed run after reboot.
 Persistent=false

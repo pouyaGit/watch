@@ -408,8 +408,12 @@ class TestBackendRealCorpus(unittest.TestCase):
                 self.assertIn(row["evidence_type"], EVIDENCE_TYPES)
                 self.assertTrue(row["version"])
             blob = json.dumps(item).lower()
+            # ``.com`` alone is not a valid privacy token: persisted
+            # path-only values may legitimately contain host-like segments
+            # (e.g. ``/%5c/afcs.dellcdn.com%5c/...``). The projection must not
+            # carry raw URL/host fields or schemes instead.
             for token in ("http://", "https://", "dellnetworkingvr",
-                          "hiringlab", ".com"):
+                          "hiringlab", "example_url"):
                 self.assertNotIn(token, blob)
 
     def test_unknown_program_is_none(self):

@@ -54,9 +54,12 @@ MAX_PROGRAMS = 200
 _CACHE_TTL = 10.0
 _UNAVAILABLE_TTL = 60.0
 _MONGO_TIMEOUT_MS = 800
+_MONGO_READ_TIMEOUT_MS = 30000
+_MONGO_BATCH_SIZE = 2000
 
 _UNSET = object()
 _CLIENT: Any = _UNSET
+_DATABASE_NAME = ""
 _CACHE: dict[str, tuple[float, dict]] = {}
 _UNAVAILABLE_AT = 0.0
 
@@ -135,13 +138,21 @@ def _local_programs() -> list[str]:
 def _short_client():
     """Short-timeout read-only Mongo client (derived, never hard-coded)."""
 
-    global _CLIENT
+    global _CLIENT, _DATABASE_NAME
     if _CLIENT is not _UNSET:
         return _CLIENT
     try:
+        # Ensure the Watch MongoEngine bootstrap has executed before reading
+        # its connection settings; import order must not matter.
+        try:
+            from database import db as _db_init
+        except Exception:
+            pass
+
         import mongoengine.connection as mcon
 
         settings = dict(mcon._connection_settings.get("default") or {})
+        _DATABASE_NAME = str(settings.get("name") or "")
         host = settings.get("host")
         if isinstance(host, (list, tuple)):
             host = host[0] if host else None
@@ -154,7 +165,7 @@ def _short_client():
                 host,
                 serverSelectionTimeoutMS=_MONGO_TIMEOUT_MS,
                 connectTimeoutMS=_MONGO_TIMEOUT_MS,
-                socketTimeoutMS=_MONGO_TIMEOUT_MS,
+                socketTimeoutMS=_MONGO_READ_TIMEOUT_MS,
             )
             atexit.register(_close_client)
     except Exception:
@@ -189,23 +200,41 @@ def _mongo_ready(client) -> bool:
         return False
 
 
+def _database(client):
+    """Read-only database handle for the configured Watch database.
+
+    The configured Mongo URI may not carry a default database name; fall back
+    to the MongoEngine ``name`` setting (already the project's configured
+    database, never hard-coded here).
+    """
+
+    try:
+        return client.get_database()
+    except Exception:
+        if not _DATABASE_NAME:
+            return None
+        try:
+            return client[_DATABASE_NAME]
+        except Exception:
+            return None
+
+
 def _fetch_documents(program: str) -> Optional[dict]:
     """Raw read-only documents for one program; None when Mongo is offline."""
 
     client = _short_client()
     if client is None or not _mongo_ready(client):
         return None
-    out: dict = {}
-    try:
-        database = client.get_database()
-    except Exception:
+    database = _database(client)
+    if database is None:
         return None
+    out: dict = {}
     for name, projection in _COLLECTIONS.items():
         try:
             out[name] = list(
                 database[name].find(
                     {"program_name": program}, projection
-                )
+                ).batch_size(_MONGO_BATCH_SIZE)
             )
         except Exception:
             # One malformed/unreadable collection must not erase the rest.
@@ -289,8 +318,11 @@ def _apply_inference(data: Optional[dict], inventory):
 def _mongo_programs(client) -> list[str]:
     if client is None or not _mongo_ready(client):
         return []
+    database = _database(client)
+    if database is None:
+        return []
     try:
-        names = client.get_database()["programs"].distinct("program_name")
+        names = database["programs"].distinct("program_name")
     except Exception:
         return []
     return sorted({str(name).strip() for name in names if str(name).strip()})
