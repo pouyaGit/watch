@@ -641,15 +641,42 @@ class TestAdditiveIntegration(unittest.TestCase):
 
     def test_money_and_priorities_unchanged(self):
         from ai.schemas.hunt_queue import HUNT_RULE_VERSION
-        from backend import hunt_queue, research_action_queue
+        from backend import (
+            asset_cve_matching,
+            hunt_queue,
+            research_action_queue,
+        )
         from backend import research_economics
 
+        # Hermetic by construction: no absolute Money Score is asserted, so
+        # the outcome cannot depend on machine-local untracked runtime
+        # artifacts (ai_data/research/agent results/reports, local KB state).
+        # What is asserted is invariance: the R30.1/R30.3 asset-matching path
+        # is additive context only and must never move Money.
         before = research_economics.build_economics()
-        actions = research_action_queue.build_action_queue()
-        hunt = hunt_queue.build_hunt_queue()
+        money_before = [
+            a["money_score"]
+            for a in research_action_queue.build_action_queue()
+        ]
+        # Exercise the R30.3 version-association step between measurements.
+        # Fresh computation (cache cleared) so the R30.3 code path genuinely
+        # executes instead of serving a memoized projection.
+        asset_cve_matching.clear_cache()
+        matches = asset_cve_matching.build_matches(cve=CVE)
+        self.assertGreater(matches.get("total", 0), 0)
+        self.assertTrue(matches.get("items"))
         after = research_economics.build_economics()
+        money_after = [
+            a["money_score"]
+            for a in research_action_queue.build_action_queue()
+        ]
         self.assertEqual(before, after)
-        self.assertEqual([a["money_score"] for a in actions], [53, 53])
+        self.assertEqual(money_before, money_after)
+        for score in money_after:
+            self.assertIsInstance(score, int)
+            self.assertGreaterEqual(score, 0)
+            self.assertLessEqual(score, 100)
+        hunt = hunt_queue.build_hunt_queue()
         self.assertEqual([h["hunt_priority"] for h in hunt],
                          ["VERIFY_FIRST", "VERIFY_FIRST"])
         self.assertEqual(HUNT_RULE_VERSION, "r29-1")
