@@ -6,7 +6,14 @@ Read-only composition over *existing* Watch data:
 - ``database.Endpoints.path``       -> paths
 - ``database.Endpoints.params`` /
   ``database.Endpoints.param_records`` -> parameters (+ provenance)
+- ``database.Urls.path`` / ``url``  -> component/plugin inference evidence
 - ``database.Programs`` / ``Subdomains`` -> program/subdomain membership
+
+Stage R31.3 (additive) runs the pure R31.2 path inference
+(``ai.knowledge.component_inference``) over the loaded URL/endpoint/HTTP
+evidence and merges the inferred components/plugins into the inventory before
+projection. The R30.2 pure builder is untouched; inference is deterministic and
+fail-soft (a rule failure returns the inference-free inventory unchanged).
 
 No persistence, no Mongo writes, no new collections, no network, no DNS, no
 subprocess, no LLM, no Nuclei/browser/PoC, no target interaction, no findings,
@@ -25,6 +32,10 @@ import atexit
 import time
 from typing import Any, Optional
 
+from ai.knowledge.component_inference import (
+    apply_inferred_items,
+    infer_inventory_items,
+)
 from ai.knowledge.observed_inventory import (
     RULE_VERSION,
     build_inventory_summary,
@@ -34,6 +45,7 @@ from ai.researcher.target_intelligence import (
     EndpointRecord,
     HttpRecord,
     SubdomainRecord,
+    UrlRecord,
 )
 from ai.schemas.observed_inventory import inventory_projection
 
@@ -64,6 +76,14 @@ _COLLECTIONS = {
         "program_name": 1,
         "subdomain": 1,
         "tech": 1,
+        "url": 1,
+        "final_url": 1,
+    },
+    "urls": {
+        "program_name": 1,
+        "subdomain": 1,
+        "url": 1,
+        "path": 1,
     },
     "endpoints": {
         "program_name": 1,
@@ -204,6 +224,14 @@ def _records(documents: dict) -> dict:
             )
         except Exception:
             continue
+    url_records = []
+    for item in documents.get("urls") or ():
+        try:
+            url_records.append(
+                UrlRecord.from_document(_Document(item))
+            )
+        except Exception:
+            continue
     endpoint_records = []
     for item in documents.get("endpoints") or ():
         try:
@@ -222,9 +250,40 @@ def _records(documents: dict) -> dict:
             continue
     return {
         "http_records": http_records,
+        "url_records": url_records,
         "endpoint_records": endpoint_records,
         "subdomain_records": subdomain_records,
     }
+
+
+def _empty_records() -> dict:
+    return {
+        "http_records": [],
+        "url_records": [],
+        "endpoint_records": [],
+        "subdomain_records": [],
+    }
+
+
+def _apply_inference(data: Optional[dict], inventory):
+    """Stage R31.3: merge R31.2 inferred components/plugins (fail-soft).
+
+    Pure, read-only and additive: the inference never invents values beyond the
+    anchored ``ai.knowledge.component_inference.RULES``; on any failure the
+    original inventory is returned unchanged so technologies, versions and
+    version associations are never affected.
+    """
+
+    records = data or {}
+    try:
+        inferred = infer_inventory_items(
+            url_records=records.get("url_records") or (),
+            endpoint_records=records.get("endpoint_records") or (),
+            http_records=records.get("http_records") or (),
+        )
+        return apply_inferred_items(inventory, inferred)
+    except Exception:
+        return inventory
 
 
 def _mongo_programs(client) -> list[str]:
@@ -250,11 +309,7 @@ def _build_records(
     records: Optional[dict] = None,
 ) -> Optional[dict]:
     if records is not None:
-        merged = {
-            "http_records": [],
-            "endpoint_records": [],
-            "subdomain_records": [],
-        }
+        merged = _empty_records()
         for key in merged:
             merged[key] = list(records.get(key) or ())
         return merged
@@ -273,7 +328,8 @@ def build_inventory(
 
     ``program=None`` projects every known program. ``records`` may inject
     already-loaded records (tests, offline callers); it is never read from disk
-    or the network.
+    or the network. Stage R31.3 merges the R31.2 inferred components/plugins
+    before projection; on inference failure the projection is unchanged.
     """
 
     requested = str(program or "").strip()
@@ -281,6 +337,7 @@ def build_inventory(
         target = requested or "unknown"
         data = _build_records(target, records)
         inventory = build_observed_inventory(target, **(data or {}))
+        inventory = _apply_inference(data, inventory)
         return [inventory_projection(inventory)]
 
     if requested:
@@ -292,12 +349,9 @@ def build_inventory(
     for name in names[:MAX_PROGRAMS]:
         data = _build_records(name)
         if data is None:
-            data = {
-                "http_records": [],
-                "endpoint_records": [],
-                "subdomain_records": [],
-            }
+            data = _empty_records()
         inventory = build_observed_inventory(name, **data)
+        inventory = _apply_inference(data, inventory)
         out.append(inventory_projection(inventory))
     out.sort(key=lambda item: item["program"])
     return out
@@ -323,12 +377,10 @@ def get_inventory(
         return None
     data = _build_records(name)
     if data is None:
-        data = {
-            "http_records": [],
-            "endpoint_records": [],
-            "subdomain_records": [],
-        }
-    value = inventory_projection(build_observed_inventory(name, **data))
+        data = _empty_records()
+    inventory = build_observed_inventory(name, **data)
+    inventory = _apply_inference(data, inventory)
+    value = inventory_projection(inventory)
     _CACHE[name] = (now, value)
     return value
 

@@ -11,8 +11,11 @@ Hard boundaries encoded here:
   is inferred; if a persisted source does not establish a value, the category is
   simply empty.
 - ``evidence_type`` is a closed vocabulary (EXPLICIT_FIELD, STRUCTURED_ENDPOINT,
-  STRUCTURED_PARAMETER, STRUCTURED_TECHNOLOGY, STRUCTURED_COMPONENT). There is
-  deliberately no INFERRED / GUESSED / LLM_DERIVED value.
+  STRUCTURED_PARAMETER, STRUCTURED_TECHNOLOGY, STRUCTURED_COMPONENT,
+  INFERRED_COMPONENT, INFERRED_PLUGIN). Stage R31.2 adds the two INFERRED_*
+  types for values produced by anchored, deterministic path rules
+  (``ai/knowledge/component_inference.py``); GUESSED / LLM_DERIVED / bare
+  INFERRED values are still never allowed.
 - No raw target URL / IP / hostname field exists. ``paths`` are path-only
   (already normalized at write time). ``generated_from`` holds record counts.
 - ``inventory_id`` is deterministic from rule_version + program.
@@ -41,13 +44,17 @@ OBSERVED_INVENTORY_RULE_VERSION = "r30-2"
 # ``ai/knowledge/version_component_association.py``.
 VERSION_ASSOCIATION_RULE_VERSION = "r30-3"
 
-# Closed evidence-type vocabulary. Inferred/guessed values are never allowed.
+# Closed evidence-type vocabulary. R31.2 permits only the two anchored,
+# deterministic INFERRED_* rule types; guessed/LLM-derived values are never
+# allowed.
 EVIDENCE_TYPES: tuple[str, ...] = (
     "EXPLICIT_FIELD",
     "STRUCTURED_ENDPOINT",
     "STRUCTURED_PARAMETER",
     "STRUCTURED_TECHNOLOGY",
     "STRUCTURED_COMPONENT",
+    "INFERRED_COMPONENT",
+    "INFERRED_PLUGIN",
 )
 
 # Closed source vocabulary (existing Watch inventory sources only).

@@ -12,6 +12,10 @@ from ai.researcher.target_intelligence import (
     SubdomainRecord,
 )
 
+from ai.knowledge.component_inference import (
+    apply_inferred_items,
+    infer_inventory_items,
+)
 from ai.knowledge.observed_inventory import build_observed_inventory
 
 
@@ -40,7 +44,22 @@ def load_program_inventory_records(program: str) -> dict:
 
 
 def build_real_observed_inventory(program: str):
-    return build_observed_inventory(
+    records = load_program_inventory_records(program)
+
+    inventory = build_observed_inventory(
         program,
-        **load_program_inventory_records(program),
+        **records,
     )
+
+    try:
+        inferred = infer_inventory_items(
+            url_records=records["url_records"],
+            endpoint_records=records["endpoint_records"],
+            http_records=records["http_records"],
+        )
+    except Exception:
+        # R31.2 deterministic inference is additive: a rule failure must
+        # never break the existing observed inventory.
+        inferred = {}
+
+    return apply_inferred_items(inventory, inferred)
