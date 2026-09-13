@@ -46,6 +46,10 @@ from ai.knowledge.evidence_acquisition_planner import (
     EVIDENCE_ACQUISITION_PLANNER_RULE_VERSION,
     plan_evidence_acquisition,
 )
+from ai.knowledge.evidence_prioritization_planner import (
+    EVIDENCE_PRIORITIZATION_PLANNER_RULE_VERSION,
+    plan_evidence_prioritization,
+)
 from ai.knowledge.evidence_quality import (
     EVIDENCE_QUALITY_RULE_VERSION,
     evaluate_evidence_quality,
@@ -1018,6 +1022,19 @@ def build_matches(
             )
             summary["evidence_acquisition_plan_rule_version"] = (
                 EVIDENCE_ACQUISITION_PLANNER_RULE_VERSION
+            )
+            # Stage R31.14: additive evidence prioritization roadmap over the
+            # R31.13 acquisition plan. Plan-only: it decides which evidence
+            # to prioritize and in what deterministic order. It never
+            # executes an acquisition, never recalculates R31.12 gaps and
+            # never alters any existing field.
+            summary["evidence_prioritization_plan"] = (
+                plan_evidence_prioritization(
+                    summary["evidence_acquisition_plan"]
+                )
+            )
+            summary["evidence_prioritization_plan_rule_version"] = (
+                EVIDENCE_PRIORITIZATION_PLANNER_RULE_VERSION
             )
             results.append(summary)
 
