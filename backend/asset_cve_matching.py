@@ -82,9 +82,26 @@ from ai.knowledge.evidence_research_outcome_tracker import (
     EVIDENCE_RESEARCH_OUTCOME_TRACKER_RULE_VERSION,
     track_evidence_research_outcome,
 )
+from ai.knowledge.execution_authorization_planner import (
+    EXECUTION_AUTHORIZATION_PLANNER_RULE_VERSION,
+    plan_execution_authorization,
+    plan_execution_policy,
+)
+from ai.knowledge.execution_boundary_planner import (
+    EXECUTION_BOUNDARY_PLANNER_RULE_VERSION,
+    plan_execution_boundary,
+)
+from ai.knowledge.execution_risk_planner import (
+    EXECUTION_RISK_PLANNER_RULE_VERSION,
+    plan_execution_risk,
+)
 from ai.knowledge.historical_candidate_ranking import (
     RESEARCH_CANDIDATE_RANKING_PLANNER_RULE_VERSION,
     rank_historical_candidates,
+)
+from ai.knowledge.human_approval_gate import (
+    HUMAN_APPROVAL_GATE_PLANNER_RULE_VERSION,
+    plan_human_approval,
 )
 from ai.knowledge.hunt_action_planner import (
     HUNT_ACTION_PLANNER_RULE_VERSION,
@@ -113,6 +130,10 @@ from ai.knowledge.research_consistency_validator import (
 from ai.knowledge.research_efficiency import (
     RESEARCH_EFFICIENCY_PLANNER_RULE_VERSION,
     evaluate_research_efficiency,
+)
+from ai.knowledge.research_execution_authorization_export import (
+    RESEARCH_EXECUTION_AUTHORIZATION_EXPORTER_RULE_VERSION,
+    export_research_execution_authorization,
 )
 from ai.knowledge.research_history_aggregator import (
     RESEARCH_HISTORY_AGGREGATOR_RULE_VERSION,
@@ -166,6 +187,10 @@ from ai.knowledge.research_workflow_graph import (
     RESEARCH_WORKFLOW_GRAPH_BUILDER_RULE_VERSION,
     build_research_workflow_graph,
 )
+from ai.knowledge.scope_capability_gate import (
+    SCOPE_CAPABILITY_GATE_PLANNER_RULE_VERSION,
+    plan_scope_capability_gate,
+)
 from ai.knowledge.version_component_association import (
     RULE_VERSION as ASSOCIATION_RULE_VERSION,
     evaluate_version_association,
@@ -173,6 +198,9 @@ from ai.knowledge.version_component_association import (
 from ai.knowledge.version_normalization import (
     RULE_VERSION as VERSION_NORMALIZATION_RULE_VERSION,
     build_version_evidence,
+)
+from ai.schemas.execution_policy import (
+    EXECUTION_POLICY_RULE_VERSION,
 )
 from ai.schemas.observed_inventory import (
     EVIDENCE_PROVENANCE_RULE_VERSION,
@@ -1410,6 +1438,83 @@ def build_matches(
             )
             summary["research_orchestration_export_plan_rule_version"] = (
                 RESEARCH_ORCHESTRATION_EXPORTER_RULE_VERSION
+            )
+            # Stage R36: additive execution safety & authorization boundary
+            # over the R34/R35 outputs. Planning/authorization only: policy,
+            # authorization decision, scope/capability gate, human approval,
+            # risk, execution boundary and the final authorization export.
+            # R36 never executes anything, creates no queue/scheduler/runtime
+            # and never alters any existing field.
+            summary["execution_policy_plan"] = plan_execution_policy(
+                summary["research_strategy_export_plan"],
+                summary["research_orchestration_export_plan"],
+            )
+            summary["execution_policy_plan_rule_version"] = (
+                EXECUTION_POLICY_RULE_VERSION
+            )
+            summary["execution_authorization_plan"] = (
+                plan_execution_authorization(
+                    summary["research_strategy_export_plan"],
+                    summary["research_orchestration_export_plan"],
+                    summary["execution_policy_plan"],
+                )
+            )
+            summary["execution_authorization_plan_rule_version"] = (
+                EXECUTION_AUTHORIZATION_PLANNER_RULE_VERSION
+            )
+            summary["scope_capability_gate_plan"] = (
+                plan_scope_capability_gate(
+                    summary["execution_authorization_plan"],
+                    summary["agent_role_plan"],
+                    summary["support_scope"],
+                )
+            )
+            summary["scope_capability_gate_plan_rule_version"] = (
+                SCOPE_CAPABILITY_GATE_PLANNER_RULE_VERSION
+            )
+            summary["human_approval_gate_plan"] = plan_human_approval(
+                summary["execution_policy_plan"],
+                summary["execution_authorization_plan"],
+            )
+            summary["human_approval_gate_plan_rule_version"] = (
+                HUMAN_APPROVAL_GATE_PLANNER_RULE_VERSION
+            )
+            summary["execution_risk_plan"] = plan_execution_risk(
+                summary["execution_authorization_plan"],
+                summary["scope_capability_gate_plan"],
+                summary["human_approval_gate_plan"],
+                summary["research_strategy_export_plan"],
+                summary["research_orchestration_export_plan"],
+            )
+            summary["execution_risk_plan_rule_version"] = (
+                EXECUTION_RISK_PLANNER_RULE_VERSION
+            )
+            summary["execution_boundary_plan"] = plan_execution_boundary(
+                summary["execution_authorization_plan"],
+                summary["scope_capability_gate_plan"],
+                summary["execution_risk_plan"],
+                summary["human_approval_gate_plan"],
+                summary["execution_policy_plan"],
+                summary["research_strategy_export_plan"],
+                summary["research_orchestration_export_plan"],
+            )
+            summary["execution_boundary_plan_rule_version"] = (
+                EXECUTION_BOUNDARY_PLANNER_RULE_VERSION
+            )
+            summary["research_execution_authorization_export_plan"] = (
+                export_research_execution_authorization(
+                    summary["execution_policy_plan"],
+                    summary["execution_authorization_plan"],
+                    summary["scope_capability_gate_plan"],
+                    summary["execution_risk_plan"],
+                    summary["human_approval_gate_plan"],
+                    summary["execution_boundary_plan"],
+                    summary["research_strategy_export_plan"],
+                    summary["research_orchestration_export_plan"],
+                )
+            )
+            summary["research_execution_authorization_export_plan_rule_version"] = (
+                RESEARCH_EXECUTION_AUTHORIZATION_EXPORTER_RULE_VERSION
             )
             results.append(summary)
 
