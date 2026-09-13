@@ -42,6 +42,10 @@ from ai.knowledge.component_identity import (
     match_observed_identities,
     resolve_cve_identities,
 )
+from ai.knowledge.evidence_acquisition_planner import (
+    EVIDENCE_ACQUISITION_PLANNER_RULE_VERSION,
+    plan_evidence_acquisition,
+)
 from ai.knowledge.evidence_quality import (
     EVIDENCE_QUALITY_RULE_VERSION,
     evaluate_evidence_quality,
@@ -995,6 +999,25 @@ def build_matches(
             )
             summary["hunt_action_plan_rule_version"] = (
                 HUNT_ACTION_PLANNER_RULE_VERSION
+            )
+            # Stage R31.13: additive evidence-acquisition plan over the
+            # R31.10/R31.11/R31.12 projections. Plan-only: it selects the
+            # minimum evidence type, safe acquisition method and completion
+            # condition for the gap R31.12 already selected. It never
+            # executes the method, never contacts a target and never alters
+            # any existing field.
+            summary["evidence_acquisition_plan"] = (
+                plan_evidence_acquisition(
+                    hunt_priority=summary["hunt_priority"],
+                    hunt_actionability=summary["hunt_actionability"],
+                    hunt_action_plan=summary["hunt_action_plan"],
+                    evidence_provenance=support_gate["provenance"],
+                    support_scope=support_gate["support_scope"],
+                    strongest_match_type=summary["strongest_match_type"],
+                )
+            )
+            summary["evidence_acquisition_plan_rule_version"] = (
+                EVIDENCE_ACQUISITION_PLANNER_RULE_VERSION
             )
             results.append(summary)
 
