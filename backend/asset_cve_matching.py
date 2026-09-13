@@ -223,6 +223,10 @@ from ai.knowledge.version_normalization import (
     RULE_VERSION as VERSION_NORMALIZATION_RULE_VERSION,
     build_version_evidence,
 )
+from ai.knowledge.xss_agent_result_export import (
+    XSS_AGENT_RESULT_EXPORTER_RULE_VERSION,
+    export_xss_agent_result,
+)
 from ai.schemas.execution_policy import (
     EXECUTION_POLICY_RULE_VERSION,
 )
@@ -1619,6 +1623,16 @@ def build_matches(
             )
             summary["security_agent_framework_plan_rule_version"] = (
                 SECURITY_AGENT_FRAMEWORK_EXPORTER_RULE_VERSION
+            )
+            # Stage R39: additive XSS specialist agent result. Research
+            # intelligence only: bounded context analysis, research
+            # hypotheses and evidence planning with an R37 governance
+            # reference. R39 executes nothing: no HTTP, payload, browser,
+            # JavaScript, fuzzing or exploitation, and no existing field is
+            # altered.
+            summary["xss_agent_plan"] = export_xss_agent_result()
+            summary["xss_agent_plan_rule_version"] = (
+                XSS_AGENT_RESULT_EXPORTER_RULE_VERSION
             )
             results.append(summary)
 
