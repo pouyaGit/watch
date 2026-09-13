@@ -211,6 +211,10 @@ from ai.knowledge.scope_capability_gate import (
     SCOPE_CAPABILITY_GATE_PLANNER_RULE_VERSION,
     plan_scope_capability_gate,
 )
+from ai.knowledge.security_agent_framework_export import (
+    SECURITY_AGENT_FRAMEWORK_EXPORTER_RULE_VERSION,
+    export_security_agent_framework,
+)
 from ai.knowledge.version_component_association import (
     RULE_VERSION as ASSOCIATION_RULE_VERSION,
     evaluate_version_association,
@@ -1603,6 +1607,18 @@ def build_matches(
             )
             summary["research_governance_export_plan_rule_version"] = (
                 RESEARCH_GOVERNANCE_EXPORTER_RULE_VERSION
+            )
+            # Stage R38: additive security agent framework core. Framework/
+            # model layer only: identity, capability, input, lifecycle,
+            # result, registry and export contracts for future security
+            # specialist agents. R38 never executes anything, creates no
+            # agent runtime, plugin loader or dynamic import and never alters
+            # any existing field.
+            summary["security_agent_framework_plan"] = (
+                export_security_agent_framework()
+            )
+            summary["security_agent_framework_plan_rule_version"] = (
+                SECURITY_AGENT_FRAMEWORK_EXPORTER_RULE_VERSION
             )
             results.append(summary)
 
