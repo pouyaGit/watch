@@ -62,6 +62,10 @@ from ai.knowledge.evidence_quality import (
     EVIDENCE_QUALITY_RULE_VERSION,
     evaluate_evidence_quality,
 )
+from ai.knowledge.evidence_research_loop_planner import (
+    EVIDENCE_RESEARCH_LOOP_PLANNER_RULE_VERSION,
+    plan_evidence_research_loop,
+)
 from ai.knowledge.hunt_action_planner import (
     HUNT_ACTION_PLANNER_RULE_VERSION,
     plan_hunt_action,
@@ -1068,6 +1072,20 @@ def build_matches(
             )
             summary["evidence_decision_plan_rule_version"] = (
                 EVIDENCE_DECISION_PLANNER_RULE_VERSION
+            )
+            # Stage R31.17: additive research lifecycle projection over the
+            # R31.13-R31.16 plans. Plan-only: it defines the loop state, never
+            # executes research and never alters any existing field.
+            summary["evidence_research_loop_plan"] = (
+                plan_evidence_research_loop(
+                    summary["evidence_acquisition_plan"],
+                    summary["evidence_prioritization_plan"],
+                    summary["evidence_confidence_plan"],
+                    summary["evidence_decision_plan"],
+                )
+            )
+            summary["evidence_research_loop_plan_rule_version"] = (
+                EVIDENCE_RESEARCH_LOOP_PLANNER_RULE_VERSION
             )
             results.append(summary)
 
