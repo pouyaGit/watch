@@ -66,6 +66,10 @@ from ai.knowledge.evidence_research_loop_planner import (
     EVIDENCE_RESEARCH_LOOP_PLANNER_RULE_VERSION,
     plan_evidence_research_loop,
 )
+from ai.knowledge.evidence_research_outcome_tracker import (
+    EVIDENCE_RESEARCH_OUTCOME_TRACKER_RULE_VERSION,
+    track_evidence_research_outcome,
+)
 from ai.knowledge.hunt_action_planner import (
     HUNT_ACTION_PLANNER_RULE_VERSION,
     plan_hunt_action,
@@ -1086,6 +1090,21 @@ def build_matches(
             )
             summary["evidence_research_loop_plan_rule_version"] = (
                 EVIDENCE_RESEARCH_LOOP_PLANNER_RULE_VERSION
+            )
+            # Stage R31.18: additive research outcome tracking over the
+            # R31.13-R31.17 plans. Plan-only: it records outcome state, never
+            # executes research and never alters any existing field.
+            summary["evidence_research_outcome_plan"] = (
+                track_evidence_research_outcome(
+                    summary["evidence_acquisition_plan"],
+                    summary["evidence_prioritization_plan"],
+                    summary["evidence_confidence_plan"],
+                    summary["evidence_decision_plan"],
+                    summary["evidence_research_loop_plan"],
+                )
+            )
+            summary["evidence_research_outcome_plan_rule_version"] = (
+                EVIDENCE_RESEARCH_OUTCOME_TRACKER_RULE_VERSION
             )
             results.append(summary)
 
