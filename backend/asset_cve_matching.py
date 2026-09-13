@@ -94,6 +94,10 @@ from ai.knowledge.research_consistency_validator import (
     RESEARCH_CONSISTENCY_VALIDATOR_RULE_VERSION,
     validate_research_consistency,
 )
+from ai.knowledge.research_history_aggregator import (
+    RESEARCH_HISTORY_AGGREGATOR_RULE_VERSION,
+    aggregate_research_history,
+)
 from ai.knowledge.research_intelligence_exporter import (
     RESEARCH_INTELLIGENCE_EXPORTER_RULE_VERSION,
     export_research_intelligence,
@@ -101,6 +105,18 @@ from ai.knowledge.research_intelligence_exporter import (
 from ai.knowledge.research_intelligence_summary_planner import (
     RESEARCH_INTELLIGENCE_SUMMARY_PLANNER_RULE_VERSION,
     plan_research_intelligence_summary,
+)
+from ai.knowledge.research_memory_exporter import (
+    RESEARCH_MEMORY_EXPORTER_RULE_VERSION,
+    export_research_memory,
+)
+from ai.knowledge.research_memory_snapshot import (
+    RESEARCH_MEMORY_SNAPSHOT_BUILDER_RULE_VERSION,
+    create_research_memory_snapshot,
+)
+from ai.knowledge.research_pattern_detector import (
+    RESEARCH_PATTERN_DETECTOR_RULE_VERSION,
+    detect_research_patterns,
 )
 from ai.knowledge.version_component_association import (
     RULE_VERSION as ASSOCIATION_RULE_VERSION,
@@ -164,6 +180,20 @@ def _asset_identifier(program: str, asset_ids: object) -> str:
     assets = ",".join(sorted({str(a) for a in asset_ids or () if str(a).strip()}))
     basis = "\n".join([RULE_VERSION, str(program or ""), assets])
     return "asset-" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
+
+
+def _candidate_identity(cve_id: str, asset_identifier: str) -> str:
+    """Privacy-preserving internal candidate identity for R32 memory records.
+
+    Deterministic token derived from the internal CVE identifier and the
+    existing privacy-preserving asset identity; raw targets are never
+    emitted.
+    """
+
+    basis = "\n".join(
+        [str(cve_id or "").strip().upper(), str(asset_identifier or "")]
+    )
+    return "rc-" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
 
 
 def _research_extras(payload: dict) -> dict:
@@ -1182,6 +1212,41 @@ def build_matches(
             )
             summary["research_intelligence_export_plan_rule_version"] = (
                 RESEARCH_INTELLIGENCE_EXPORTER_RULE_VERSION
+            )
+            # Stage R32: additive research memory & historical intelligence.
+            # One immutable snapshot per candidate is derived from the R31.22
+            # export; history/pattern/export plans are pure aggregations over
+            # the snapshot list. Plan-only; never executes research, never
+            # persists and never alters any existing field.
+            summary["research_memory_snapshot"] = (
+                create_research_memory_snapshot(
+                    summary["research_intelligence_export_plan"],
+                    candidate_identity=_candidate_identity(
+                        cve_id, summary.get("asset_identifier", "")
+                    ),
+                )
+            )
+            summary["research_memory_snapshot_rule_version"] = (
+                RESEARCH_MEMORY_SNAPSHOT_BUILDER_RULE_VERSION
+            )
+            summary["research_history_plan"] = aggregate_research_history(
+                [summary["research_memory_snapshot"]]
+            )
+            summary["research_history_plan_rule_version"] = (
+                RESEARCH_HISTORY_AGGREGATOR_RULE_VERSION
+            )
+            summary["research_pattern_plan"] = detect_research_patterns(
+                [summary["research_memory_snapshot"]]
+            )
+            summary["research_pattern_plan_rule_version"] = (
+                RESEARCH_PATTERN_DETECTOR_RULE_VERSION
+            )
+            summary["research_memory_export_plan"] = export_research_memory(
+                summary["research_history_plan"],
+                summary["research_pattern_plan"],
+            )
+            summary["research_memory_export_plan_rule_version"] = (
+                RESEARCH_MEMORY_EXPORTER_RULE_VERSION
             )
             results.append(summary)
 
