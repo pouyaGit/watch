@@ -54,6 +54,10 @@ from ai.knowledge.evidence_decision_planner import (
     EVIDENCE_DECISION_PLANNER_RULE_VERSION,
     plan_evidence_decision,
 )
+from ai.knowledge.evidence_feedback_calibration_planner import (
+    EVIDENCE_FEEDBACK_CALIBRATION_PLANNER_RULE_VERSION,
+    plan_evidence_feedback_calibration,
+)
 from ai.knowledge.evidence_prioritization_planner import (
     EVIDENCE_PRIORITIZATION_PLANNER_RULE_VERSION,
     plan_evidence_prioritization,
@@ -1105,6 +1109,22 @@ def build_matches(
             )
             summary["evidence_research_outcome_plan_rule_version"] = (
                 EVIDENCE_RESEARCH_OUTCOME_TRACKER_RULE_VERSION
+            )
+            # Stage R31.19: additive feedback calibration over the
+            # R31.13-R31.18 plans. Plan-only: it analyzes outcome signals,
+            # never executes research and never alters any existing field.
+            summary["evidence_feedback_calibration_plan"] = (
+                plan_evidence_feedback_calibration(
+                    summary["evidence_acquisition_plan"],
+                    summary["evidence_prioritization_plan"],
+                    summary["evidence_confidence_plan"],
+                    summary["evidence_decision_plan"],
+                    summary["evidence_research_loop_plan"],
+                    summary["evidence_research_outcome_plan"],
+                )
+            )
+            summary["evidence_feedback_calibration_plan_rule_version"] = (
+                EVIDENCE_FEEDBACK_CALIBRATION_PLANNER_RULE_VERSION
             )
             results.append(summary)
 
