@@ -24,6 +24,14 @@ import time
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
+from ai.knowledge.agent_coordination_planner import (
+    AGENT_COORDINATION_PLANNER_RULE_VERSION,
+    plan_agent_coordination,
+)
+from ai.knowledge.agent_role_planner import (
+    AGENT_ROLE_PLANNER_RULE_VERSION,
+    plan_agent_roles,
+)
 from ai.knowledge.asset_cve_matching import (
     RULE_VERSION,
     evaluate_inventory,
@@ -130,6 +138,10 @@ from ai.knowledge.research_memory_snapshot import (
     RESEARCH_MEMORY_SNAPSHOT_BUILDER_RULE_VERSION,
     create_research_memory_snapshot,
 )
+from ai.knowledge.research_orchestration_export import (
+    RESEARCH_ORCHESTRATION_EXPORTER_RULE_VERSION,
+    export_research_orchestration,
+)
 from ai.knowledge.research_path_selector import (
     RESEARCH_PATH_SELECTOR_RULE_VERSION,
     select_research_path,
@@ -149,6 +161,10 @@ from ai.knowledge.research_strategy_export import (
 from ai.knowledge.research_strategy_generator import (
     RESEARCH_STRATEGY_GENERATOR_RULE_VERSION,
     generate_research_strategy,
+)
+from ai.knowledge.research_workflow_graph import (
+    RESEARCH_WORKFLOW_GRAPH_BUILDER_RULE_VERSION,
+    build_research_workflow_graph,
 )
 from ai.knowledge.version_component_association import (
     RULE_VERSION as ASSOCIATION_RULE_VERSION,
@@ -1355,6 +1371,45 @@ def build_matches(
             )
             summary["research_strategy_export_plan_rule_version"] = (
                 RESEARCH_STRATEGY_EXPORTER_RULE_VERSION
+            )
+            # Stage R35: additive research agent orchestration intelligence
+            # over the R34 strategy export. Plan-only: conceptual roles,
+            # workflow graph, coordination and the final orchestration
+            # export. Creates no agent runtime, queue, scheduler or dispatch
+            # and never alters any existing field.
+            summary["agent_role_plan"] = plan_agent_roles(
+                summary["research_strategy_plan"],
+            )
+            summary["agent_role_plan_rule_version"] = (
+                AGENT_ROLE_PLANNER_RULE_VERSION
+            )
+            summary["research_workflow_graph_plan"] = (
+                build_research_workflow_graph(
+                    summary["research_strategy_plan"],
+                    summary["agent_role_plan"],
+                )
+            )
+            summary["research_workflow_graph_plan_rule_version"] = (
+                RESEARCH_WORKFLOW_GRAPH_BUILDER_RULE_VERSION
+            )
+            summary["agent_coordination_plan"] = plan_agent_coordination(
+                summary["research_strategy_plan"],
+                summary["agent_role_plan"],
+                summary["research_workflow_graph_plan"],
+                summary["research_budget_plan"],
+            )
+            summary["agent_coordination_plan_rule_version"] = (
+                AGENT_COORDINATION_PLANNER_RULE_VERSION
+            )
+            summary["research_orchestration_export_plan"] = (
+                export_research_orchestration(
+                    summary["agent_role_plan"],
+                    summary["research_workflow_graph_plan"],
+                    summary["agent_coordination_plan"],
+                )
+            )
+            summary["research_orchestration_export_plan_rule_version"] = (
+                RESEARCH_ORCHESTRATION_EXPORTER_RULE_VERSION
             )
             results.append(summary)
 
