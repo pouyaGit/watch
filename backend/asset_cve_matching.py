@@ -215,6 +215,10 @@ from ai.knowledge.security_agent_framework_export import (
     SECURITY_AGENT_FRAMEWORK_EXPORTER_RULE_VERSION,
     export_security_agent_framework,
 )
+from ai.knowledge.sqli_agent_result_export import (
+    SQLI_AGENT_RESULT_EXPORTER_RULE_VERSION,
+    export_sqli_agent_result,
+)
 from ai.knowledge.ssrf_agent_result_export import (
     SSRF_AGENT_RESULT_EXPORTER_RULE_VERSION,
     export_ssrf_agent_result,
@@ -1647,6 +1651,16 @@ def build_matches(
             summary["ssrf_agent_plan"] = export_ssrf_agent_result()
             summary["ssrf_agent_plan_rule_version"] = (
                 SSRF_AGENT_RESULT_EXPORTER_RULE_VERSION
+            )
+            # Stage R41: additive SQLi specialist agent result. Research
+            # intelligence only: bounded context classification, SQLi
+            # research hypotheses and evidence planning with R37 governance
+            # and R31-R37 provenance references. R41 executes nothing: no
+            # SQL, database connection, network request, payload or
+            # exploitation, and no existing field is altered.
+            summary["sqli_agent_plan"] = export_sqli_agent_result()
+            summary["sqli_agent_plan_rule_version"] = (
+                SQLI_AGENT_RESULT_EXPORTER_RULE_VERSION
             )
             results.append(summary)
 
