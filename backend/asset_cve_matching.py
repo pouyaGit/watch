@@ -50,6 +50,10 @@ from ai.knowledge.evidence_confidence_aggregator import (
     EVIDENCE_CONFIDENCE_AGGREGATOR_RULE_VERSION,
     aggregate_evidence_confidence,
 )
+from ai.knowledge.evidence_decision_planner import (
+    EVIDENCE_DECISION_PLANNER_RULE_VERSION,
+    plan_evidence_decision,
+)
 from ai.knowledge.evidence_prioritization_planner import (
     EVIDENCE_PRIORITIZATION_PLANNER_RULE_VERSION,
     plan_evidence_prioritization,
@@ -1052,6 +1056,18 @@ def build_matches(
             )
             summary["evidence_confidence_plan_rule_version"] = (
                 EVIDENCE_CONFIDENCE_AGGREGATOR_RULE_VERSION
+            )
+            # Stage R31.16: additive final research decision over the R31.13/
+            # R31.14/R31.15 plans. Plan-only: it selects the next research
+            # state, never executes an action and never alters any existing
+            # field.
+            summary["evidence_decision_plan"] = plan_evidence_decision(
+                summary["evidence_acquisition_plan"],
+                summary["evidence_prioritization_plan"],
+                summary["evidence_confidence_plan"],
+            )
+            summary["evidence_decision_plan_rule_version"] = (
+                EVIDENCE_DECISION_PLANNER_RULE_VERSION
             )
             results.append(summary)
 
