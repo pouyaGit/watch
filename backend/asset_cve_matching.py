@@ -46,6 +46,10 @@ from ai.knowledge.evidence_acquisition_planner import (
     EVIDENCE_ACQUISITION_PLANNER_RULE_VERSION,
     plan_evidence_acquisition,
 )
+from ai.knowledge.evidence_confidence_aggregator import (
+    EVIDENCE_CONFIDENCE_AGGREGATOR_RULE_VERSION,
+    aggregate_evidence_confidence,
+)
 from ai.knowledge.evidence_prioritization_planner import (
     EVIDENCE_PRIORITIZATION_PLANNER_RULE_VERSION,
     plan_evidence_prioritization,
@@ -1035,6 +1039,19 @@ def build_matches(
             )
             summary["evidence_prioritization_plan_rule_version"] = (
                 EVIDENCE_PRIORITIZATION_PLANNER_RULE_VERSION
+            )
+            # Stage R31.15: additive confidence assessment over the R31.13
+            # acquisition plan and R31.14 prioritization plan. Plan-only: it
+            # evaluates evidence readiness, never acquires evidence and never
+            # alters any existing field.
+            summary["evidence_confidence_plan"] = (
+                aggregate_evidence_confidence(
+                    summary["evidence_acquisition_plan"],
+                    summary["evidence_prioritization_plan"],
+                )
+            )
+            summary["evidence_confidence_plan_rule_version"] = (
+                EVIDENCE_CONFIDENCE_AGGREGATOR_RULE_VERSION
             )
             results.append(summary)
 
