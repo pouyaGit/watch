@@ -90,6 +90,18 @@ from ai.knowledge.path_parameter_relevance import (
     RULE_VERSION as PATH_PARAMETER_RELEVANCE_RULE_VERSION,
     evaluate_path_parameter_relevance,
 )
+from ai.knowledge.research_consistency_validator import (
+    RESEARCH_CONSISTENCY_VALIDATOR_RULE_VERSION,
+    validate_research_consistency,
+)
+from ai.knowledge.research_intelligence_exporter import (
+    RESEARCH_INTELLIGENCE_EXPORTER_RULE_VERSION,
+    export_research_intelligence,
+)
+from ai.knowledge.research_intelligence_summary_planner import (
+    RESEARCH_INTELLIGENCE_SUMMARY_PLANNER_RULE_VERSION,
+    plan_research_intelligence_summary,
+)
 from ai.knowledge.version_component_association import (
     RULE_VERSION as ASSOCIATION_RULE_VERSION,
     evaluate_version_association,
@@ -1125,6 +1137,51 @@ def build_matches(
             )
             summary["evidence_feedback_calibration_plan_rule_version"] = (
                 EVIDENCE_FEEDBACK_CALIBRATION_PLANNER_RULE_VERSION
+            )
+            # Stage R31.20: additive final research intelligence summary over
+            # the R31.13-R31.19 plans. Plan-only aggregation; never executes
+            # research and never alters any existing field.
+            summary["research_intelligence_summary_plan"] = (
+                plan_research_intelligence_summary(
+                    summary["evidence_acquisition_plan"],
+                    summary["evidence_prioritization_plan"],
+                    summary["evidence_confidence_plan"],
+                    summary["evidence_decision_plan"],
+                    summary["evidence_research_loop_plan"],
+                    summary["evidence_research_outcome_plan"],
+                    summary["evidence_feedback_calibration_plan"],
+                )
+            )
+            summary["research_intelligence_summary_plan_rule_version"] = (
+                RESEARCH_INTELLIGENCE_SUMMARY_PLANNER_RULE_VERSION
+            )
+            # Stage R31.21: additive consistency validation over the complete
+            # R31.13-R31.20 chain. Report-only; never repairs data.
+            summary["research_consistency_validation_plan"] = (
+                validate_research_consistency(
+                    summary["evidence_acquisition_plan"],
+                    summary["evidence_prioritization_plan"],
+                    summary["evidence_confidence_plan"],
+                    summary["evidence_decision_plan"],
+                    summary["evidence_research_loop_plan"],
+                    summary["evidence_research_outcome_plan"],
+                    summary["evidence_feedback_calibration_plan"],
+                    summary["research_intelligence_summary_plan"],
+                )
+            )
+            summary["research_consistency_validation_plan_rule_version"] = (
+                RESEARCH_CONSISTENCY_VALIDATOR_RULE_VERSION
+            )
+            # Stage R31.22: additive final export over the R31.20 summary and
+            # R31.21 validation. Plan-only; never executes research.
+            summary["research_intelligence_export_plan"] = (
+                export_research_intelligence(
+                    summary["research_intelligence_summary_plan"],
+                    summary["research_consistency_validation_plan"],
+                )
+            )
+            summary["research_intelligence_export_plan_rule_version"] = (
+                RESEARCH_INTELLIGENCE_EXPORTER_RULE_VERSION
             )
             results.append(summary)
 
