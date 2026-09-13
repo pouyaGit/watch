@@ -94,6 +94,10 @@ from ai.knowledge.path_parameter_relevance import (
     RULE_VERSION as PATH_PARAMETER_RELEVANCE_RULE_VERSION,
     evaluate_path_parameter_relevance,
 )
+from ai.knowledge.research_budget_planner import (
+    RESEARCH_BUDGET_PLANNER_RULE_VERSION,
+    plan_research_budget,
+)
 from ai.knowledge.research_consistency_validator import (
     RESEARCH_CONSISTENCY_VALIDATOR_RULE_VERSION,
     validate_research_consistency,
@@ -126,6 +130,10 @@ from ai.knowledge.research_memory_snapshot import (
     RESEARCH_MEMORY_SNAPSHOT_BUILDER_RULE_VERSION,
     create_research_memory_snapshot,
 )
+from ai.knowledge.research_path_selector import (
+    RESEARCH_PATH_SELECTOR_RULE_VERSION,
+    select_research_path,
+)
 from ai.knowledge.research_pattern_detector import (
     RESEARCH_PATTERN_DETECTOR_RULE_VERSION,
     detect_research_patterns,
@@ -133,6 +141,14 @@ from ai.knowledge.research_pattern_detector import (
 from ai.knowledge.research_pattern_intelligence import (
     RESEARCH_PATTERN_INTELLIGENCE_PLANNER_RULE_VERSION,
     plan_research_pattern_intelligence,
+)
+from ai.knowledge.research_strategy_export import (
+    RESEARCH_STRATEGY_EXPORTER_RULE_VERSION,
+    export_research_strategy,
+)
+from ai.knowledge.research_strategy_generator import (
+    RESEARCH_STRATEGY_GENERATOR_RULE_VERSION,
+    generate_research_strategy,
 )
 from ai.knowledge.version_component_association import (
     RULE_VERSION as ASSOCIATION_RULE_VERSION,
@@ -1302,6 +1318,43 @@ def build_matches(
             )
             summary["research_learning_export_plan_rule_version"] = (
                 RESEARCH_LEARNING_EXPORTER_RULE_VERSION
+            )
+            # Stage R34: additive research strategy intelligence over the
+            # R31.22/R32.4/R33.4 exports. Plan-only: strategy generation,
+            # ordered research path, budget state and the final strategy
+            # export. Never executes research, never persists and never
+            # alters any existing field.
+            summary["research_strategy_plan"] = generate_research_strategy(
+                summary["research_learning_export_plan"],
+                summary["research_memory_export_plan"],
+            )
+            summary["research_strategy_plan_rule_version"] = (
+                RESEARCH_STRATEGY_GENERATOR_RULE_VERSION
+            )
+            summary["research_path_plan"] = select_research_path(
+                summary["research_strategy_plan"],
+            )
+            summary["research_path_plan_rule_version"] = (
+                RESEARCH_PATH_SELECTOR_RULE_VERSION
+            )
+            summary["research_budget_plan"] = plan_research_budget(
+                summary["research_strategy_plan"],
+                summary["research_path_plan"],
+                summary["research_learning_export_plan"],
+                summary["research_memory_export_plan"],
+            )
+            summary["research_budget_plan_rule_version"] = (
+                RESEARCH_BUDGET_PLANNER_RULE_VERSION
+            )
+            summary["research_strategy_export_plan"] = (
+                export_research_strategy(
+                    summary["research_strategy_plan"],
+                    summary["research_path_plan"],
+                    summary["research_budget_plan"],
+                )
+            )
+            summary["research_strategy_export_plan_rule_version"] = (
+                RESEARCH_STRATEGY_EXPORTER_RULE_VERSION
             )
             results.append(summary)
 
