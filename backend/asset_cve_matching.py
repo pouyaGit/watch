@@ -74,6 +74,10 @@ from ai.knowledge.evidence_research_outcome_tracker import (
     EVIDENCE_RESEARCH_OUTCOME_TRACKER_RULE_VERSION,
     track_evidence_research_outcome,
 )
+from ai.knowledge.historical_candidate_ranking import (
+    RESEARCH_CANDIDATE_RANKING_PLANNER_RULE_VERSION,
+    rank_historical_candidates,
+)
 from ai.knowledge.hunt_action_planner import (
     HUNT_ACTION_PLANNER_RULE_VERSION,
     plan_hunt_action,
@@ -94,6 +98,10 @@ from ai.knowledge.research_consistency_validator import (
     RESEARCH_CONSISTENCY_VALIDATOR_RULE_VERSION,
     validate_research_consistency,
 )
+from ai.knowledge.research_efficiency import (
+    RESEARCH_EFFICIENCY_PLANNER_RULE_VERSION,
+    evaluate_research_efficiency,
+)
 from ai.knowledge.research_history_aggregator import (
     RESEARCH_HISTORY_AGGREGATOR_RULE_VERSION,
     aggregate_research_history,
@@ -106,6 +114,10 @@ from ai.knowledge.research_intelligence_summary_planner import (
     RESEARCH_INTELLIGENCE_SUMMARY_PLANNER_RULE_VERSION,
     plan_research_intelligence_summary,
 )
+from ai.knowledge.research_learning_export import (
+    RESEARCH_LEARNING_EXPORTER_RULE_VERSION,
+    export_research_learning,
+)
 from ai.knowledge.research_memory_exporter import (
     RESEARCH_MEMORY_EXPORTER_RULE_VERSION,
     export_research_memory,
@@ -117,6 +129,10 @@ from ai.knowledge.research_memory_snapshot import (
 from ai.knowledge.research_pattern_detector import (
     RESEARCH_PATTERN_DETECTOR_RULE_VERSION,
     detect_research_patterns,
+)
+from ai.knowledge.research_pattern_intelligence import (
+    RESEARCH_PATTERN_INTELLIGENCE_PLANNER_RULE_VERSION,
+    plan_research_pattern_intelligence,
 )
 from ai.knowledge.version_component_association import (
     RULE_VERSION as ASSOCIATION_RULE_VERSION,
@@ -1247,6 +1263,45 @@ def build_matches(
             )
             summary["research_memory_export_plan_rule_version"] = (
                 RESEARCH_MEMORY_EXPORTER_RULE_VERSION
+            )
+            # Stage R33: additive research learning & ranking intelligence
+            # over the R31.22/R32.4 exports. Plan-only: pattern intelligence,
+            # historical ranking, efficiency measurement and the final
+            # learning export. Never executes research, never persists and
+            # never alters any existing field.
+            summary["research_pattern_intelligence_plan"] = (
+                plan_research_pattern_intelligence(
+                    summary["research_memory_export_plan"],
+                )
+            )
+            summary["research_pattern_intelligence_plan_rule_version"] = (
+                RESEARCH_PATTERN_INTELLIGENCE_PLANNER_RULE_VERSION
+            )
+            summary["historical_candidate_ranking_plan"] = (
+                rank_historical_candidates(
+                    [summary["research_memory_snapshot"]]
+                )
+            )
+            summary["historical_candidate_ranking_plan_rule_version"] = (
+                RESEARCH_CANDIDATE_RANKING_PLANNER_RULE_VERSION
+            )
+            summary["research_efficiency_plan"] = (
+                evaluate_research_efficiency(
+                    summary["research_history_plan"],
+                )
+            )
+            summary["research_efficiency_plan_rule_version"] = (
+                RESEARCH_EFFICIENCY_PLANNER_RULE_VERSION
+            )
+            summary["research_learning_export_plan"] = (
+                export_research_learning(
+                    summary["research_pattern_intelligence_plan"],
+                    summary["historical_candidate_ranking_plan"],
+                    summary["research_efficiency_plan"],
+                )
+            )
+            summary["research_learning_export_plan_rule_version"] = (
+                RESEARCH_LEARNING_EXPORTER_RULE_VERSION
             )
             results.append(summary)
 
