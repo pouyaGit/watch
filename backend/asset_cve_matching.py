@@ -50,6 +50,10 @@ from ai.knowledge.component_identity import (
     match_observed_identities,
     resolve_cve_identities,
 )
+from ai.knowledge.decision_provenance_tracker import (
+    DECISION_PROVENANCE_TRACKER_RULE_VERSION,
+    track_decision_provenance,
+)
 from ai.knowledge.evidence_acquisition_planner import (
     EVIDENCE_ACQUISITION_PLANNER_RULE_VERSION,
     plan_evidence_acquisition,
@@ -95,6 +99,10 @@ from ai.knowledge.execution_risk_planner import (
     EXECUTION_RISK_PLANNER_RULE_VERSION,
     plan_execution_risk,
 )
+from ai.knowledge.governance_rule_trace_builder import (
+    GOVERNANCE_RULE_TRACE_BUILDER_RULE_VERSION,
+    build_governance_rule_trace,
+)
 from ai.knowledge.historical_candidate_ranking import (
     RESEARCH_CANDIDATE_RANKING_PLANNER_RULE_VERSION,
     rank_historical_candidates,
@@ -119,6 +127,10 @@ from ai.knowledge.path_parameter_relevance import (
     RULE_VERSION as PATH_PARAMETER_RELEVANCE_RULE_VERSION,
     evaluate_path_parameter_relevance,
 )
+from ai.knowledge.research_audit_event_builder import (
+    RESEARCH_AUDIT_EVENT_BUILDER_RULE_VERSION,
+    build_research_audit_event,
+)
 from ai.knowledge.research_budget_planner import (
     RESEARCH_BUDGET_PLANNER_RULE_VERSION,
     plan_research_budget,
@@ -134,6 +146,14 @@ from ai.knowledge.research_efficiency import (
 from ai.knowledge.research_execution_authorization_export import (
     RESEARCH_EXECUTION_AUTHORIZATION_EXPORTER_RULE_VERSION,
     export_research_execution_authorization,
+)
+from ai.knowledge.research_explanation_planner import (
+    RESEARCH_EXPLANATION_PLANNER_RULE_VERSION,
+    plan_research_explanation,
+)
+from ai.knowledge.research_governance_export import (
+    RESEARCH_GOVERNANCE_EXPORTER_RULE_VERSION,
+    export_research_governance,
 )
 from ai.knowledge.research_history_aggregator import (
     RESEARCH_HISTORY_AGGREGATOR_RULE_VERSION,
@@ -1515,6 +1535,74 @@ def build_matches(
             )
             summary["research_execution_authorization_export_plan_rule_version"] = (
                 RESEARCH_EXECUTION_AUTHORIZATION_EXPORTER_RULE_VERSION
+            )
+            # Stage R37: additive research governance & audit intelligence
+            # over the R34/R35/R36 outputs. Governance/audit only: decision
+            # provenance, explicit rule trace, audit event, deterministic
+            # explanation and the final governance export. R37 never executes
+            # anything, persists nothing and never alters any existing field.
+            summary["decision_provenance_plan"] = (
+                track_decision_provenance(
+                    summary["research_strategy_export_plan"],
+                    summary["research_orchestration_export_plan"],
+                    summary["execution_authorization_plan"],
+                    summary["execution_policy_plan"],
+                    summary["execution_risk_plan"],
+                    summary["human_approval_gate_plan"],
+                    summary["execution_boundary_plan"],
+                )
+            )
+            summary["decision_provenance_plan_rule_version"] = (
+                DECISION_PROVENANCE_TRACKER_RULE_VERSION
+            )
+            summary["governance_rule_trace_plan"] = (
+                build_governance_rule_trace(
+                    summary["execution_policy_plan"],
+                    summary["execution_authorization_plan"],
+                    summary["scope_capability_gate_plan"],
+                    summary["human_approval_gate_plan"],
+                    summary["execution_risk_plan"],
+                    summary["execution_boundary_plan"],
+                )
+            )
+            summary["governance_rule_trace_plan_rule_version"] = (
+                GOVERNANCE_RULE_TRACE_BUILDER_RULE_VERSION
+            )
+            summary["research_audit_event_plan"] = (
+                build_research_audit_event(
+                    summary["decision_provenance_plan"],
+                    summary["execution_authorization_plan"],
+                    summary["execution_policy_plan"],
+                )
+            )
+            summary["research_audit_event_plan_rule_version"] = (
+                RESEARCH_AUDIT_EVENT_BUILDER_RULE_VERSION
+            )
+            summary["research_explanation_plan"] = (
+                plan_research_explanation(
+                    summary["research_strategy_export_plan"],
+                    summary["research_orchestration_export_plan"],
+                    summary["execution_authorization_plan"],
+                    summary["decision_provenance_plan"],
+                    summary["governance_rule_trace_plan"],
+                    summary["scope_capability_gate_plan"],
+                    summary["execution_risk_plan"],
+                    summary["human_approval_gate_plan"],
+                )
+            )
+            summary["research_explanation_plan_rule_version"] = (
+                RESEARCH_EXPLANATION_PLANNER_RULE_VERSION
+            )
+            summary["research_governance_export_plan"] = (
+                export_research_governance(
+                    summary["decision_provenance_plan"],
+                    summary["governance_rule_trace_plan"],
+                    summary["research_audit_event_plan"],
+                    summary["research_explanation_plan"],
+                )
+            )
+            summary["research_governance_export_plan_rule_version"] = (
+                RESEARCH_GOVERNANCE_EXPORTER_RULE_VERSION
             )
             results.append(summary)
 
