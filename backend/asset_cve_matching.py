@@ -215,6 +215,10 @@ from ai.knowledge.security_agent_framework_export import (
     SECURITY_AGENT_FRAMEWORK_EXPORTER_RULE_VERSION,
     export_security_agent_framework,
 )
+from ai.knowledge.ssrf_agent_result_export import (
+    SSRF_AGENT_RESULT_EXPORTER_RULE_VERSION,
+    export_ssrf_agent_result,
+)
 from ai.knowledge.version_component_association import (
     RULE_VERSION as ASSOCIATION_RULE_VERSION,
     evaluate_version_association,
@@ -1633,6 +1637,16 @@ def build_matches(
             summary["xss_agent_plan"] = export_xss_agent_result()
             summary["xss_agent_plan_rule_version"] = (
                 XSS_AGENT_RESULT_EXPORTER_RULE_VERSION
+            )
+            # Stage R40: additive SSRF specialist agent result. Research
+            # intelligence only: bounded context classification, SSRF
+            # research hypotheses and evidence planning with R37 governance
+            # and R31-R37 provenance references. R40 executes nothing: no
+            # network request, DNS resolution, socket, payload, metadata
+            # access or exploitation, and no existing field is altered.
+            summary["ssrf_agent_plan"] = export_ssrf_agent_result()
+            summary["ssrf_agent_plan_rule_version"] = (
+                SSRF_AGENT_RESULT_EXPORTER_RULE_VERSION
             )
             results.append(summary)
 
