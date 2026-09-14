@@ -1,0 +1,319 @@
+"""tests/test_idor_bola_agent_identity.py — Stage R46.1 tests.
+
+Deterministic, offline tests for the IDOR/BOLA specialist identity:
+
+- canonical R38 category and deterministic content-token agent id
+- maturity, context, capability and lifecycle resolution
+- R38 identity projection conformance
+- schema validation and extra-field rejection
+- R46 AST safety scan and standalone backend decision
+
+No network, no LLM, no subprocess, no sockets, no browser, no SQL, no
+database, no payloads, no Mongo writes, no persistence, no execution of any
+kind.
+"""
+import ast
+import json
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, "/opt/watch")
+
+from pydantic import ValidationError
+
+from ai.knowledge.idor_bola_agent import (
+    IDOR_BOLA_AGENT_KNOWLEDGE_MODULES,
+    run_idor_bola_agent,
+)
+from ai.knowledge.idor_bola_agent_identity import (
+    DEFAULT_AGENT_NAME,
+    compute_idor_bola_agent_id,
+    idor_bola_agent_identity_to_r38,
+    plan_idor_bola_agent_identity,
+    resolve_supported_capabilities,
+    resolve_supported_contexts,
+)
+from ai.schemas import idor_bola_agent_identity as schema
+from ai.schemas.idor_bola_agent import (
+    IDOR_BOLA_AGENT_SCHEMA_MODULES,
+    IDORBOLAAgentIdentityPlan,
+)
+from ai.schemas.security_agent_capability import (
+    ALLOWED_CAPABILITIES,
+    PROHIBITED_CAPABILITIES,
+)
+from ai.schemas.security_agent_identity import AGENT_CATEGORIES, AGENT_ID_RE
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+R46_MODULES = (
+    "ai/schemas/idor_bola_agent_identity.py",
+    "ai/schemas/idor_bola_context_analysis.py",
+    "ai/schemas/idor_bola_hypothesis.py",
+    "ai/schemas/idor_bola_evidence_plan.py",
+    "ai/schemas/idor_bola_agent_result.py",
+    "ai/schemas/idor_bola_agent.py",
+    "ai/knowledge/idor_bola_agent_identity.py",
+    "ai/knowledge/idor_bola_context_analyzer.py",
+    "ai/knowledge/idor_bola_hypothesis_planner.py",
+    "ai/knowledge/idor_bola_evidence_planner.py",
+    "ai/knowledge/idor_bola_agent_result_export.py",
+    "ai/knowledge/idor_bola_agent.py",
+)
+
+FORBIDDEN_MODULES = {
+    "subprocess", "socket", "http", "urllib", "requests", "httpx",
+    "aiohttp", "asyncio", "threading", "multiprocessing", "concurrent",
+    "importlib", "ctypes", "shutil", "ssl", "os", "dns", "selenium",
+    "playwright", "pyppeteer", "paramiko", "sqlite3", "sqlalchemy",
+    "psycopg", "psycopg2", "pymysql", "MySQLdb", "sqlmap", "nuclei",
+    "curl", "pycurl", "openai", "ollama", "litellm", "anthropic",
+    "openrouter",
+}
+
+FORBIDDEN_CALLS = {"__import__", "eval", "exec", "compile", "open"}
+
+FORBIDDEN_CALL_PREFIXES = (
+    "subprocess.",
+    "os.system",
+    "os.popen",
+    "importlib.",
+    "socket.",
+    "urllib.",
+    "requests.",
+    "httpx.",
+    "sqlite3.",
+    "sqlalchemy.",
+    "psycopg2.",
+    "pymysql.",
+    "openai.",
+)
+
+
+def dotted_name(node):
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def scan_module(relative_path):
+    tree = ast.parse((ROOT / relative_path).read_text(encoding="utf-8"))
+    imports = set()
+    calls = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imports.add(node.module.split(".")[0])
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
+                name = dotted_name(node.func)
+                if name.startswith(FORBIDDEN_CALL_PREFIXES):
+                    calls.add(name)
+            elif isinstance(node.func, ast.Name):
+                calls.add(node.func.id)
+    return imports, calls
+
+
+class TestIDORBOLAAgentIdentity(unittest.TestCase):
+    def test_identity_defaults(self):
+        identity = plan_idor_bola_agent_identity()
+        self.assertEqual(identity["rule_version"], "r46-1")
+        self.assertEqual(identity["agent_name"], DEFAULT_AGENT_NAME)
+        self.assertEqual(
+            identity["agent_name"], "idor-bola-specialist"
+        )
+        self.assertEqual(identity["category"], "IDOR")
+        self.assertIn(identity["category"], AGENT_CATEGORIES)
+        self.assertTrue(AGENT_ID_RE.match(identity["agent_id"]))
+        self.assertIs(identity["research_only"], True)
+
+    def test_category_is_canonical_r38_idor(self):
+        identity = plan_idor_bola_agent_identity()
+        self.assertEqual(schema.IDOR_BOLA_CATEGORY, "IDOR")
+        self.assertEqual(schema.IDOR_BOLA_RESEARCH_LABEL, "IDOR_BOLA")
+        self.assertIn(schema.IDOR_BOLA_CATEGORY, AGENT_CATEGORIES)
+        self.assertNotIn(
+            schema.IDOR_BOLA_RESEARCH_LABEL, AGENT_CATEGORIES
+        )
+
+    def test_agent_id_is_deterministic_content_token(self):
+        first = plan_idor_bola_agent_identity()
+        second = plan_idor_bola_agent_identity()
+        self.assertEqual(first["agent_id"], second["agent_id"])
+        self.assertEqual(
+            first["agent_id"],
+            compute_idor_bola_agent_id(DEFAULT_AGENT_NAME, "1.0"),
+        )
+        renamed = plan_idor_bola_agent_identity(agent_name="other-agent")
+        self.assertNotEqual(first["agent_id"], renamed["agent_id"])
+
+    def test_no_runtime_identity(self):
+        serialized = json.dumps(
+            plan_idor_bola_agent_identity(), sort_keys=True
+        ).lower()
+        for token in (
+            "timestamp",
+            "uuid",
+            "runtime_id",
+            "nonce",
+            "random",
+        ):
+            self.assertNotIn(token, serialized)
+
+    def test_maturity_resolution(self):
+        for maturity in ("EXPERIMENTAL", "RESEARCH", "STABLE"):
+            identity = plan_idor_bola_agent_identity(maturity=maturity)
+            self.assertEqual(identity["maturity"], maturity)
+        self.assertEqual(
+            plan_idor_bola_agent_identity(maturity="NOPE")["maturity"],
+            "UNKNOWN",
+        )
+        self.assertEqual(
+            plan_idor_bola_agent_identity()["maturity"], "UNKNOWN"
+        )
+
+    def test_supported_contexts_bounded(self):
+        identity = plan_idor_bola_agent_identity(
+            supported_contexts=["PATH_PARAMETER", "NOPE", "QUERY_PARAMETER"]
+        )
+        self.assertEqual(
+            identity["supported_contexts"],
+            ["PATH_PARAMETER", "QUERY_PARAMETER"],
+        )
+        empty = plan_idor_bola_agent_identity(supported_contexts=[])
+        self.assertEqual(empty["supported_contexts"], ["UNKNOWN"])
+        self.assertIn("SCOPE_UNKNOWN", empty["limitations"])
+        self.assertEqual(
+            resolve_supported_contexts(["path_parameter", "bogus"]),
+            ["PATH_PARAMETER"],
+        )
+
+    def test_supported_capabilities_analysis_only(self):
+        identity = plan_idor_bola_agent_identity()
+        self.assertEqual(
+            identity["supported_capabilities"],
+            list(ALLOWED_CAPABILITIES),
+        )
+        for prohibited in PROHIBITED_CAPABILITIES:
+            self.assertNotIn(prohibited, identity["supported_capabilities"])
+        bounded = resolve_supported_capabilities(
+            list(PROHIBITED_CAPABILITIES) + ["ANALYZE_CONTEXT"]
+        )
+        self.assertEqual(bounded, ["ANALYZE_CONTEXT"])
+        self.assertEqual(
+            resolve_supported_capabilities([]), []
+        )
+
+    def test_lifecycle_resolution(self):
+        self.assertEqual(
+            plan_idor_bola_agent_identity()["lifecycle_state"], "PLANNED"
+        )
+        self.assertEqual(
+            plan_idor_bola_agent_identity(
+                lifecycle_state="CREATED"
+            )["lifecycle_state"],
+            "CREATED",
+        )
+        self.assertEqual(
+            plan_idor_bola_agent_identity(
+                lifecycle_state="RUNNING"
+            )["lifecycle_state"],
+            "PLANNED",
+        )
+
+    def test_identity_limitations(self):
+        identity = plan_idor_bola_agent_identity()
+        for limitation in (
+            "NO_EXECUTION_CAPABILITY",
+            "NO_AUTHORIZATION_BYPASS",
+            "NO_NETWORK_REQUESTS",
+            "NO_PAYLOAD_GENERATION",
+            "NO_VULNERABILITY_CONFIRMATION",
+        ):
+            self.assertIn(limitation, identity["limitations"])
+
+    def test_r38_identity_projection(self):
+        projection = idor_bola_agent_identity_to_r38(
+            plan_idor_bola_agent_identity(maturity="RESEARCH")
+        )
+        self.assertEqual(projection["category"], "IDOR")
+        self.assertTrue(AGENT_ID_RE.match(projection["agent_id"]))
+        self.assertIs(projection["research_only"], True)
+
+    def test_schema_rejects_bad_values_and_extra(self):
+        base = plan_idor_bola_agent_identity()
+        with self.assertRaises(ValidationError):
+            schema.IDORBOLAAgentIdentityPlan(
+                **{**base, "category": "IDOR_BOLA"}
+            )
+        with self.assertRaises(ValidationError):
+            schema.IDORBOLAAgentIdentityPlan(
+                **{**base, "maturity": "NOPE"}
+            )
+        with self.assertRaises(ValidationError):
+            schema.IDORBOLAAgentIdentityPlan(
+                **{**base, "agent_id": "idor-bola-specialist"}
+            )
+        with self.assertRaises(ValidationError):
+            schema.IDORBOLAAgentIdentityPlan(
+                **{**base, "research_only": False}
+            )
+        with self.assertRaises(ValidationError):
+            schema.IDORBOLAAgentIdentityPlan(
+                **{**base, "supported_capabilities": ["BYPASS_AUTH"]}
+            )
+        with self.assertRaises(ValidationError):
+            schema.IDORBOLAAgentIdentityPlan(**{**base, "payload": "x"})
+
+    def test_schema_forces_rule_version(self):
+        plan = schema.IDORBOLAAgentIdentityPlan(
+            **{**plan_idor_bola_agent_identity(), "rule_version": "r99-9"}
+        )
+        self.assertEqual(plan.rule_version, "r46-1")
+
+    def test_facades_expose_components(self):
+        self.assertEqual(len(IDOR_BOLA_AGENT_SCHEMA_MODULES), 5)
+        self.assertEqual(len(IDOR_BOLA_AGENT_KNOWLEDGE_MODULES), 5)
+        self.assertIs(IDORBOLAAgentIdentityPlan, schema.IDORBOLAAgentIdentityPlan)
+        self.assertEqual(
+            run_idor_bola_agent()["rule_version"], "r46-5"
+        )
+
+    def test_deterministic_serialization(self):
+        first = json.dumps(
+            plan_idor_bola_agent_identity(maturity="RESEARCH"),
+            sort_keys=True,
+        )
+        second = json.dumps(
+            plan_idor_bola_agent_identity(maturity="RESEARCH"),
+            sort_keys=True,
+        )
+        self.assertEqual(first, second)
+
+    def test_no_forbidden_imports_or_calls(self):
+        for relative_path in R46_MODULES:
+            imports, calls = scan_module(relative_path)
+            self.assertEqual(
+                imports & FORBIDDEN_MODULES, set(), relative_path
+            )
+            self.assertEqual(calls & FORBIDDEN_CALLS, set(), relative_path)
+
+    def test_backend_integration_decision_is_standalone(self):
+        backend_source = (
+            ROOT / "backend" / "asset_cve_matching.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("idor_bola", backend_source)
+        self.assertNotIn("IDOR_BOLA", backend_source)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
