@@ -273,7 +273,9 @@ class TestLLMRequestBuilder(unittest.TestCase):
             )
 
     def test_unsupported_provider_is_rejected(self):
-        for kind in ("OPENAI", "OPENROUTER", "OLLAMA", "LOCAL", "NOPE"):
+        # R51: OPENROUTER/OPENAI are supported kinds now; ollama/local and
+        # unknown kinds remain rejected with no silent fallback.
+        for kind in ("OLLAMA", "LOCAL", "NOPE"):
             with self.assertRaises(UnsupportedProviderError):
                 build_llm_advisory_request(
                     build_llm_advisory_input(), provider_kind=kind
@@ -372,7 +374,7 @@ class TestLLMRequestBuilder(unittest.TestCase):
             )
         with self.assertRaises(ValidationError):
             provider_schema.LLMProviderRequestPlan(
-                provider_kind="OPENAI"
+                provider_kind="OLLAMA"
             )
         with self.assertRaises(ValidationError):
             provider_schema.LLMProviderRequestPlan(research_only=False)

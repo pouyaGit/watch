@@ -7,15 +7,17 @@ used by version 1:
 
 Hard boundaries encoded here:
 
-- Interface and mock only: version 1 contains no API key handling, no network
-  client, no SDK import, no HTTP transport and no model runtime. The
-  provider interface is the only extension point.
+- Interface and mock only: this pure layer contains no credential
+  handling, no network client, no SDK import, no HTTP transport and no
+  model runtime. The provider interface is the only extension point.
 - Deterministic mock: the mock response is a pure function of the bounded
   request; identical requests produce byte-identical responses.
 - No credentials: the provider takes no credential material and never logs
   any.
-- Future kinds (OpenAI, OpenRouter, Ollama, local models) are rejected as
-  unsupported in version 1 rather than silently ignored.
+- Real provider kinds (OPENROUTER, OPENAI) are implemented by the R51
+  provider layer under ``ai/providers`` and are never constructed here;
+  ollama/local remain unsupported. No kind is silently ignored or
+  silently redirected.
 - Pure and offline: no I/O, no network, no LLM, no Mongo, no wall-clock
   time, no randomness.
 - Read-only: inputs are never mutated.
@@ -30,6 +32,7 @@ from ai.schemas.llm_provider import (
     LLM_PROVIDER_RULE_VERSION,
     PROVIDER_KIND_MOCK,
     PROVIDER_LIMITATIONS,
+    REAL_PROVIDER_KINDS,
     SUPPORTED_PROVIDER_KINDS,
     LLMProviderResponsePlan,
     llm_provider_response_plan_projection,
@@ -330,16 +333,32 @@ class MockLLMProvider(AdvisoryProvider):
 def get_advisory_provider(
     provider_kind: object = PROVIDER_KIND_MOCK,
 ) -> AdvisoryProvider:
-    """Return the provider for a kind, rejecting unsupported kinds.
+    """Return the R45-native provider for a kind (mock only).
 
-    Version 1 supports only the deterministic mock provider. Future kinds
-    (OpenAI, OpenRouter, Ollama, local models) are declared but explicitly
-    unsupported.
+    This pure R45 layer constructs only the deterministic mock provider.
+    Real provider kinds (OPENROUTER, OPENAI) are implemented by the R51
+    provider layer under ``ai/providers`` and must be selected there or
+    injected explicitly; this factory never constructs a network provider
+    and never silently falls back. Ollama/local remain unsupported.
     """
 
     text = _normalize_provider_kind(provider_kind) or PROVIDER_KIND_MOCK
     if text == PROVIDER_KIND_MOCK:
         return MockLLMProvider()
+    if text in REAL_PROVIDER_KINDS:
+        raise UnsupportedProviderError(
+            "provider kind is implemented by the R51 provider layer: "
+            f"{text}",
+            {
+                "rule_version": LLM_PROVIDER_ENGINE_RULE_VERSION,
+                "provider_kind": text,
+                "supported_kinds": list(SUPPORTED_PROVIDER_KINDS),
+                "future_kinds": list(FUTURE_PROVIDER_KINDS),
+                "implementation_layer": "R51",
+                "network_access": False,
+                "credentials_used": False,
+            },
+        )
     if text in FUTURE_PROVIDER_KINDS:
         raise UnsupportedProviderError(
             f"provider kind not implemented in version 1: {text}",

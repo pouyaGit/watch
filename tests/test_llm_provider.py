@@ -145,10 +145,16 @@ def r38_result(**over):
 
 class TestLLMProvider(unittest.TestCase):
     def test_provider_kinds_are_closed(self):
-        self.assertEqual(schema.SUPPORTED_PROVIDER_KINDS, ("MOCK",))
+        # R51 additively extends the supported vocabulary with the real
+        # remote provider kinds; ollama/local remain unsupported future
+        # kinds and the two sets stay disjoint.
+        self.assertEqual(
+            schema.SUPPORTED_PROVIDER_KINDS,
+            ("MOCK", "OPENROUTER", "OPENAI"),
+        )
         self.assertEqual(
             schema.FUTURE_PROVIDER_KINDS,
-            ("OPENAI", "OPENROUTER", "OLLAMA", "LOCAL"),
+            ("OLLAMA", "LOCAL"),
         )
         self.assertEqual(
             set(schema.SUPPORTED_PROVIDER_KINDS)
@@ -299,9 +305,9 @@ class TestLLMProvider(unittest.TestCase):
         from pydantic import ValidationError
 
         with self.assertRaises(ValidationError):
-            schema.LLMProviderRequestPlan(provider_kind="OPENAI")
+            schema.LLMProviderRequestPlan(provider_kind="OLLAMA")
         with self.assertRaises(ValidationError):
-            schema.LLMProviderResponsePlan(provider_kind="OPENAI")
+            schema.LLMProviderResponsePlan(provider_kind="OLLAMA")
 
     def test_schema_response_forces_flags(self):
         from pydantic import ValidationError

@@ -333,7 +333,9 @@ class TestLLMAdvisoryValidator(unittest.TestCase):
 
     def test_unsupported_provider_kind_rejected(self):
         request, response = good_pair()
-        response["provider_kind"] = "OPENAI"
+        # R51: OPENROUTER/OPENAI are supported kinds now; unsupported
+        # future kinds (ollama/local) are still rejected.
+        response["provider_kind"] = "OLLAMA"
         validation = validate_advisory_response(response, request)
         self.assertIn(
             "UNSUPPORTED_PROVIDER_KIND", codes(validation)

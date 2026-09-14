@@ -53,18 +53,31 @@ RULE_VERSION = LLM_PROVIDER_RULE_VERSION
 
 PROVIDER_KIND_MOCK = "MOCK"
 
-SUPPORTED_PROVIDER_KINDS: tuple[str, ...] = (PROVIDER_KIND_MOCK,)
-
 PROVIDER_KIND_OPENAI = "OPENAI"
 PROVIDER_KIND_OPENROUTER = "OPENROUTER"
 PROVIDER_KIND_OLLAMA = "OLLAMA"
 PROVIDER_KIND_LOCAL = "LOCAL"
 
-FUTURE_PROVIDER_KINDS: tuple[str, ...] = (
-    PROVIDER_KIND_OPENAI,
+# R51 extends the supported provider-kind vocabulary additively with the
+# real remote providers implemented under ``ai/providers``. The R45 request
+# and response contract shape and every R45 validation rule are unchanged;
+# only the closed kind vocabulary grows. Ollama/local remain declared but
+# unsupported (no adapter, explicit rejection).
+SUPPORTED_PROVIDER_KINDS: tuple[str, ...] = (
+    PROVIDER_KIND_MOCK,
     PROVIDER_KIND_OPENROUTER,
+    PROVIDER_KIND_OPENAI,
+)
+
+FUTURE_PROVIDER_KINDS: tuple[str, ...] = (
     PROVIDER_KIND_OLLAMA,
     PROVIDER_KIND_LOCAL,
+)
+
+# R51 real-provider kinds supported by the extended advisory contract.
+REAL_PROVIDER_KINDS: tuple[str, ...] = (
+    PROVIDER_KIND_OPENROUTER,
+    PROVIDER_KIND_OPENAI,
 )
 
 PROVIDER_KINDS: tuple[str, ...] = (
@@ -95,6 +108,25 @@ PROVIDER_LIMITATIONS: tuple[str, ...] = (
     LIMITATION_NO_CREDENTIALS_USED,
     LIMITATION_DETERMINISTIC_MOCK,
     LIMITATION_ADVISORY_ONLY,
+)
+
+# R51 real-provider limitations (additive). They describe the external
+# provider boundary and never grant any authority.
+LIMITATION_NETWORK_PROVIDER_USED = "NETWORK_PROVIDER_USED"
+LIMITATION_EXTERNAL_PROVIDER_CONTENT = "EXTERNAL_PROVIDER_CONTENT"
+LIMITATION_CREDENTIALS_ENVIRONMENT_ONLY = "CREDENTIALS_ENVIRONMENT_ONLY"
+LIMITATION_PROVIDER_OUTPUT_VALIDATED = "PROVIDER_OUTPUT_VALIDATED"
+
+REAL_PROVIDER_LIMITATIONS: tuple[str, ...] = (
+    LIMITATION_NETWORK_PROVIDER_USED,
+    LIMITATION_EXTERNAL_PROVIDER_CONTENT,
+    LIMITATION_CREDENTIALS_ENVIRONMENT_ONLY,
+    LIMITATION_PROVIDER_OUTPUT_VALIDATED,
+)
+
+# The response contract accepts mock and real-provider limitations.
+ALL_PROVIDER_LIMITATIONS: tuple[str, ...] = (
+    PROVIDER_LIMITATIONS + REAL_PROVIDER_LIMITATIONS
 )
 
 # Requests preserve the advisory input limitations in addition to the
@@ -407,7 +439,7 @@ class LLMProviderResponsePlan(BaseModel):
     @field_validator("limitations")
     @classmethod
     def _bounded_limitations(cls, value: list) -> list[str]:
-        return _bounded_codes(value, PROVIDER_LIMITATIONS, MAX_LIST)
+        return _bounded_codes(value, ALL_PROVIDER_LIMITATIONS, MAX_LIST)
 
     @field_validator("research_only", "deterministic")
     @classmethod
@@ -452,11 +484,18 @@ __all__ = [
     "SOURCE_REF_LAYER_R45",
     "PROVIDER_LIMITATIONS",
     "PROVIDER_REQUEST_LIMITATIONS",
+    "REAL_PROVIDER_KINDS",
+    "REAL_PROVIDER_LIMITATIONS",
+    "ALL_PROVIDER_LIMITATIONS",
     "LIMITATION_NO_EXECUTION_PERFORMED",
     "LIMITATION_NO_NETWORK_REQUESTS",
     "LIMITATION_NO_CREDENTIALS_USED",
     "LIMITATION_DETERMINISTIC_MOCK",
     "LIMITATION_ADVISORY_ONLY",
+    "LIMITATION_NETWORK_PROVIDER_USED",
+    "LIMITATION_EXTERNAL_PROVIDER_CONTENT",
+    "LIMITATION_CREDENTIALS_ENVIRONMENT_ONLY",
+    "LIMITATION_PROVIDER_OUTPUT_VALIDATED",
     "MAX_SOURCE_REFS",
     "MAX_LIST",
     "MAX_VALUE_LEN",
