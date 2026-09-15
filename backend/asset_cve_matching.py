@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 from urllib.parse import urlsplit
 
 from ai.knowledge.agent_coordination_planner import (
@@ -429,22 +429,29 @@ def _merge_unique(*lists: object) -> list[str]:
     return out
 
 
-def _inventory_values(program: str) -> dict[str, list]:
+def _inventory_values(
+    program: str, inventory: Optional[Mapping] = None
+) -> dict[str, list]:
     """Stage R30.2 observed-inventory values for one program (fail-soft).
 
     Returns plain observed value lists for the R30.1 matcher input plus the
     Stage R30.3 version-association records and the Stage R31.5 structured
     provenance/parameter-path additions; the R30.1 matching rules are
     untouched.
+
+    ``inventory`` optionally injects an already-built inventory projection
+    (the shape returned by the read-only Watch adapter); when omitted the
+    existing Watch read path is used unchanged.
     """
 
-    try:
-        from backend import observed_inventory
+    if inventory is None:
+        try:
+            from backend import observed_inventory
 
-        inventory = observed_inventory.get_inventory(program)
-    except Exception:
-        return {}
-    if not inventory:
+            inventory = observed_inventory.get_inventory(program)
+        except Exception:
+            return {}
+    if not isinstance(inventory, Mapping) or not inventory:
         return {}
     out: dict[str, list] = {}
     for key in (
@@ -809,9 +816,18 @@ def _support_gate(
 
 
 def build_matches(
-    cve: Optional[str] = None, program: Optional[str] = None
+    cve: Optional[str] = None,
+    program: Optional[str] = None,
+    *,
+    inventories: Optional[Mapping[str, object]] = None,
 ) -> dict:
-    """Deterministic asset <-> CVE match projection (read-only, fail-soft)."""
+    """Deterministic asset <-> CVE match projection (read-only, fail-soft).
+
+    ``inventories`` optionally supplies already-built observed-inventory
+    projections keyed by program for offline execution (for example an
+    inventory built from a local recon snapshot). When omitted, every program
+    uses the existing Watch read path exactly as before.
+    """
 
     requested_program = str(program or "").strip()
     results: list[dict] = []
@@ -903,7 +919,12 @@ def build_matches(
             # Stage R30.2: merge the derived observed inventory (existing
             # Watch recon data) into the R30.1 matcher INPUT. R30.1 remains the
             # authority for matching semantics; no matching rule is changed.
-            inventory_observed = _inventory_values(group_name)
+            inventory_observed = _inventory_values(
+                group_name,
+                inventories.get(group_name)
+                if isinstance(inventories, Mapping)
+                else None,
+            )
             observed["products"] = _merge_unique(
                 observed["products"], inventory_observed.get("products")
             )
