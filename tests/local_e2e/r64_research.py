@@ -1,4 +1,4 @@
-"""Stage R65 evidence-grounded security research over the real provider.
+"""Stage R65/R66 evidence-grounded security research over the real provider.
 
 R64 proved the real OpenRouter path works; the audit of its first real output
 showed the model can present generic security knowledge and name-based
@@ -17,6 +17,15 @@ and the same real provider, and makes research output evidence-grounded:
   derived-signal-only support can never reach HIGH;
 - unconditional vulnerability/exploitability claims fail closed.
 
+R66 keeps every R65 rule and adds per-hypothesis validation: one invalid
+hypothesis no longer rejects the whole response. Each hypothesis is validated
+independently against the unchanged grounding, category, strength, and safety
+rules; valid hypotheses are accepted, invalid ones are dropped with safe
+machine-readable rejection metadata, and the result is reported as
+``COMPLETED_WITH_REJECTIONS``. Global/top-level failures (malformed response,
+unsafe envelope, invented CVE, data hygiene) still fail the whole response
+closed, and zero accepted hypotheses is an ``ERROR``.
+
 Hard boundaries preserved: research only, advisory only, no execution, no
 confirmation, no target activity, no secrets, deterministic envelope, bounded
 contexts and prompts, fail-closed validation, opt-in real provider.
@@ -24,9 +33,9 @@ contexts and prompts, fail-closed validation, opt-in real provider.
 Pipeline position (unchanged)::
 
     R61 snapshot -> R62 bridge (bounded contexts + signals)
-      -> R65 research prompt (untrusted data, canonical observation refs)
+      -> R65/R66 research prompt (untrusted data, canonical observation refs)
       -> existing ai.llm.openrouter.OpenRouterProvider (real, opt-in)
-      -> R65 evidence-grounded validation
+      -> per-hypothesis evidence-grounded validation (global envelope checks)
       -> research-only result envelope (printed and optionally persisted)
 """
 
@@ -49,7 +58,29 @@ from ai.schemas.research_priority import BAND_HIGH, BAND_LOW, BAND_MEDIUM
 from tests.local_e2e import r62_bridge as br
 from tests.local_e2e import recon_snapshot as rs
 
-RULE_VERSION = "r65-1"
+RULE_VERSION = "r66-1"
+
+STATUS_COMPLETED = "COMPLETED"
+STATUS_COMPLETED_WITH_REJECTIONS = "COMPLETED_WITH_REJECTIONS"
+STATUS_ERROR = "ERROR"
+SUCCESS_STATUSES: tuple[str, ...] = (
+    STATUS_COMPLETED,
+    STATUS_COMPLETED_WITH_REJECTIONS,
+)
+
+# Hypothesis-level rejection codes. They refine the existing whole-response
+# error vocabulary so a rejected hypothesis is machine-readable without
+# changing the envelope error contract when no hypothesis survives.
+REJECTION_UNSUPPORTED_CATEGORY = "MODEL_OUTPUT_UNSUPPORTED_CATEGORY"
+REJECTION_CONFIDENCE_TOO_HIGH = "MODEL_OUTPUT_CONFIDENCE_TOO_HIGH"
+REJECTION_PRIORITY_TOO_HIGH = "MODEL_OUTPUT_PRIORITY_TOO_HIGH"
+REJECTION_UNSAFE_CLAIM = "MODEL_OUTPUT_UNSAFE_CLAIM"
+ENVELOPE_CODE_BY_REJECTION: dict[str, str] = {
+    REJECTION_UNSUPPORTED_CATEGORY: "MODEL_OUTPUT_INVALID",
+    REJECTION_CONFIDENCE_TOO_HIGH: "MODEL_OUTPUT_UNGROUNDED",
+    REJECTION_PRIORITY_TOO_HIGH: "MODEL_OUTPUT_UNGROUNDED",
+    REJECTION_UNSAFE_CLAIM: "MODEL_OUTPUT_UNSAFE",
+}
 
 MAX_HYPOTHESES = 8
 MAX_LIST_ITEMS = 8
@@ -794,14 +825,155 @@ def _validate_strength(
     cap = _confidence_cap(category, observations, derived, text_blob)
     if CONFIDENCE_RANK[confidence] > CONFIDENCE_RANK[cap]:
         raise ResearchRunError(
-            "MODEL_OUTPUT_UNGROUNDED",
+            REJECTION_CONFIDENCE_TOO_HIGH,
             "confidence exceeds what the grounded evidence supports",
         )
     if confidence not in PRIORITY_REQUIRED_CONFIDENCE[priority]:
         raise ResearchRunError(
-            "MODEL_OUTPUT_UNGROUNDED",
+            REJECTION_PRIORITY_TOO_HIGH,
             "priority exceeds the stated confidence",
         )
+
+
+def _scan_envelope_unsafe_claims(payload: Mapping) -> None:
+    """Global fail-closed scan for everything outside the hypotheses list."""
+
+    _scan_unsafe_claims(
+        {key: value for key, value in payload.items() if key != "hypotheses"}
+    )
+
+
+def _safe_rejection_title(
+    entry: object, allowed_cve_ids: set[str] | None
+) -> str:
+    """Bounded title for a rejection record; empty when it is not safe."""
+
+    if not isinstance(entry, Mapping):
+        return ""
+    title = _text(entry.get("title"))
+    if not title or len(title) > MAX_TITLE_CHARS:
+        return ""
+    try:
+        _scan_unsafe_claims({"title": title})
+    except ResearchRunError:
+        return ""
+    if allowed_cve_ids is not None and (_cve_ids_in(title) - allowed_cve_ids):
+        return ""
+    return title
+
+
+def _rejection_record(
+    position: int,
+    entry: object,
+    error: ResearchRunError,
+    allowed_cve_ids: set[str] | None,
+) -> dict:
+    """Safe rejection metadata; never the rejected hypothesis body."""
+
+    return {
+        "index": position,
+        "title": _safe_rejection_title(entry, allowed_cve_ids),
+        "code": error.code,
+        "reason": error.safe_message,
+    }
+
+
+def _validate_hypothesis(
+    entry: object,
+    *,
+    index: Mapping[str, str],
+    signals: Mapping[str, list[str]],
+    allowed_cve_ids: set[str] | None,
+) -> dict:
+    """Validate one model hypothesis in isolation (R66).
+
+    The R65 rules are unchanged; only the blast radius is. Raises
+    ``ResearchRunError`` with a hypothesis-level rejection code when this
+    hypothesis is invalid; callers drop it instead of the whole response.
+    """
+
+    if not isinstance(entry, Mapping):
+        raise ResearchRunError(
+            "MODEL_OUTPUT_INVALID", "hypothesis is not an object"
+        )
+    try:
+        _scan_unsafe_claims(entry)
+    except ResearchRunError as exc:
+        raise ResearchRunError(
+            REJECTION_UNSAFE_CLAIM, exc.safe_message
+        ) from None
+    if allowed_cve_ids is not None:
+        invented = sorted(_cve_ids_in(entry) - allowed_cve_ids)
+        if invented:
+            raise ResearchRunError(
+                REJECTION_UNSAFE_CLAIM,
+                "model output references a CVE not present in the context",
+            )
+    category = _text(entry.get("category")).upper()
+    if category not in ALLOWED_CATEGORIES:
+        raise ResearchRunError(
+            REJECTION_UNSUPPORTED_CATEGORY, "unsupported hypothesis category"
+        )
+    priority = _text(entry.get("priority")).upper()
+    if priority not in ALLOWED_PRIORITIES:
+        raise ResearchRunError(
+            "MODEL_OUTPUT_INVALID", "unsupported hypothesis priority"
+        )
+    confidence = _text(entry.get("confidence")).upper()
+    if confidence not in ALLOWED_CONFIDENCE:
+        raise ResearchRunError(
+            "MODEL_OUTPUT_INVALID", "unsupported hypothesis confidence"
+        )
+    evidence = entry.get("evidence")
+    if not isinstance(evidence, Mapping):
+        raise ResearchRunError(
+            "MODEL_OUTPUT_INVALID", "hypothesis evidence must be an object"
+        )
+    observations = _validate_observations(
+        evidence.get("observations"), index
+    )
+    derived = _validate_derived_signals(
+        evidence.get("derived_signals"), signals
+    )
+    title = _bounded_text(entry.get("title"), MAX_TITLE_CHARS)
+    inference = _bounded_text(entry.get("inference"), MAX_INFERENCE_CHARS)
+    why_interesting = _bounded_text(
+        entry.get("why_interesting"), MAX_TEXT_CHARS
+    )
+    text_blob = " ".join((title, inference, why_interesting))
+    error = _category_grounding_error(
+        category, observations, derived, text_blob
+    )
+    if error:
+        raise ResearchRunError("MODEL_OUTPUT_UNGROUNDED", error)
+    _validate_strength(
+        category,
+        priority,
+        confidence,
+        observations,
+        derived,
+        text_blob,
+    )
+    return {
+        "title": title,
+        "category": category,
+        "priority": priority,
+        "confidence": confidence,
+        "evidence": {
+            "observations": observations,
+            "derived_signals": derived,
+        },
+        "inference": inference,
+        "why_interesting": why_interesting,
+        "missing_evidence": _bounded_list(
+            entry.get("missing_evidence"),
+            limit=MAX_LIST_ITEMS,
+            item_limit=MAX_TEXT_CHARS,
+        ),
+        "next_safe_action": _bounded_text(
+            entry.get("next_safe_action"), MAX_TEXT_CHARS
+        ),
+    }
 
 
 def parse_research_response(
@@ -809,7 +981,15 @@ def parse_research_response(
     *,
     evidence_context: Mapping | None = None,
 ) -> dict:
-    """Strictly validate one model response into the R65 grounded contract."""
+    """Validate one model response into the R66 grounded contract.
+
+    Global/top-level failures (malformed JSON, unsafe envelope, invented CVE,
+    data hygiene) raise. Hypothesis failures are collected per hypothesis:
+    valid hypotheses are returned, invalid ones are dropped with safe
+    rejection metadata. When nothing survives validation an error is raised.
+    The returned dict carries ``summary``, ``attack_surface``, the accepted
+    ``hypotheses``, and the ``validation`` metadata block.
+    """
 
     if not isinstance(content, str) or not content.strip():
         raise ResearchRunError("MODEL_OUTPUT_INVALID", "empty model response")
@@ -827,10 +1007,11 @@ def parse_research_response(
         raise ResearchRunError(
             "MODEL_OUTPUT_INVALID", "model response is not a JSON object"
         )
-    _scan_unsafe_claims(payload)
+    _scan_envelope_unsafe_claims(payload)
 
     index: dict[str, str] = {}
     signals: dict[str, list[str]] = {}
+    allowed_cve_ids: set[str] | None = None
     if isinstance(evidence_context, Mapping):
         research_context = evidence_context.get("research_context")
         intelligence_context = evidence_context.get("intelligence_context")
@@ -839,6 +1020,7 @@ def parse_research_response(
         ):
             index = evidence_index(research_context, intelligence_context)
             signals = signal_index(intelligence_context)
+        allowed_cve_ids = _cve_ids_in(evidence_context)
 
     summary = _bounded_text(payload.get("summary"), MAX_SUMMARY_CHARS)
     attack_surface = _bounded_list(
@@ -855,81 +1037,37 @@ def parse_research_response(
         raise ResearchRunError(
             "MODEL_OUTPUT_TOO_LARGE", "too many hypotheses"
         )
+    if allowed_cve_ids is not None:
+        envelope_cves = _cve_ids_in(
+            {"summary": summary, "attack_surface": attack_surface}
+        )
+        if sorted(envelope_cves - allowed_cve_ids):
+            raise ResearchRunError(
+                "MODEL_OUTPUT_UNSAFE",
+                "model output references a CVE not present in the context",
+            )
 
     hypotheses: list[dict] = []
-    for entry in raw_hypotheses:
-        if not isinstance(entry, Mapping):
-            raise ResearchRunError(
-                "MODEL_OUTPUT_INVALID", "hypothesis is not an object"
+    rejections: list[dict] = []
+    for position, entry in enumerate(raw_hypotheses):
+        try:
+            hypotheses.append(
+                _validate_hypothesis(
+                    entry,
+                    index=index,
+                    signals=signals,
+                    allowed_cve_ids=allowed_cve_ids,
+                )
             )
-        category = _text(entry.get("category")).upper()
-        if category not in ALLOWED_CATEGORIES:
-            raise ResearchRunError(
-                "MODEL_OUTPUT_INVALID", "unsupported hypothesis category"
+        except ResearchRunError as exc:
+            rejections.append(
+                _rejection_record(position, entry, exc, allowed_cve_ids)
             )
-        priority = _text(entry.get("priority")).upper()
-        if priority not in ALLOWED_PRIORITIES:
-            raise ResearchRunError(
-                "MODEL_OUTPUT_INVALID", "unsupported hypothesis priority"
-            )
-        confidence = _text(entry.get("confidence")).upper()
-        if confidence not in ALLOWED_CONFIDENCE:
-            raise ResearchRunError(
-                "MODEL_OUTPUT_INVALID", "unsupported hypothesis confidence"
-            )
-        evidence = entry.get("evidence")
-        if not isinstance(evidence, Mapping):
-            raise ResearchRunError(
-                "MODEL_OUTPUT_INVALID", "hypothesis evidence must be an object"
-            )
-        observations = _validate_observations(
-            evidence.get("observations"), index
-        )
-        derived = _validate_derived_signals(
-            evidence.get("derived_signals"), signals
-        )
-        title = _bounded_text(entry.get("title"), MAX_TITLE_CHARS)
-        inference = _bounded_text(
-            entry.get("inference"), MAX_INFERENCE_CHARS
-        )
-        why_interesting = _bounded_text(
-            entry.get("why_interesting"), MAX_TEXT_CHARS
-        )
-        text_blob = " ".join((title, inference, why_interesting))
-        error = _category_grounding_error(
-            category, observations, derived, text_blob
-        )
-        if error:
-            raise ResearchRunError("MODEL_OUTPUT_UNGROUNDED", error)
-        _validate_strength(
-            category,
-            priority,
-            confidence,
-            observations,
-            derived,
-            text_blob,
-        )
-        hypotheses.append(
-            {
-                "title": title,
-                "category": category,
-                "priority": priority,
-                "confidence": confidence,
-                "evidence": {
-                    "observations": observations,
-                    "derived_signals": derived,
-                },
-                "inference": inference,
-                "why_interesting": why_interesting,
-                "missing_evidence": _bounded_list(
-                    entry.get("missing_evidence"),
-                    limit=MAX_LIST_ITEMS,
-                    item_limit=MAX_TEXT_CHARS,
-                ),
-                "next_safe_action": _bounded_text(
-                    entry.get("next_safe_action"), MAX_TEXT_CHARS
-                ),
-            }
+    if rejections and not hypotheses:
+        first = rejections[0]
+        raise ResearchRunError(
+            ENVELOPE_CODE_BY_REJECTION.get(first["code"], first["code"]),
+            "no hypothesis survived validation: " + first["reason"],
         )
 
     research = {
@@ -938,15 +1076,14 @@ def parse_research_response(
         "hypotheses": hypotheses,
     }
     _scan_unsafe_claims(research)
-    if evidence_context is not None:
-        allowed = _cve_ids_in(evidence_context)
-        invented = sorted(_cve_ids_in(research) - allowed)
-        if invented:
-            raise ResearchRunError(
-                "MODEL_OUTPUT_UNSAFE",
-                "model output references a CVE not present in the context",
-            )
-    return research
+    return {
+        **research,
+        "validation": {
+            "accepted_count": len(hypotheses),
+            "rejected_count": len(rejections),
+            "rejections": rejections,
+        },
+    }
 
 
 def _context_hash(research_context: Mapping, intelligence_context: Mapping) -> str:
@@ -962,7 +1099,7 @@ def _context_hash(research_context: Mapping, intelligence_context: Mapping) -> s
 def _error_result(code: str, message: str, *, program: str = "") -> dict:
     return {
         "research_run_version": RULE_VERSION,
-        "status": "ERROR",
+        "status": STATUS_ERROR,
         "program": program,
         "sampled": True,
         "error": {"code": code, "message": _text(message)[:160]},
@@ -1030,7 +1167,7 @@ def run_research(
         )
     content = getattr(outcome, "content", outcome)
     try:
-        research = parse_research_response(
+        parsed = parse_research_response(
             content,
             evidence_context={
                 "research_context": dict(research_context),
@@ -1039,6 +1176,18 @@ def run_research(
         )
     except ResearchRunError as exc:
         return _error_result(exc.code, exc.safe_message, program=program_name)
+
+    research = {
+        "summary": parsed["summary"],
+        "attack_surface": parsed["attack_surface"],
+        "hypotheses": parsed["hypotheses"],
+    }
+    validation = parsed["validation"]
+    status = (
+        STATUS_COMPLETED_WITH_REJECTIONS
+        if validation["rejected_count"]
+        else STATUS_COMPLETED
+    )
 
     findings = input_hygiene(research_context, intelligence_context)
     snapshot_block = {
@@ -1056,7 +1205,7 @@ def run_research(
     }
     return {
         "research_run_version": RULE_VERSION,
-        "status": "COMPLETED",
+        "status": status,
         "program": program_name,
         "sampled": research_context.get("sampled") is True,
         "source": _text(source) or "fixture",
@@ -1069,6 +1218,7 @@ def run_research(
         },
         "input_hygiene": dict(findings),
         "research": research,
+        "validation": validation,
         "safety": safety_block(),
         "limitations": list(LIMITATIONS),
     }
@@ -1093,7 +1243,7 @@ def persist_result(result: Mapping, *, persist_dir: str | Path | None = None) ->
 def _print_result(result: Mapping, persisted_path: str = "") -> None:
     print("")
     print("=" * 66)
-    print("WATCH AI SECURITY RESEARCH (R65, evidence-grounded)")
+    print("WATCH AI SECURITY RESEARCH (R66, evidence-grounded)")
     print("=" * 66)
     print(f"Status      : {result.get('status')}")
     print(f"Program     : {result.get('program')}")
@@ -1106,7 +1256,7 @@ def _print_result(result: Mapping, persisted_path: str = "") -> None:
     )
     provider = result.get("provider") or {}
     print(f"Provider    : {provider.get('kind')} / {provider.get('model')}")
-    if result.get("status") != "COMPLETED":
+    if result.get("status") not in SUCCESS_STATUSES:
         error = result.get("error") or {}
         print("")
         print(f"ERROR: {error.get('code')}: {error.get('message')}")
@@ -1153,6 +1303,20 @@ def _print_result(result: Mapping, persisted_path: str = "") -> None:
             print(f"   Missing evidence  : {missing}")
         print(f"   Next safe action  : {hypothesis.get('next_safe_action')}")
         print("")
+    validation = result.get("validation") or {}
+    rejections = validation.get("rejections") or []
+    if rejections:
+        print("VALIDATION")
+        print("-" * 66)
+        print(f"Accepted hypotheses : {validation.get('accepted_count')}")
+        print(f"Rejected hypotheses : {validation.get('rejected_count')}")
+        for rejection in rejections:
+            title = rejection.get("title") or "(title withheld)"
+            print(
+                f"- [{rejection.get('index')}] {rejection.get('code')}: "
+                f"{rejection.get('reason')} :: {title}"
+            )
+        print("")
     print("-" * 66)
     print("[SAFETY] advisory research only; execution_performed=false;")
     print("         vulnerability_confirmed=false; exploit_authorized=false;")
@@ -1185,7 +1349,7 @@ def _mongo_snapshot(program: str, caps: Mapping) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tests.local_e2e.r64_research",
-        description="Watch R65 evidence-grounded AI security research run",
+        description="Watch R66 evidence-grounded AI security research run",
     )
     parser.add_argument(
         "--source",
@@ -1243,7 +1407,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print("")
-    print("WATCH AI SECURITY RESEARCH (R65, evidence-grounded)")
+    print("WATCH AI SECURITY RESEARCH (R66, evidence-grounded)")
     print("-" * 66)
     print(f"Program            : {args.program}")
     print(f"Source             : {args.source}")
@@ -1300,12 +1464,12 @@ def main(argv: list[str] | None = None) -> int:
         snapshot=snapshot,
     )
     persisted_path = ""
-    if result.get("status") == "COMPLETED" and not args.no_persist:
+    if result.get("status") in SUCCESS_STATUSES and not args.no_persist:
         persisted_path = str(
             persist_result(result, persist_dir=args.persist_dir)
         )
     _print_result(result, persisted_path)
-    return 0 if result.get("status") == "COMPLETED" else 2
+    return 0 if result.get("status") in SUCCESS_STATUSES else 2
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Focused tests for R65 evidence-grounded research validation.
+"""Focused tests for R65 evidence-grounded research validation (R66 partial).
 
 All tests are offline. The real OpenRouter provider is never constructed in
 the default path; a deterministic fake provider is injected only inside these
@@ -630,7 +630,11 @@ class TestResponseParsing(unittest.TestCase):
     def test_valid_response_parsed(self):
         result = fake_run(valid_payload())
         self.assertEqual(result["status"], "COMPLETED")
-        self.assertEqual(result["research_run_version"], "r65-1")
+        self.assertEqual(result["research_run_version"], "r66-1")
+        self.assertEqual(
+            result["validation"],
+            {"accepted_count": 1, "rejected_count": 0, "rejections": []},
+        )
         self.assertEqual(result["provider"]["model"], "fake-model")
         self.assertEqual(result["provider"]["request_id"], "fake-request-1")
         hypothesis_out = result["research"]["hypotheses"][0]
@@ -762,6 +766,387 @@ class TestLegacyR64Artifact(unittest.TestCase):
         for hypothesis_entry in artifact["research"]["hypotheses"]:
             self.assertIn("supporting_observations", hypothesis_entry)
             self.assertNotIn("evidence", hypothesis_entry)
+
+
+R65_CAPTURED_RESPONSE = """
+{
+  "attack_surface": [
+    "/auth",
+    "/notifications/api/{id}/getNotificationsCount",
+    "/signals/log",
+    "/weird",
+    "client",
+    "co",
+    "continue",
+    "kw",
+    "sid"
+  ],
+  "hypotheses": [
+    {
+      "category": "IDOR",
+      "confidence": "MEDIUM",
+      "evidence": {
+        "derived_signals": [
+          {
+            "detail": "object_reference=PATH_PARAMETER",
+            "signal": "IDOR",
+            "source": "watch_derived"
+          }
+        ],
+        "observations": [
+          {
+            "fact": "observed path /notifications/api/{id}/getNotificationsCount",
+            "ref": "path:/notifications/api/{id}/getNotificationsCount",
+            "source": "context"
+          }
+        ]
+      },
+      "inference": "The path parameter {id} may reference a notification object; if authorization is not enforced per-object, users might access other users' notification counts.",
+      "missing_evidence": [
+        "Authorization behavior when accessing different {id} values",
+        "Response variations for valid vs invalid {id}",
+        "User context binding to {id}"
+      ],
+      "next_safe_action": "Review available HTTP responses for this endpoint to check for authorization enforcement evidence",
+      "priority": "MEDIUM",
+      "title": "Potential IDOR on notifications count endpoint via path parameter",
+      "why_interesting": "Path parameter in REST API could allow horizontal privilege escalation if object-level authorization is missing."
+    },
+    {
+      "category": "RECON",
+      "confidence": "HIGH",
+      "evidence": {
+        "derived_signals": [
+          {
+            "detail": "api_type=REST",
+            "signal": "RECON",
+            "source": "watch_derived"
+          }
+        ],
+        "observations": [
+          {
+            "fact": "observed path /auth",
+            "ref": "path:/auth",
+            "source": "context"
+          },
+          {
+            "fact": "observed path /notifications/api/{id}/getNotificationsCount",
+            "ref": "path:/notifications/api/{id}/getNotificationsCount",
+            "source": "context"
+          },
+          {
+            "fact": "observed path /signals/log",
+            "ref": "path:/signals/log",
+            "source": "context"
+          },
+          {
+            "fact": "observed path /weird",
+            "ref": "path:/weird",
+            "source": "context"
+          }
+        ]
+      },
+      "inference": "The application exposes a REST-like API with path parameters, suggesting object-oriented resource access patterns that may warrant further authorization testing.",
+      "missing_evidence": [
+        "API authentication scheme",
+        "Rate limiting evidence",
+        "Response format details",
+        "Consistent resource naming patterns"
+      ],
+      "next_safe_action": "Examine HTTP response records for these endpoints to understand authentication and response patterns",
+      "priority": "LOW",
+      "title": "REST API structure with path-based resource identifiers",
+      "why_interesting": "Understanding API structure guides further security testing focus on object-level access controls."
+    },
+    {
+      "category": "CVE_RESEARCH",
+      "confidence": "UNKNOWN",
+      "evidence": {
+        "observations": [
+          {
+            "fact": "observed technology nginx",
+            "ref": "technology:nginx",
+            "source": "context"
+          },
+          {
+            "fact": "observed technology jQuery",
+            "ref": "technology:jQuery",
+            "source": "context"
+          },
+          {
+            "fact": "observed version 1.24.0",
+            "ref": "version:1.24.0",
+            "source": "context"
+          },
+          {
+            "fact": "observed version 3.5.1",
+            "ref": "version:3.5.1",
+            "source": "context"
+          }
+        ]
+      },
+      "inference": "The observed technologies (nginx, jQuery) have versions present in the data (1.24.0, 3.5.1) but the mapping between technology and version is not observed; if nginx 1.24.0 or jQuery 3.5.1 are confirmed, known CVEs may apply.",
+      "missing_evidence": [
+        "Confirmed version-technology mapping (e.g., nginx version, jQuery version)",
+        "CVE applicability for specific versions"
+      ],
+      "next_safe_action": "Correlate version observations with technology fingerprints from HTTP responses to establish version-technology mapping",
+      "priority": "LOW",
+      "title": "Technology version exposure requiring mapping for CVE research",
+      "why_interesting": "Version-specific vulnerabilities could exist if vulnerable versions are deployed."
+    }
+  ],
+  "summary": "Reconnaissance data for program 'indeed' shows 4 endpoints with REST-like structure, 5 parameters, and a technology stack including Cloudflare, HSTS, HTTP, jQuery, and nginx. A specialist signal indicates IDOR potential via path parameter on /notifications/api/{id}/getNotificationsCount and confirms REST API type. Versions 1.24.0, 3, and 3.5.1 are observed but not mapped to specific technologies. Data is a bounded sample; absence of evidence does not prove absence of attack surface."
+}
+"""
+
+
+class TestR66PartialAcceptance(unittest.TestCase):
+    """Primary R66 regression: the exact response captured from the R65 run.
+
+    H1 (IDOR, MEDIUM/MEDIUM) is valid, H2 (RECON, HIGH confidence from
+    structural-only evidence) violates the unchanged confidence cap, and
+    H3 (CVE_RESEARCH, LOW/UNKNOWN) is valid. A bad hypothesis must no longer
+    destroy the valid research around it.
+    """
+
+    def partial_run(self):
+        provider = _FakeProvider(R65_CAPTURED_RESPONSE)
+        return r64.run_research(RESEARCH, INTEL, provider=provider)
+
+    def test_captured_r65_response_is_partially_accepted(self):
+        result = self.partial_run()
+        self.assertEqual(result["status"], "COMPLETED_WITH_REJECTIONS")
+        self.assertEqual(result["validation"]["accepted_count"], 2)
+        self.assertEqual(result["validation"]["rejected_count"], 1)
+        self.assertEqual(
+            [h["title"] for h in result["research"]["hypotheses"]],
+            [
+                "Potential IDOR on notifications count endpoint via path parameter",
+                "Technology version exposure requiring mapping for CVE research",
+            ],
+        )
+        self.assertEqual(
+            [h["category"] for h in result["research"]["hypotheses"]],
+            ["IDOR", "CVE_RESEARCH"],
+        )
+
+    def test_rejected_hypothesis_body_is_absent_from_result(self):
+        result = self.partial_run()
+        rejection = result["validation"]["rejections"][0]
+        self.assertEqual(
+            rejection["title"],
+            "REST API structure with path-based resource identifiers",
+        )
+        text = r64.canonical_json(result)
+        self.assertNotIn("path:/auth", text)
+        self.assertNotIn("path:/signals/log", text)
+        self.assertNotIn("path:/weird", text)
+        self.assertNotIn("object-oriented resource access patterns", text)
+        self.assertNotIn("Rate limiting evidence", text)
+        self.assertNotIn("RECON", text)
+
+    def test_rejection_metadata_is_safe_and_minimal(self):
+        result = self.partial_run()
+        rejection = result["validation"]["rejections"][0]
+        self.assertEqual(
+            set(rejection), {"index", "title", "code", "reason"}
+        )
+        self.assertEqual(rejection["index"], 1)
+        self.assertEqual(
+            rejection["code"], r64.REJECTION_CONFIDENCE_TOO_HIGH
+        )
+        self.assertLessEqual(len(rejection["reason"]), 160)
+        text = r64.canonical_json(result)
+        self.assertNotIn("://", text)
+        self.assertNotIn("sk-", text)
+        self.assertIsNone(r64.MONGO_ID_RE.search(text))
+
+    def test_unsafe_rejection_title_is_withheld(self):
+        item = hypothesis(
+            title="Endpoint at https://target.example/path is confirmed"
+        )
+        result = fake_run(
+            valid_payload(hypotheses=[item, hypothesis(title="Kept")])
+        )
+        self.assertEqual(result["status"], "COMPLETED_WITH_REJECTIONS")
+        self.assertEqual(
+            result["validation"]["rejections"][0]["code"],
+            r64.REJECTION_UNSAFE_CLAIM,
+        )
+        self.assertEqual(result["validation"]["rejections"][0]["title"], "")
+
+    def test_two_valid_one_invalid(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(title="Valid one"),
+                hypothesis(
+                    title="Rejected one",
+                    confidence="HIGH",
+                    priority="MEDIUM",
+                ),
+                hypothesis(title="Valid two"),
+            ]
+        )
+        result = fake_run(payload)
+        self.assertEqual(result["status"], "COMPLETED_WITH_REJECTIONS")
+        self.assertEqual(result["validation"]["accepted_count"], 2)
+        self.assertEqual(result["validation"]["rejected_count"], 1)
+        self.assertEqual(
+            [h["title"] for h in result["research"]["hypotheses"]],
+            ["Valid one", "Valid two"],
+        )
+        self.assertEqual(
+            result["validation"]["rejections"][0]["index"], 1
+        )
+
+    def test_all_invalid_is_error(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(title="a", category="MAGIC"),
+                hypothesis(title="b", confidence="HIGH", priority="MEDIUM"),
+                hypothesis(title="c", priority="HIGH", confidence="MEDIUM"),
+            ]
+        )
+        expect_code(payload, "MODEL_OUTPUT_INVALID")
+
+    def test_malformed_top_level_response_is_error(self):
+        for content in (
+            "{not json",
+            '{"summary": "x", "hypotheses": "nope"}',
+            '{"attack_surface": []}',
+        ):
+            with self.subTest(content=content):
+                provider = _FakeProvider(content)
+                result = r64.run_research(RESEARCH, INTEL, provider=provider)
+                self.assertEqual(result["status"], "ERROR")
+                self.assertNotIn("research", result)
+
+    def test_global_unsafe_envelope_fails_closed(self):
+        payload = valid_payload(
+            summary="we confirmed the vulnerability in the target"
+        )
+        expect_code(payload, "MODEL_OUTPUT_UNSAFE")
+
+    def test_global_data_hygiene_violation_fails_closed(self):
+        for summary in (
+            "see https://target.example/path for details",
+            "object 507f1f77bcf86cd799439011 observed",
+        ):
+            with self.subTest(summary=summary):
+                expect_code(
+                    valid_payload(summary=summary), "MODEL_OUTPUT_UNSAFE"
+                )
+
+    def test_valid_hypothesis_survives_each_rejection_kind(self):
+        cases = (
+            (
+                r64.REJECTION_UNSUPPORTED_CATEGORY,
+                hypothesis(title="bad category", category="MAGIC"),
+            ),
+            (
+                r64.REJECTION_CONFIDENCE_TOO_HIGH,
+                hypothesis(
+                    title="bad confidence",
+                    confidence="HIGH",
+                    priority="MEDIUM",
+                ),
+            ),
+            (
+                r64.REJECTION_PRIORITY_TOO_HIGH,
+                hypothesis(
+                    title="bad priority",
+                    priority="HIGH",
+                    confidence="MEDIUM",
+                ),
+            ),
+            (
+                r64.REJECTION_UNSAFE_CLAIM,
+                hypothesis(
+                    title="bad claim",
+                    why_interesting="we confirmed the vulnerability",
+                ),
+            ),
+            (
+                r64.REJECTION_UNSAFE_CLAIM,
+                hypothesis(
+                    title="bad cve",
+                    missing_evidence=["CVE-2020-9999 detail"],
+                ),
+            ),
+            (
+                "MODEL_OUTPUT_UNGROUNDED",
+                hypothesis(
+                    title="bad grounding",
+                    evidence={
+                        "observations": [
+                            observation("path:/not-in-context")
+                        ],
+                        "derived_signals": [],
+                    },
+                ),
+            ),
+        )
+        for code, item in cases:
+            with self.subTest(code=code, title=item["title"]):
+                result = fake_run(
+                    valid_payload(
+                        hypotheses=[item, hypothesis(title="survivor")]
+                    )
+                )
+                self.assertEqual(
+                    result["status"], "COMPLETED_WITH_REJECTIONS", result
+                )
+                self.assertEqual(
+                    [h["title"] for h in result["research"]["hypotheses"]],
+                    ["survivor"],
+                )
+                self.assertEqual(
+                    result["validation"]["rejections"][0]["code"], code
+                )
+
+    def test_deterministic_ordering_of_accepted_and_rejected(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(title="First"),
+                hypothesis(title="Second"),
+                hypothesis(title="Rejected", category="MAGIC"),
+                hypothesis(title="Third"),
+            ]
+        )
+        first = fake_run(payload)
+        second = fake_run(payload)
+        self.assertEqual(
+            r64.canonical_json(first), r64.canonical_json(second)
+        )
+        self.assertEqual(
+            [h["title"] for h in first["research"]["hypotheses"]],
+            ["First", "Second", "Third"],
+        )
+        self.assertEqual(
+            [rejection["index"] for rejection in first["validation"]["rejections"]],
+            [2],
+        )
+
+    def test_no_raw_model_output_is_persisted(self):
+        result = self.partial_run()
+        with TemporaryDirectory() as tmp:
+            path = r64.persist_result(result, persist_dir=tmp)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("COMPLETED_WITH_REJECTIONS", text)
+        self.assertIn('"validation"', text)
+        self.assertNotIn("path:/auth", text)
+        self.assertNotIn("object-oriented resource access patterns", text)
+        self.assertNotIn("RECON", text)
+
+    def test_historical_r64_artifact_untouched(self):
+        if not LEGACY_ARTIFACT.exists():
+            self.skipTest("historical R64 artifact not present locally")
+        before = LEGACY_ARTIFACT.read_bytes()
+        result = self.partial_run()
+        with TemporaryDirectory() as tmp:
+            r64.persist_result(result, persist_dir=tmp)
+        self.assertEqual(before, LEGACY_ARTIFACT.read_bytes())
 
 
 class TestRunSafetyAndDeterminism(unittest.TestCase):
