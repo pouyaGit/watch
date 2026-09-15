@@ -43,6 +43,15 @@ guide reasoning and false-positive control; they are not evidence, never
 authorize execution, and never replace evidence resolution or the R65/R66
 validation gates.
 
+R70 adds a deterministic, research-only outcome and action planner after
+validation (``ai.knowledge.research_outcome_planner``). Every accepted
+hypothesis gets a bounded outcome (current evidence, evidence gap, research
+objective, recommended offline review action, expected evidence, reason, safe
+stopping condition); hypotheses sharing the same evidence gap are correlated
+into one action; and the actions are ranked with documented bounded factor
+points. The plan is advisory only, forces ``NOT_CONFIRMED``, and never
+executes, authorizes or confirms anything.
+
 Hard boundaries preserved: research only, advisory only, no execution, no
 confirmation, no target activity, no secrets, deterministic envelope, bounded
 contexts and prompts, fail-closed validation, opt-in real provider.
@@ -53,6 +62,7 @@ Pipeline position (unchanged)::
       -> R68 evidence catalog + R69 skill methodology + research prompt
       -> existing ai.llm.openrouter.OpenRouterProvider (real, opt-in)
       -> Watch-side evidence resolution + per-hypothesis validation
+      -> R70 outcomes + ranked research actions (advisory, plan-only)
       -> research-only result envelope (printed and optionally persisted)
 """
 
@@ -67,6 +77,7 @@ import sys
 from pathlib import Path
 from typing import Mapping
 
+from ai.knowledge.research_outcome_planner import plan_research_actions
 from ai.knowledge.security_skills import render_skills, select_skills
 from ai.llm.base import LLMProvider
 from ai.schemas.agent_orchestrator_registry import CANONICAL_SPECIALIST_ORDER
@@ -76,7 +87,7 @@ from ai.schemas.research_priority import BAND_HIGH, BAND_LOW, BAND_MEDIUM
 from tests.local_e2e import r62_bridge as br
 from tests.local_e2e import recon_snapshot as rs
 
-RULE_VERSION = "r69-1"
+RULE_VERSION = "r70-1"
 
 STATUS_COMPLETED = "COMPLETED"
 STATUS_COMPLETED_WITH_REJECTIONS = "COMPLETED_WITH_REJECTIONS"
@@ -1353,6 +1364,7 @@ def run_research(
         if validation["rejected_count"]
         else STATUS_COMPLETED
     )
+    action_plan = plan_research_actions(research["hypotheses"])
 
     findings = input_hygiene(research_context, intelligence_context)
     snapshot_block = {
@@ -1384,6 +1396,7 @@ def run_research(
         "input_hygiene": dict(findings),
         "research": research,
         "validation": validation,
+        "action_plan": action_plan,
         "safety": safety_block(),
         "limitations": list(LIMITATIONS),
     }
@@ -1408,7 +1421,7 @@ def persist_result(result: Mapping, *, persist_dir: str | Path | None = None) ->
 def _print_result(result: Mapping, persisted_path: str = "") -> None:
     print("")
     print("=" * 66)
-    print("WATCH AI SECURITY RESEARCH (R69, evidence + skills)")
+    print("WATCH AI SECURITY RESEARCH (R70, evidence + skills + actions)")
     print("=" * 66)
     print(f"Status      : {result.get('status')}")
     print(f"Program     : {result.get('program')}")
@@ -1485,6 +1498,25 @@ def _print_result(result: Mapping, persisted_path: str = "") -> None:
                 f"{rejection.get('reason')} :: {title}"
             )
         print("")
+    action_plan = result.get("action_plan") or {}
+    actions = action_plan.get("actions") or []
+    if actions:
+        print("RESEARCH ACTIONS (ranked, advisory only)")
+        print("-" * 66)
+        for action in actions:
+            print(
+                f"{action.get('action_id')} [{action.get('priority')}] "
+                f"{action.get('category')} :: {action.get('objective')}"
+            )
+            print(
+                "   Hypotheses        : "
+                + ", ".join(action.get("hypothesis_refs") or [])
+            )
+            print(f"   Recommended       : {action.get('recommended_action')}")
+            print(f"   Expected evidence : {action.get('expected_evidence')}")
+            print(f"   Reason            : {action.get('reason')}")
+            print(f"   Stop condition    : {action.get('stopping_condition')}")
+            print("")
     print("-" * 66)
     print("[SAFETY] advisory research only; execution_performed=false;")
     print("         vulnerability_confirmed=false; exploit_authorized=false;")
@@ -1517,7 +1549,7 @@ def _mongo_snapshot(program: str, caps: Mapping) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tests.local_e2e.r64_research",
-        description="Watch R69 evidence-selection AI security research run",
+        description="Watch R70 AI security research run",
     )
     parser.add_argument(
         "--source",
@@ -1575,7 +1607,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print("")
-    print("WATCH AI SECURITY RESEARCH (R69, evidence + skills)")
+    print("WATCH AI SECURITY RESEARCH (R70, evidence + skills + actions)")
     print("-" * 66)
     print(f"Program            : {args.program}")
     print(f"Source             : {args.source}")

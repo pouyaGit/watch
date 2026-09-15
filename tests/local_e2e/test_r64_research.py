@@ -668,7 +668,7 @@ class TestResponseParsing(unittest.TestCase):
     def test_valid_response_parsed(self):
         result = fake_run(valid_payload())
         self.assertEqual(result["status"], "COMPLETED")
-        self.assertEqual(result["research_run_version"], "r69-1")
+        self.assertEqual(result["research_run_version"], "r70-1")
         self.assertEqual(
             result["validation"],
             {"accepted_count": 1, "rejected_count": 0, "rejections": []},
@@ -1551,6 +1551,100 @@ class TestR69SkillIntegration(unittest.TestCase):
         item = hypothesis()
         item["evidence_refs"] = [ref_id(PARAM_CLIENT)]
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
+
+
+class TestR70ActionPlanning(unittest.TestCase):
+    """R70: validated hypotheses become ranked, correlated research actions."""
+
+    def test_envelope_carries_ranked_action_plan(self):
+        result = fake_run(valid_payload())
+        plan = result["action_plan"]
+        self.assertEqual(plan["rule_version"], "r70-1")
+        self.assertEqual(len(plan["outcomes"]), 1)
+        self.assertEqual(plan["outcomes"][0]["hypothesis_ref"], "H1")
+        actions = plan["actions"]
+        self.assertEqual(len(actions), 1)
+        action = actions[0]
+        self.assertEqual(action["action_id"], "A1")
+        self.assertEqual(action["gap_id"], "OBJECT_AUTHORIZATION")
+        self.assertIn("H1", action["hypothesis_refs"])
+        for field in (
+            "objective",
+            "recommended_action",
+            "expected_evidence",
+            "reason",
+            "stopping_condition",
+        ):
+            self.assertTrue(action[field], field)
+        self.assertEqual(
+            action["safety"]["confirmation_state"], "NOT_CONFIRMED"
+        )
+        self.assertFalse(action["safety"]["vulnerability_confirmed"])
+        self.assertEqual(plan["summary"]["action_count"], 1)
+        self.assertEqual(plan["summary"]["top_action_id"], "A1")
+
+    def test_duplicate_gaps_are_correlated(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(title="First IDOR"),
+                hypothesis(title="Second IDOR"),
+            ]
+        )
+        result = fake_run(payload)
+        actions = result["action_plan"]["actions"]
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["hypothesis_count"], 2)
+        self.assertEqual(actions[0]["hypothesis_refs"], ["H1", "H2"])
+
+    def test_category_aware_gaps(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(),
+                hypothesis(
+                    title="Version exposure for CVE review",
+                    category="CVE_RESEARCH",
+                    priority="LOW",
+                    confidence="UNKNOWN",
+                    evidence_refs=[
+                        ref_id(TECH_NGINX),
+                        ref_id(VERSION_NGINX),
+                    ],
+                    inference=(
+                        "Known issues may affect these versions; component "
+                        "mapping was not verified."
+                    ),
+                ),
+            ]
+        )
+        result = fake_run(payload)
+        gaps = {
+            action["gap_id"]
+            for action in result["action_plan"]["actions"]
+        }
+        self.assertEqual(
+            gaps, {"OBJECT_AUTHORIZATION", "COMPONENT_MAPPING"}
+        )
+        summary = result["action_plan"]["summary"]
+        self.assertEqual(summary["action_count"], 2)
+        self.assertEqual(summary["covered_hypotheses"], 2)
+
+    def test_action_plan_is_deterministic(self):
+        first = fake_run(valid_payload())
+        second = fake_run(valid_payload())
+        self.assertEqual(
+            r64.canonical_json(first["action_plan"]),
+            r64.canonical_json(second["action_plan"]),
+        )
+
+    def test_persisted_artifact_contains_actions(self):
+        result = fake_run(valid_payload())
+        with TemporaryDirectory() as tmp:
+            path = r64.persist_result(result, persist_dir=tmp)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("action_plan", text)
+        self.assertIn("recommended_action", text)
+        self.assertIn("NOT_CONFIRMED", text)
+        self.assertNotIn("://", text)
 
 
 class TestRunSafetyAndDeterminism(unittest.TestCase):
