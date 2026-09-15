@@ -1,0 +1,263 @@
+{
+  "program": "indeed",
+  "programs": [
+    {
+      "_id": "fixture-prg-0001",
+      "program_name": "indeed",
+      "scopes": ["indeed.com", "indeedflex.com", "indeed.tech", "indeed.net"],
+      "ooscopes": ["partner.example"]
+    }
+  ],
+  "subdomains": [
+    {
+      "_id": "fixture-sub-0001",
+      "program_name": "indeed",
+      "subdomain": "www.indeed.com",
+      "scope": "indeed.com",
+      "providers": ["subfinder"],
+      "created_date": "2026-01-01T00:00:00",
+      "last_update": "2026-01-02T00:00:00"
+    },
+    {
+      "_id": "fixture-sub-0002",
+      "program_name": "indeed",
+      "subdomain": "secure.indeed.com",
+      "scope": "indeed.com",
+      "providers": ["assetfinder", "subfinder"],
+      "created_date": "2026-01-01T00:00:00",
+      "last_update": "2026-01-03T00:00:00"
+    },
+    {
+      "_id": "fixture-sub-0003",
+      "program_name": "indeed",
+      "subdomain": "api.qa.indeed.net",
+      "scope": "indeed.net",
+      "providers": ["crtsh"],
+      "created_date": "2026-01-01T00:00:00",
+      "last_update": "2026-01-04T00:00:00"
+    },
+    {
+      "_id": "fixture-sub-9001",
+      "program_name": "other-program",
+      "subdomain": "www.other.example",
+      "scope": "other.example",
+      "providers": ["subfinder"],
+      "created_date": "2026-01-01T00:00:00",
+      "last_update": "2026-01-05T00:00:00"
+    },
+    {
+      "_id": "fixture-sub-bad1",
+      "program_name": "indeed",
+      "scope": "indeed.com",
+      "providers": ["subfinder"]
+    }
+  ],
+  "live_subdomains": [
+    {
+      "_id": "fixture-live-0001",
+      "program_name": "indeed",
+      "subdomain": "abroad.indeed.com",
+      "scope": "indeed.com",
+      "ips": ["162.159.129.67", "162.159.130.67"],
+      "cdn": "Cloudflare"
+    },
+    {
+      "_id": "fixture-live-0002",
+      "program_name": "indeed",
+      "subdomain": "grafana.internal.aggtest.indeed.net",
+      "scope": "indeed.net",
+      "ips": ["10.0.0.11", "10.0.0.12"],
+      "cdn": "Internal"
+    },
+    {
+      "_id": "fixture-live-9001",
+      "program_name": "other-program",
+      "subdomain": "www.other.example",
+      "scope": "other.example",
+      "ips": ["192.0.2.10"],
+      "cdn": "Normal"
+    }
+  ],
+  "http": [
+    {
+      "_id": "fixture-http-0001",
+      "program_name": "indeed",
+      "subdomain": "www.indeed.com",
+      "scope": "indeed.com",
+      "ips": ["192.0.2.1"],
+      "tech": ["nginx:1.24.0", "jQuery:3.5.1", "HSTS"],
+      "title": "Indeed",
+      "status_code": 200,
+      "headers": {"Content-Type": "text/html", "Set-Cookie": "fixture-secret-cookie"},
+      "url": "https://www.indeed.com:443",
+      "final_url": "https://www.indeed.com/",
+      "favicon": "fixture-favicon"
+    },
+    {
+      "_id": "fixture-http-0002",
+      "program_name": "indeed",
+      "subdomain": "secure.indeed.com",
+      "scope": "indeed.com",
+      "ips": ["192.0.2.2"],
+      "tech": ["Cloudflare", "HTTP/3"],
+      "title": "",
+      "status_code": 403,
+      "url": "https://secure.indeed.com:443",
+      "final_url": ""
+    },
+    {
+      "_id": "fixture-http-0003",
+      "program_name": "indeed",
+      "subdomain": "api.qa.indeed.net",
+      "scope": "indeed.net",
+      "ips": ["192.0.2.3"],
+      "tech": [],
+      "title": "503 Service Temporarily Unavailable",
+      "status_code": 503,
+      "url": "https://api.qa.indeed.net:443",
+      "final_url": ""
+    },
+    {
+      "_id": "fixture-http-9001",
+      "program_name": "other-program",
+      "subdomain": "www.other.example",
+      "scope": "other.example",
+      "ips": ["192.0.2.20"],
+      "tech": ["nginx:1.24.0"],
+      "title": "Other",
+      "status_code": 200,
+      "url": "https://www.other.example:443",
+      "final_url": ""
+    }
+  ],
+  "urls": [
+    {
+      "_id": "fixture-url-0001",
+      "program_name": "indeed",
+      "subdomain": "www.indeed.com",
+      "url": "https://www.indeed.com/auth?continue=https%3A%2F%2Fwww.indeed.com%2F&hl=en",
+      "path": "/auth",
+      "params": ["continue", "hl"],
+      "sources": ["katana", "http-seed"]
+    },
+    {
+      "_id": "fixture-url-0002",
+      "program_name": "indeed",
+      "subdomain": "www.indeed.com",
+      "url": "https://www.indeed.com/signals/log?from=gnav\\u0026parentLogId=abc\\",
+      "path": "/signals/log",
+      "params": ["from", "parentLogId"],
+      "sources": ["katana"]
+    },
+    {
+      "_id": "fixture-url-0003",
+      "program_name": "indeed",
+      "subdomain": "secure.indeed.com",
+      "url": "https://secure.indeed.com/?hl=en&amp;co=us",
+      "path": "/",
+      "params": ["amp;co", "hl"],
+      "sources": ["katana"]
+    },
+    {
+      "_id": "fixture-url-0004",
+      "program_name": "indeed",
+      "subdomain": "secure.indeed.com",
+      "url": "https://secure.indeed.com/account/logout",
+      "path": "/account/logout",
+      "params": [],
+      "sources": ["katana"]
+    },
+    {
+      "_id": "fixture-url-9001",
+      "program_name": "other-program",
+      "subdomain": "www.other.example",
+      "url": "https://www.other.example/api?x=1",
+      "path": "/api",
+      "params": ["x"],
+      "sources": ["katana"]
+    }
+  ],
+  "endpoints": [
+    {
+      "_id": "fixture-ep-0001",
+      "program_name": "indeed",
+      "subdomain": "secure.indeed.com",
+      "path": "/auth",
+      "example_url": "https://secure.indeed.com/auth?co=us&continue=%2F",
+      "params": ["co", "continue"],
+      "params_from_crawl": ["co", "continue"],
+      "params_from_x8": [],
+      "x8_checked": true,
+      "hit_count": 49073,
+      "param_records": [
+        {"name": "co", "method": "GET", "location": "query", "source": "crawl"},
+        {"name": "continue", "method": "GET", "location": "query", "source": "crawl"}
+      ]
+    },
+    {
+      "_id": "fixture-ep-0002",
+      "program_name": "indeed",
+      "subdomain": "www.indeed.com",
+      "path": "/notifications/api/{id}/getNotificationsCount",
+      "example_url": "https://www.indeed.com/notifications/api/1/getNotificationsCount?client=gnav",
+      "params": ["client"],
+      "params_from_crawl": ["client"],
+      "params_from_x8": ["kw", "sid"],
+      "x8_checked": true,
+      "hit_count": 10133,
+      "param_records": [
+        {"name": "client", "method": "GET", "location": "query", "source": "crawl"},
+        {"name": "kw", "method": "POST", "location": "body", "source": "x8"},
+        {"name": "sid", "method": "GET", "location": "query", "source": "x8"}
+      ]
+    },
+    {
+      "_id": "fixture-ep-0003",
+      "program_name": "indeed",
+      "subdomain": "www.indeed.com",
+      "path": "/signals/log",
+      "example_url": "https://www.indeed.com/signals/log",
+      "params": [],
+      "params_from_crawl": [],
+      "params_from_x8": [],
+      "x8_checked": false,
+      "hit_count": 6,
+      "param_records": []
+    },
+    {
+      "_id": "fixture-ep-0004",
+      "program_name": "indeed",
+      "subdomain": "www.indeed.com",
+      "path": "/weird",
+      "example_url": "https://www.indeed.com/weird",
+      "params": "not-a-list",
+      "params_from_crawl": null,
+      "params_from_x8": null,
+      "x8_checked": "yes",
+      "hit_count": -1,
+      "param_records": [null, {"name": "", "method": "GET", "location": "query", "source": "crawl"}]
+    },
+    {
+      "_id": "fixture-ep-9001",
+      "program_name": "other-program",
+      "subdomain": "www.other.example",
+      "path": "/api",
+      "example_url": "https://www.other.example/api?x=1",
+      "params": ["x"],
+      "params_from_crawl": ["x"],
+      "params_from_x8": [],
+      "x8_checked": false,
+      "hit_count": 3,
+      "param_records": []
+    },
+    {
+      "_id": "fixture-ep-bad1",
+      "program_name": "indeed",
+      "path": "/orphan",
+      "example_url": "https://orphan.indeed.com/",
+      "params": ["q"],
+      "x8_checked": false,
+      "hit_count": 1
+    }
+  ]
+}
