@@ -19,6 +19,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
+from ai.knowledge.security_skills import MAX_SKILLS as SKILL_LIMIT
 from ai.llm.base import LLMProvider, LLMResult
 from tests.local_e2e import r62_bridge as br
 from tests.local_e2e import r64_research as r64
@@ -667,7 +668,7 @@ class TestResponseParsing(unittest.TestCase):
     def test_valid_response_parsed(self):
         result = fake_run(valid_payload())
         self.assertEqual(result["status"], "COMPLETED")
-        self.assertEqual(result["research_run_version"], "r68-1")
+        self.assertEqual(result["research_run_version"], "r69-1")
         self.assertEqual(
             result["validation"],
             {"accepted_count": 1, "rejected_count": 0, "rejections": []},
@@ -1519,6 +1520,39 @@ class TestR68EvidenceSelection(unittest.TestCase):
         self.assert_error_code(result, "MODEL_OUTPUT_UNGROUNDED")
 
 
+class TestR69SkillIntegration(unittest.TestCase):
+    """R69: bounded, deterministic skill methodology inside the prompt."""
+
+    def test_prompt_carries_bounded_skill_methodology(self):
+        prompt = r64.build_research_prompt(RESEARCH, INTEL)
+        self.assertIn("research_skills", prompt)
+        self.assertIn("RESEARCH SKILLS", prompt)
+        self.assertIn("idor-bola", prompt)
+        self.assertIn("open-redirect", prompt)
+        self.assertIn("cve-research", prompt)
+        self.assertEqual(prompt.count("when: "), SKILL_LIMIT)
+        self.assertNotIn("sqli [", prompt)
+        self.assertNotIn("ssrf [", prompt)
+
+    def test_skill_selection_is_deterministic(self):
+        first = r64.build_research_prompt(RESEARCH, INTEL)
+        second = r64.build_research_prompt(RESEARCH, INTEL)
+        self.assertEqual(first, second)
+
+    def test_no_skills_for_structurally_empty_context(self):
+        research, intel = empty_contexts()
+        prompt = r64.build_research_prompt(research, intel)
+        self.assertNotIn("research_skills", prompt)
+        self.assertNotIn("RESEARCH SKILLS", prompt)
+
+    def test_skills_do_not_bypass_validation(self):
+        prompt = r64.build_research_prompt(RESEARCH, INTEL)
+        self.assertIn("idor-bola", prompt)
+        item = hypothesis()
+        item["evidence_refs"] = [ref_id(PARAM_CLIENT)]
+        expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
+
+
 class TestRunSafetyAndDeterminism(unittest.TestCase):
     def test_safety_invariants(self):
         result = fake_run(valid_payload())
@@ -1671,6 +1705,7 @@ class TestInputHygiene(unittest.TestCase):
         self.assertIn("PREFLIGHT OK", output)
         self.assertIn("WATCH_R64_LIVE=1", output)
         self.assertIn("Evidence items", output)
+        self.assertIn("Research skills", output)
 
 
 if __name__ == "__main__":

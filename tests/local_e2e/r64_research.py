@@ -35,6 +35,14 @@ R65/R66 validation runs. Evidence identity and canonicalization remain
 Watch-owned; selection cannot create, copy, paraphrase, combine or modify
 evidence text.
 
+R69 adds a bounded, deterministic, research-only skill library
+(``ai.knowledge.security_skills``). The model receives the compact methodology
+of only the skills relevant to the context (verified watch signals plus
+deterministic evidence patterns) inside the existing prompt budget. Skills
+guide reasoning and false-positive control; they are not evidence, never
+authorize execution, and never replace evidence resolution or the R65/R66
+validation gates.
+
 Hard boundaries preserved: research only, advisory only, no execution, no
 confirmation, no target activity, no secrets, deterministic envelope, bounded
 contexts and prompts, fail-closed validation, opt-in real provider.
@@ -42,7 +50,7 @@ contexts and prompts, fail-closed validation, opt-in real provider.
 Pipeline position (unchanged)::
 
     R61 snapshot -> R62 bridge (bounded contexts + signals)
-      -> R68 evidence catalog (deterministic E-ids) + research prompt
+      -> R68 evidence catalog + R69 skill methodology + research prompt
       -> existing ai.llm.openrouter.OpenRouterProvider (real, opt-in)
       -> Watch-side evidence resolution + per-hypothesis validation
       -> research-only result envelope (printed and optionally persisted)
@@ -59,6 +67,7 @@ import sys
 from pathlib import Path
 from typing import Mapping
 
+from ai.knowledge.security_skills import render_skills, select_skills
 from ai.llm.base import LLMProvider
 from ai.schemas.agent_orchestrator_registry import CANONICAL_SPECIALIST_ORDER
 from ai.schemas.evidence_confidence import CONFIDENCE_LEVELS
@@ -67,7 +76,7 @@ from ai.schemas.research_priority import BAND_HIGH, BAND_LOW, BAND_MEDIUM
 from tests.local_e2e import r62_bridge as br
 from tests.local_e2e import recon_snapshot as rs
 
-RULE_VERSION = "r68-1"
+RULE_VERSION = "r69-1"
 
 STATUS_COMPLETED = "COMPLETED"
 STATUS_COMPLETED_WITH_REJECTIONS = "COMPLETED_WITH_REJECTIONS"
@@ -468,10 +477,20 @@ def _format_evidence_item(item: Mapping) -> str:
     return f"{item.get('id')} [{_text(item.get('kind'))}] {_text(item.get('value'))}"
 
 
-def _instructions() -> str:
+def _instructions(skill_count: int = 0) -> str:
     categories = ", ".join(ALLOWED_CATEGORIES)
     priorities = ", ".join(ALLOWED_PRIORITIES)
     confidence = ", ".join(ALLOWED_CONFIDENCE)
+    skills_note = ""
+    if skill_count:
+        skills_note = (
+            "RESEARCH SKILLS: the research_skills entries are bounded Watch "
+            "methodology for the categories most relevant to this context. "
+            "Use them to guide reasoning and false-positive control; they are "
+            "not evidence, not authorization for any action, and never prove "
+            "a vulnerability.\n"
+            "\n"
+        )
     return (
         "You are a security research assistant operating in an offline, "
         "research-only workflow. You receive a bounded, sampled reconnaissance "
@@ -526,7 +545,8 @@ def _instructions() -> str:
         "The data is a bounded SAMPLE; absence in the data never proves "
         "absence from the program.\n"
         "\n"
-        "OUTPUT: return one JSON object only, with this shape:\n"
+        + skills_note
+        + "OUTPUT: return one JSON object only, with this shape:\n"
         '{"summary": "...", "attack_surface": ["..."], "hypotheses": [{\n'
         f'  "title": "...", "category": "one of {categories}",\n'
         f'  "priority": "one of {priorities}",\n'
@@ -545,11 +565,25 @@ def _instructions() -> str:
     )
 
 
+def selected_research_skills(
+    intelligence_context: Mapping,
+    catalog: list[dict],
+) -> list[dict]:
+    """Deterministically select the bounded skill set for one context (R69)."""
+
+    signals = (
+        intelligence_context.get("specialist_signals")
+        if isinstance(intelligence_context, Mapping)
+        else None
+    )
+    return select_skills(signals=signals, evidence=catalog)
+
+
 def build_research_prompt(
     research_context: Mapping,
     intelligence_context: Mapping,
 ) -> str:
-    """Build the bounded R68 research prompt with selectable evidence ids."""
+    """Build the bounded R69 prompt (evidence ids + skill methodology)."""
 
     findings = input_hygiene(research_context, intelligence_context)
     unsafe = [key for key, value in findings.items() if value]
@@ -559,22 +593,34 @@ def build_research_prompt(
             "bounded context carries unsafe material; refusing to send it",
         )
     catalog = evidence_catalog(research_context, intelligence_context)
-    payload = {
+    base_payload = {
         "research_context": dict(research_context),
         "intelligence_context": dict(intelligence_context),
         "available_evidence": [
             _format_evidence_item(item) for item in catalog
         ],
     }
-    serialized = br.canonical_json(payload)
-    if len(serialized) > MAX_PROMPT_CONTEXT_CHARS:
+    skills = render_skills(
+        selected_research_skills(intelligence_context, catalog)
+    )
+    serialized = ""
+    skill_count = 0
+    for count in range(len(skills), -1, -1):
+        candidate = dict(base_payload)
+        if count:
+            candidate["research_skills"] = list(skills[:count])
+        serialized = br.canonical_json(candidate)
+        if len(serialized) <= MAX_PROMPT_CONTEXT_CHARS:
+            skill_count = count
+            break
+    if not serialized or len(serialized) > MAX_PROMPT_CONTEXT_CHARS:
         raise ResearchRunError(
             "INPUT_TOO_LARGE",
             "bounded context exceeds the prompt size budget",
         )
     data = _defuse_markers(serialized)
     return (
-        _instructions()
+        _instructions(skill_count)
         + "\n"
         + DATA_BEGIN
         + "\n"
@@ -1362,7 +1408,7 @@ def persist_result(result: Mapping, *, persist_dir: str | Path | None = None) ->
 def _print_result(result: Mapping, persisted_path: str = "") -> None:
     print("")
     print("=" * 66)
-    print("WATCH AI SECURITY RESEARCH (R68, evidence-selection)")
+    print("WATCH AI SECURITY RESEARCH (R69, evidence + skills)")
     print("=" * 66)
     print(f"Status      : {result.get('status')}")
     print(f"Program     : {result.get('program')}")
@@ -1471,7 +1517,7 @@ def _mongo_snapshot(program: str, caps: Mapping) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tests.local_e2e.r64_research",
-        description="Watch R68 evidence-selection AI security research run",
+        description="Watch R69 evidence-selection AI security research run",
     )
     parser.add_argument(
         "--source",
@@ -1529,7 +1575,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print("")
-    print("WATCH AI SECURITY RESEARCH (R68, evidence-selection)")
+    print("WATCH AI SECURITY RESEARCH (R69, evidence + skills)")
     print("-" * 66)
     print(f"Program            : {args.program}")
     print(f"Source             : {args.source}")
@@ -1548,6 +1594,17 @@ def main(argv: list[str] | None = None) -> int:
     print(
         "Evidence items     : "
         f"{len(evidence_catalog(research_context, intelligence_context))}"
+    )
+    skill_ids = [
+        skill["skill_id"]
+        for skill in selected_research_skills(
+            intelligence_context,
+            evidence_catalog(research_context, intelligence_context),
+        )
+    ]
+    print(
+        "Research skills    : "
+        + (", ".join(skill_ids) if skill_ids else "(none)")
     )
 
     try:
