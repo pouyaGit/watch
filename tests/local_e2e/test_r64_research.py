@@ -1,4 +1,5 @@
-"""Focused tests for R65 evidence-grounded research validation (R66 partial).
+"""Focused tests for R65 grounding with R66 partial acceptance and R68
+evidence selection.
 
 All tests are offline. The real OpenRouter provider is never constructed in
 the default path; a deterministic fake provider is injected only inside these
@@ -34,6 +35,18 @@ RESEARCH = br.build_research_context(SNAPSHOT, INVENTORY, r31=R31)
 INTEL = br.build_intelligence_context(SNAPSHOT, INVENTORY, r31=R31, signals=SIGNALS)
 INDEX = r64.evidence_index(RESEARCH, INTEL)
 SIGNAL_INDEX = r64.signal_index(INTEL)
+CATALOG = r64.evidence_catalog(RESEARCH, INTEL)
+CATALOG_BY_ID = {item["id"]: item for item in CATALOG}
+REF_ID = {
+    f"{item['kind']}:{item['value']}": item["id"]
+    for item in CATALOG
+    if item["kind"] != "derived_signal"
+}
+SIGNAL_ID = {
+    (item["signal"], item["detail"]): item["id"]
+    for item in CATALOG
+    if item["kind"] == "derived_signal"
+}
 
 LEGACY_ARTIFACT = Path("ai_data/research/r64/r64-indeed-2ea29240244dcf5b.json")
 
@@ -41,6 +54,14 @@ PATH_REF = "path:/notifications/api/{id}/getNotificationsCount"
 PARAM_CLIENT = "parameter:client"
 TECH_NGINX = "technology:nginx"
 VERSION_NGINX = "version:1.24.0"
+
+
+def ref_id(ref: str) -> str:
+    return REF_ID[ref]
+
+
+def signal_id(name: str, detail: str) -> str:
+    return SIGNAL_ID[(name, detail)]
 
 
 class _FakeProvider(LLMProvider):
@@ -93,13 +114,12 @@ def hypothesis(**overrides) -> dict:
         "category": "IDOR",
         "priority": "MEDIUM",
         "confidence": "MEDIUM",
-        "evidence": {
-            "observations": [observation(PATH_REF), observation(PARAM_CLIENT)],
-            "derived_signals": [
-                signal("IDOR", "object_reference=PATH_PARAMETER"),
-                signal("RECON", "api_type=REST"),
-            ],
-        },
+        "evidence_refs": [
+            ref_id(PATH_REF),
+            ref_id(PARAM_CLIENT),
+            signal_id("IDOR", "object_reference=PATH_PARAMETER"),
+            signal_id("RECON", "api_type=REST"),
+        ],
         "inference": (
             "The identifier may represent an object reference; authorization "
             "behavior has not been observed."
@@ -119,6 +139,25 @@ def hypothesis(**overrides) -> dict:
     }
     item.update(overrides)
     return item
+
+
+def as_evidence_selection(payload: dict) -> dict:
+    """Convert an R65-style response into the R68 evidence selection contract.
+
+    Used to replay historical captures as selection material without editing
+    their evidence intent.
+    """
+
+    converted = deepcopy(payload)
+    for item in converted.get("hypotheses") or ():
+        refs: list[str] = []
+        evidence = item.pop("evidence", {}) or {}
+        for entry in evidence.get("observations") or ():
+            refs.append(ref_id(entry["ref"]))
+        for entry in evidence.get("derived_signals") or ():
+            refs.append(signal_id(entry["signal"], entry["detail"]))
+        item["evidence_refs"] = refs
+    return converted
 
 
 def valid_payload(**overrides) -> dict:
@@ -211,9 +250,10 @@ class TestContextAndPrompt(unittest.TestCase):
         prompt = r64.build_research_prompt(RESEARCH, INTEL)
         self.assertIn(r64.DATA_BEGIN, prompt)
         self.assertIn(r64.DATA_END, prompt)
-        self.assertIn("available_observation_refs", prompt)
-        self.assertIn(PARAM_CLIENT, prompt)
-        self.assertIn(PATH_REF, prompt)
+        self.assertIn("available_evidence", prompt)
+        self.assertIn("evidence_refs", prompt)
+        self.assertIn(PARAM_CLIENT.split(":", 1)[1], prompt)
+        self.assertIn(PATH_REF.split(":", 1)[1], prompt)
         self.assertLess(
             prompt.index(r64.DATA_BEGIN), prompt.index(r64.DATA_END)
         )
@@ -270,72 +310,99 @@ class TestContextAndPrompt(unittest.TestCase):
 class TestObservationGrounding(unittest.TestCase):
     def test_unknown_ref_rejected(self):
         item = hypothesis()
-        item["evidence"]["observations"] = [observation("path:/does-not-exist")]
+        item["evidence_refs"] = ["E9999"]
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
 
-    def test_fact_must_match_ref(self):
-        item = hypothesis()
-        item["evidence"]["observations"] = [
-            observation(
-                PARAM_CLIENT,
-                "The continue parameter is definitely an open redirect",
-            )
+    def test_selected_evidence_resolves_canonical_fact(self):
+        result = fake_run(valid_payload())
+        observations = result["research"]["hypotheses"][0]["evidence"][
+            "observations"
         ]
-        expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
+        self.assertEqual(len(observations), 2)
+        for entry in observations:
+            self.assertEqual(
+                entry["fact"], r64.canonical_fact(entry["ref"])
+            )
+            self.assertEqual(entry["source"], "context")
 
-    def test_sid_is_a_jwt_cannot_be_an_observation(self):
+    def test_forged_evidence_text_is_not_trusted(self):
         item = hypothesis(
-            title="Session token concern",
-            category="RECON",
-            priority="LOW",
-            confidence="LOW",
             evidence={
                 "observations": [
-                    observation("parameter:sid", "sid is a JWT")
-                ],
-                "derived_signals": [],
-            },
+                    observation(
+                        PARAM_CLIENT,
+                        "The continue parameter is definitely an open redirect",
+                    )
+                ]
+            }
+        )
+        result = fake_run(valid_payload(hypotheses=[item]))
+        text = r64.canonical_json(result)
+        self.assertNotIn("definitely an open redirect", text)
+        self.assertEqual(result["status"], "COMPLETED")
+
+    def test_parameter_name_is_not_jwt_evidence(self):
+        item = hypothesis(
+            title="Session token concern",
+            category="JWT",
+            priority="LOW",
+            confidence="LOW",
+            evidence_refs=[ref_id("parameter:sid")],
+            inference="sid may be a JWT token; token format was not observed.",
         )
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
 
-    def test_weird_is_a_debug_endpoint_cannot_be_an_observation(self):
+    def test_endpoint_name_is_not_purpose_evidence(self):
         item = hypothesis(
             title="Unusual endpoint",
             category="RECON",
             priority="LOW",
             confidence="LOW",
+            evidence_refs=[ref_id("path:/weird")],
             evidence={
                 "observations": [
                     observation("path:/weird", "/weird is a debug endpoint")
-                ],
-                "derived_signals": [],
+                ]
             },
+            inference=(
+                "The purpose of this endpoint is unknown; unusual naming may "
+                "indicate debug or legacy functionality."
+            ),
         )
-        expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
+        result = fake_run(valid_payload(hypotheses=[item]))
+        text = r64.canonical_json(result)
+        self.assertNotIn("/weird is a debug endpoint", text)
+        self.assertEqual(result["status"], "COMPLETED")
 
     def test_signal_ref_cannot_be_an_observation(self):
         item = hypothesis()
-        item["evidence"]["observations"] = [
-            observation(PATH_REF),
-            {
-                "ref": "signal:IDOR",
-                "fact": "observed signal IDOR",
-                "source": "context",
-            },
-        ]
+        item["evidence_refs"] = ["signal:IDOR"]
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
 
-    def test_source_must_be_context(self):
+    def test_duplicate_refs_are_deduplicated(self):
         item = hypothesis()
-        item["evidence"]["observations"] = [
-            {**observation(PATH_REF), "source": "model"}
+        item["evidence_refs"] = [
+            ref_id(PATH_REF),
+            ref_id(PATH_REF),
+            signal_id("IDOR", "object_reference=PATH_PARAMETER"),
+            signal_id("IDOR", "object_reference=PATH_PARAMETER"),
         ]
-        expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
+        result = fake_run(valid_payload(hypotheses=[item]))
+        self.assertEqual(result["status"], "COMPLETED")
+        hypothesis_out = result["research"]["hypotheses"][0]
+        self.assertEqual(
+            hypothesis_out["selected_evidence_refs"],
+            [
+                ref_id(PATH_REF),
+                signal_id("IDOR", "object_reference=PATH_PARAMETER"),
+            ],
+        )
+        self.assertEqual(len(hypothesis_out["evidence"]["observations"]), 1)
+        self.assertEqual(len(hypothesis_out["evidence"]["derived_signals"]), 1)
 
     def test_hypothesis_requires_an_observation(self):
         item = hypothesis()
-        item["evidence"]["observations"] = []
-        item["evidence"]["derived_signals"] = []
+        item["evidence_refs"] = []
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
 
 
@@ -349,22 +416,26 @@ class TestDerivedSignals(unittest.TestCase):
         )
         self.assertEqual(evidence["derived_signals"][0]["signal"], "IDOR")
 
-    def test_unknown_signal_rejected(self):
+    def test_unknown_signal_reference_rejected(self):
         item = hypothesis()
-        item["evidence"]["derived_signals"] = [signal("XSS")]
+        item["evidence_refs"] = [ref_id(PATH_REF), "E9999"]
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
 
-    def test_signal_source_must_be_watch_derived(self):
-        item = hypothesis()
-        item["evidence"]["derived_signals"] = [
-            {"signal": "IDOR", "detail": "", "source": "model"}
+    def test_derived_signals_resolve_with_watch_source(self):
+        result = fake_run(valid_payload())
+        derived = result["research"]["hypotheses"][0]["evidence"][
+            "derived_signals"
         ]
-        expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
+        self.assertEqual(len(derived), 2)
+        for entry in derived:
+            self.assertEqual(entry["source"], "watch_derived")
+            self.assertIn(entry["detail"], SIGNAL_INDEX[entry["signal"]])
 
-    def test_signal_detail_must_match_context(self):
+    def test_combined_signal_detail_string_rejected(self):
         item = hypothesis()
-        item["evidence"]["derived_signals"] = [
-            signal("IDOR", "object_reference=QUERY_PARAMETER")
+        item["evidence_refs"] = [
+            ref_id(PATH_REF),
+            "api_type=REST, api_versioning=VERSIONED_OBSERVED",
         ]
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
 
@@ -376,18 +447,14 @@ class TestCategoryGrounding(unittest.TestCase):
             category="JWT",
             priority="LOW",
             confidence="LOW",
-            evidence={
-                "observations": [observation("parameter:sid")],
-                "derived_signals": [],
-            },
+            evidence_refs=[ref_id("parameter:sid")],
             inference="sid may be a session token; token format was not observed.",
         )
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
 
     def test_idor_requires_object_reference_path(self):
         item = hypothesis()
-        item["evidence"]["observations"] = [observation(PARAM_CLIENT)]
-        item["evidence"]["derived_signals"] = []
+        item["evidence_refs"] = [ref_id(PARAM_CLIENT)]
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
 
     def test_ssrf_conditional_low_accepted(self):
@@ -396,13 +463,10 @@ class TestCategoryGrounding(unittest.TestCase):
             category="SSRF",
             priority="LOW",
             confidence="LOW",
-            evidence={
-                "observations": [
-                    observation("parameter:client"),
-                    observation("parameter:co"),
-                ],
-                "derived_signals": [],
-            },
+            evidence_refs=[
+                ref_id("parameter:client"),
+                ref_id("parameter:co"),
+            ],
             inference=(
                 "If these parameters accept URLs or hostnames, backend "
                 "requests might be influenced; value formats were not observed."
@@ -420,10 +484,7 @@ class TestCategoryGrounding(unittest.TestCase):
             category="SSRF",
             priority="LOW",
             confidence="LOW",
-            evidence={
-                "observations": [observation("parameter:client")],
-                "derived_signals": [],
-            },
+            evidence_refs=[ref_id("parameter:client")],
             inference="These parameters control backend requests.",
         )
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
@@ -434,10 +495,7 @@ class TestCategoryGrounding(unittest.TestCase):
             category="RECON",
             priority="LOW",
             confidence="LOW",
-            evidence={
-                "observations": [observation("parameter:continue")],
-                "derived_signals": [],
-            },
+            evidence_refs=[ref_id("parameter:continue")],
             inference=(
                 "If the continue parameter controls redirects it might be "
                 "abused; redirect behavior was not observed."
@@ -451,10 +509,7 @@ class TestCategoryGrounding(unittest.TestCase):
             category="RECON",
             priority="LOW",
             confidence="LOW",
-            evidence={
-                "observations": [observation("parameter:sid")],
-                "derived_signals": [],
-            },
+            evidence_refs=[ref_id("parameter:sid")],
             inference=(
                 "If sid is accepted from the client, session fixation might "
                 "be possible; session behavior was not observed."
@@ -468,10 +523,7 @@ class TestCategoryGrounding(unittest.TestCase):
             category="RECON",
             priority="LOW",
             confidence="LOW",
-            evidence={
-                "observations": [observation("path:/weird")],
-                "derived_signals": [],
-            },
+            evidence_refs=[ref_id("path:/weird")],
             inference=(
                 "The purpose of this endpoint is unknown; unusual naming may "
                 "indicate debug or legacy functionality."
@@ -487,10 +539,7 @@ class TestCategoryGrounding(unittest.TestCase):
             category="CVE_RESEARCH",
             priority="LOW",
             confidence="UNKNOWN",
-            evidence={
-                "observations": [observation(VERSION_NGINX)],
-                "derived_signals": [],
-            },
+            evidence_refs=[ref_id(VERSION_NGINX)],
             inference="Known issues may affect these versions.",
         )
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
@@ -501,13 +550,7 @@ class TestCategoryGrounding(unittest.TestCase):
             category="CVE_RESEARCH",
             priority="LOW",
             confidence="UNKNOWN",
-            evidence={
-                "observations": [
-                    observation(TECH_NGINX),
-                    observation(VERSION_NGINX),
-                ],
-                "derived_signals": [],
-            },
+            evidence_refs=[ref_id(TECH_NGINX), ref_id(VERSION_NGINX)],
             inference=(
                 "Known issues may affect these versions; component mapping "
                 "was not verified."
@@ -534,10 +577,7 @@ class TestStrengthCaps(unittest.TestCase):
             category="RECON",
             priority="MEDIUM",
             confidence="MEDIUM",
-            evidence={
-                "observations": [observation(PARAM_CLIENT)],
-                "derived_signals": [],
-            },
+            evidence_refs=[ref_id(PARAM_CLIENT)],
             inference="The parameter name may indicate an integration field.",
         )
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
@@ -558,10 +598,7 @@ class TestUnsafeClaims(unittest.TestCase):
             category="RECON",
             priority="LOW",
             confidence="LOW",
-            evidence={
-                "observations": [observation("path:/weird")],
-                "derived_signals": [],
-            },
+            evidence_refs=[ref_id("path:/weird")],
             inference=inference,
         )
 
@@ -630,7 +667,7 @@ class TestResponseParsing(unittest.TestCase):
     def test_valid_response_parsed(self):
         result = fake_run(valid_payload())
         self.assertEqual(result["status"], "COMPLETED")
-        self.assertEqual(result["research_run_version"], "r66-1")
+        self.assertEqual(result["research_run_version"], "r68-1")
         self.assertEqual(
             result["validation"],
             {"accepted_count": 1, "rejected_count": 0, "rejections": []},
@@ -644,6 +681,7 @@ class TestResponseParsing(unittest.TestCase):
         self.assertIn("inference", hypothesis_out)
         self.assertIn("observations", hypothesis_out["evidence"])
         self.assertIn("derived_signals", hypothesis_out["evidence"])
+        self.assertTrue(hypothesis_out["selected_evidence_refs"])
 
     def test_malformed_responses_fail_closed(self):
         for content in (
@@ -696,9 +734,9 @@ class TestResponseParsing(unittest.TestCase):
         )
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_TOO_LARGE")
 
-    def test_missing_evidence_block_rejected(self):
+    def test_missing_evidence_refs_rejected(self):
         item = hypothesis()
-        item.pop("evidence")
+        item.pop("evidence_refs")
         expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_INVALID")
 
     def test_code_fenced_json_is_accepted(self):
@@ -906,12 +944,14 @@ class TestR66PartialAcceptance(unittest.TestCase):
 
     H1 (IDOR, MEDIUM/MEDIUM) is valid, H2 (RECON, HIGH confidence from
     structural-only evidence) violates the unchanged confidence cap, and
-    H3 (CVE_RESEARCH, LOW/UNKNOWN) is valid. A bad hypothesis must no longer
-    destroy the valid research around it.
+    H3 (CVE_RESEARCH, LOW/UNKNOWN) is valid. The capture is replayed through
+    the R68 selection contract; a bad hypothesis must no longer destroy the
+    valid research around it.
     """
 
     def partial_run(self):
-        provider = _FakeProvider(R65_CAPTURED_RESPONSE)
+        payload = as_evidence_selection(json.loads(R65_CAPTURED_RESPONSE))
+        provider = _FakeProvider(json.dumps(payload))
         return r64.run_research(RESEARCH, INTEL, provider=provider)
 
     def test_captured_r65_response_is_partially_accepted(self):
@@ -1078,12 +1118,7 @@ class TestR66PartialAcceptance(unittest.TestCase):
                 "MODEL_OUTPUT_UNGROUNDED",
                 hypothesis(
                     title="bad grounding",
-                    evidence={
-                        "observations": [
-                            observation("path:/not-in-context")
-                        ],
-                        "derived_signals": [],
-                    },
+                    evidence_refs=["E9999"],
                 ),
             ),
         )
@@ -1147,6 +1182,341 @@ class TestR66PartialAcceptance(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             r64.persist_result(result, persist_dir=tmp)
         self.assertEqual(before, LEGACY_ARTIFACT.read_bytes())
+
+
+class TestR68EvidenceSelection(unittest.TestCase):
+    """R68: the model selects evidence ids, Watch owns canonical evidence."""
+
+    def assert_error_code(self, result, code):
+        self.assertEqual(result["status"], "ERROR", result)
+        self.assertEqual(result["error"]["code"], code, result["error"])
+        self.assertNotIn("research", result)
+
+    def test_evidence_catalog_is_deterministic_and_numbered(self):
+        first = r64.evidence_catalog(RESEARCH, INTEL)
+        second = r64.evidence_catalog(RESEARCH, INTEL)
+        self.assertEqual(first, second)
+        self.assertEqual(
+            [item["id"] for item in first],
+            [f"E{position}" for position in range(1, len(first) + 1)],
+        )
+        self.assertEqual(len({item["id"] for item in first}), len(first))
+
+    def test_evidence_ids_start_at_e1(self):
+        first_three = CATALOG[:3]
+        self.assertEqual(
+            [item["id"] for item in first_three], ["E1", "E2", "E3"]
+        )
+        for item in first_three:
+            self.assertIn(item["kind"], r64.REF_KINDS)
+
+    def test_catalog_traces_back_to_context(self):
+        for item in CATALOG:
+            if item["kind"] == "derived_signal":
+                self.assertIn(item["detail"], SIGNAL_INDEX[item["signal"]])
+            else:
+                self.assertIn(f"{item['kind']}:{item['value']}", INDEX)
+
+    def test_valid_selection_resolves_canonical_evidence(self):
+        result = fake_run(valid_payload())
+        hypothesis_out = result["research"]["hypotheses"][0]
+        self.assertEqual(
+            hypothesis_out["selected_evidence_refs"],
+            [
+                ref_id(PATH_REF),
+                ref_id(PARAM_CLIENT),
+                signal_id("IDOR", "object_reference=PATH_PARAMETER"),
+                signal_id("RECON", "api_type=REST"),
+            ],
+        )
+        for entry in hypothesis_out["evidence"]["observations"]:
+            self.assertEqual(entry["fact"], r64.canonical_fact(entry["ref"]))
+            self.assertEqual(entry["source"], "context")
+        for entry in hypothesis_out["evidence"]["derived_signals"]:
+            self.assertEqual(entry["source"], "watch_derived")
+
+    def test_unknown_evidence_reference_rejected(self):
+        item = hypothesis(evidence_refs=[ref_id(PATH_REF), "E9999"])
+        expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
+
+    def test_evidence_reference_cannot_fabricate_a_fact(self):
+        item = hypothesis(
+            category="RECON",
+            priority="LOW",
+            confidence="LOW",
+            evidence_refs=[ref_id(PARAM_CLIENT)],
+            evidence={
+                "observations": [
+                    {
+                        "ref": PARAM_CLIENT,
+                        "fact": "client controls a redirect",
+                        "source": "context",
+                    }
+                ],
+                "derived_signals": [],
+            },
+        )
+        result = fake_run(valid_payload(hypotheses=[item]))
+        text = r64.canonical_json(result)
+        self.assertNotIn("client controls a redirect", text)
+        self.assertIn(r64.canonical_fact(PARAM_CLIENT), text)
+
+    def test_derived_signal_selected_separately(self):
+        item = hypothesis(
+            evidence_refs=[
+                ref_id(PATH_REF),
+                signal_id("IDOR", "object_reference=PATH_PARAMETER"),
+            ]
+        )
+        result = fake_run(valid_payload(hypotheses=[item]))
+        evidence = result["research"]["hypotheses"][0]["evidence"]
+        self.assertEqual(
+            [entry["ref"] for entry in evidence["observations"]], [PATH_REF]
+        )
+        self.assertEqual(
+            [
+                (entry["signal"], entry["detail"])
+                for entry in evidence["derived_signals"]
+            ],
+            [("IDOR", "object_reference=PATH_PARAMETER")],
+        )
+
+    def test_duplicate_evidence_refs_are_deduplicated(self):
+        item = hypothesis(
+            category="RECON",
+            evidence_refs=[ref_id(PATH_REF), ref_id(PATH_REF)],
+        )
+        result = fake_run(valid_payload(hypotheses=[item]))
+        self.assertEqual(result["status"], "COMPLETED")
+        hypothesis_out = result["research"]["hypotheses"][0]
+        self.assertEqual(
+            hypothesis_out["selected_evidence_refs"], [ref_id(PATH_REF)]
+        )
+        self.assertEqual(len(hypothesis_out["evidence"]["observations"]), 1)
+
+    def test_evidence_limit_enforced(self):
+        refs = [item["id"] for item in CATALOG[: r64.MAX_LIST_ITEMS + 1]]
+        item = hypothesis(evidence_refs=refs)
+        expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_TOO_LARGE")
+
+    def test_category_rules_still_active(self):
+        item = hypothesis(evidence_refs=[ref_id(PARAM_CLIENT)])
+        expect_code(valid_payload(hypotheses=[item]), "MODEL_OUTPUT_UNGROUNDED")
+
+    def test_partial_acceptance_still_active(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(title="Valid selection"),
+                hypothesis(title="Invalid category", category="MAGIC"),
+            ]
+        )
+        result = fake_run(payload)
+        self.assertEqual(result["status"], "COMPLETED_WITH_REJECTIONS")
+        self.assertEqual(result["validation"]["accepted_count"], 1)
+        self.assertEqual(result["validation"]["rejected_count"], 1)
+
+    def test_global_unsafe_response_still_fails_closed(self):
+        expect_code(
+            valid_payload(summary="we confirmed the vulnerability"),
+            "MODEL_OUTPUT_UNSAFE",
+        )
+        expect_code(
+            valid_payload(execution_authorized=True), "MODEL_OUTPUT_UNSAFE"
+        )
+
+    def test_no_raw_model_evidence_text_is_trusted(self):
+        item = hypothesis(
+            evidence_refs=[
+                ref_id(PATH_REF),
+                signal_id("IDOR", "object_reference=PATH_PARAMETER"),
+            ],
+            evidence={
+                "observations": [
+                    observation("path:/not-real", "observed path /not-real")
+                ],
+                "derived_signals": [],
+            },
+        )
+        result = fake_run(valid_payload(hypotheses=[item]))
+        text = r64.canonical_json(result)
+        self.assertNotIn("path:/not-real", text)
+        self.assertNotIn("observed path /not-real", text)
+
+    def test_historical_r64_artifact_untouched(self):
+        if not LEGACY_ARTIFACT.exists():
+            self.skipTest("historical R64 artifact not present locally")
+        before = LEGACY_ARTIFACT.read_bytes()
+        result = fake_run(valid_payload())
+        with TemporaryDirectory() as tmp:
+            r64.persist_result(result, persist_dir=tmp)
+        self.assertEqual(before, LEGACY_ARTIFACT.read_bytes())
+
+    def r67_contexts(self):
+        research = {
+            "program": "indeed",
+            "snapshot_version": 1,
+            "snapshot_rule_version": "r61-1",
+            "sampled": True,
+            "technologies": ["Cloudflare", "Cloudflare Bot Management"],
+            "versions": ["3"],
+            "parameters": [
+                "%5Cu0026__cf_chl_f_tk",
+                "%5Cu0026__cf_chl_rt_tk",
+            ],
+            "paths": [
+                "/account/login",
+                "/account/logout",
+                "/account/changephone",
+                "/accounts/login/",
+                "/api/internal/brand/theme/style-sheet",
+            ],
+            "record_refs": {},
+        }
+        intel = {
+            "program": "indeed",
+            "snapshot_version": 1,
+            "snapshot_rule_version": "r61-1",
+            "sampled": True,
+            "specialist_signals": {
+                "IDOR": {"object_reference": "PATH_PARAMETER"},
+                "RECON": {
+                    "api_type": "REST",
+                    "api_versioning": "VERSIONED_OBSERVED",
+                },
+            },
+            "cve_ids": [],
+            "r31_rule_versions": {},
+        }
+        return research, intel
+
+    def r67_ids(self):
+        research, intel = self.r67_contexts()
+        catalog = r64.evidence_catalog(research, intel)
+        refs = {
+            f"{item['kind']}:{item['value']}": item["id"]
+            for item in catalog
+            if item["kind"] != "derived_signal"
+        }
+        signals = {
+            (item["signal"], item["detail"]): item["id"]
+            for item in catalog
+            if item["kind"] == "derived_signal"
+        }
+        return refs, signals
+
+    def r67_hypothesis(self, refs, **overrides):
+        item = {
+            "title": "REST API structure reconnaissance",
+            "category": "RECON",
+            "priority": "LOW",
+            "confidence": "MEDIUM",
+            "evidence_refs": refs,
+            "inference": (
+                "The endpoint patterns suggest a REST-style API surface; "
+                "behavior was not observed."
+            ),
+            "why_interesting": "API structure guides further review.",
+            "missing_evidence": ["authentication behavior"],
+            "next_safe_action": "Review stored response records.",
+        }
+        item.update(overrides)
+        return item
+
+    def r67_run(self, hypotheses):
+        research, intel = self.r67_contexts()
+        payload = {
+            "summary": "Bounded Indeed sample.",
+            "attack_surface": [],
+            "hypotheses": hypotheses,
+        }
+        provider = _FakeProvider(json.dumps(payload))
+        return r64.run_research(research, intel, provider=provider)
+
+    def test_r67_combined_signal_detail_string_is_not_evidence(self):
+        refs, signals = self.r67_ids()
+        style_sheet = refs["path:/api/internal/brand/theme/style-sheet"]
+        good = self.r67_hypothesis(
+            [
+                style_sheet,
+                signals[("RECON", "api_type=REST")],
+                signals[("RECON", "api_versioning=VERSIONED_OBSERVED")],
+            ]
+        )
+        result = self.r67_run([good])
+        self.assertEqual(result["status"], "COMPLETED", result)
+        derived = result["research"]["hypotheses"][0]["evidence"][
+            "derived_signals"
+        ]
+        self.assertEqual(len(derived), 2)
+
+        combined = self.r67_hypothesis(
+            [
+                style_sheet,
+                "api_type=REST, api_versioning=VERSIONED_OBSERVED",
+            ]
+        )
+        result = self.r67_run([combined])
+        self.assert_error_code(result, "MODEL_OUTPUT_UNGROUNDED")
+
+    def test_r67_too_many_evidence_references(self):
+        refs, signals = self.r67_ids()
+        all_ids = list(refs.values()) + list(signals.values())
+        self.assertGreater(len(all_ids), r64.MAX_LIST_ITEMS)
+        item = self.r67_hypothesis(all_ids[: r64.MAX_LIST_ITEMS + 1])
+        result = self.r67_run([item])
+        self.assert_error_code(result, "MODEL_OUTPUT_TOO_LARGE")
+
+    def test_r67_canonical_facts_cannot_mismatch(self):
+        refs, signals = self.r67_ids()
+        ref = "parameter:%5Cu0026__cf_chl_f_tk"
+        item = self.r67_hypothesis(
+            [refs[ref]],
+            confidence="LOW",
+            evidence={
+                "observations": [
+                    {
+                        "ref": ref,
+                        "fact": "observed parameter __cf_chl_f_tk",
+                        "source": "context",
+                    }
+                ],
+                "derived_signals": [],
+            },
+        )
+        result = self.r67_run([item])
+        self.assertEqual(result["status"], "COMPLETED", result)
+        text = r64.canonical_json(result)
+        self.assertIn(r64.canonical_fact(ref), text)
+        self.assertNotIn("observed parameter __cf_chl_f_tk", text)
+
+    def test_r67_session_inference_requires_session_evidence(self):
+        refs, signals = self.r67_ids()
+        item = self.r67_hypothesis(
+            [
+                refs["path:/account/login"],
+                refs["path:/account/logout"],
+            ],
+            confidence="LOW",
+            inference=(
+                "Multiple login paths may have inconsistent session handling."
+            ),
+        )
+        result = self.r67_run([item])
+        self.assert_error_code(result, "MODEL_OUTPUT_UNGROUNDED")
+
+    def test_r67_derived_only_idor_rejected(self):
+        refs, signals = self.r67_ids()
+        item = self.r67_hypothesis(
+            [signals[("IDOR", "object_reference=PATH_PARAMETER")]],
+            title="Signal indicates potential IDOR",
+            category="IDOR",
+            confidence="LOW",
+            inference=(
+                "The IDOR signal may relate to unsampled parameterized routes."
+            ),
+        )
+        result = self.r67_run([item])
+        self.assert_error_code(result, "MODEL_OUTPUT_UNGROUNDED")
 
 
 class TestRunSafetyAndDeterminism(unittest.TestCase):
@@ -1300,7 +1670,7 @@ class TestInputHygiene(unittest.TestCase):
         self.assertIn("WATCH AI SECURITY RESEARCH", output)
         self.assertIn("PREFLIGHT OK", output)
         self.assertIn("WATCH_R64_LIVE=1", output)
-        self.assertIn("Observation refs", output)
+        self.assertIn("Evidence items", output)
 
 
 if __name__ == "__main__":
