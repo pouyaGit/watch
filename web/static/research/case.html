@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WATCH &middot; Research Case</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bg: '#0b0e14', panel: '#11161f', panel2: '#1a2230',
+            border: '#262f3e', accent: '#58a6ff', accent2: '#f0883e',
+            ok: '#3fb950', warn: '#d29922', err: '#f85149', muted: '#8b949e'
+          }
+        }
+      }
+    };
+  </script>
+  <link rel="stylesheet" href="/static/css/custom.css">
+</head>
+<body class="bg-bg text-gray-200" data-r82-page="case-detail">
+
+  <div class="topbar">
+    <a class="brand" id="page-home" href="/">WATCH</a>
+    <span class="brand-sub">research ops</span>
+    <span class="topbar-title">Research &middot; Case</span>
+    <nav class="r82-topnav">
+      <a class="r82-toplink" id="case-back" href="index.html">&larr; Cases</a>
+      <a class="r82-toplink" href="/docs">API docs</a>
+      <button class="r82-toplink r82-button" id="case-refresh" type="button">Refresh</button>
+    </nav>
+  </div>
+
+  <main class="app-content">
+    <div class="page-head">
+      <h1 class="page-title" id="case-title">Research case</h1>
+      <div class="r82-chip-row" id="case-meta"></div>
+      <p class="page-sub">
+        R77 workbench served through the R81 API. Research only &mdash;
+        no execution, no confirmation.
+      </p>
+    </div>
+
+    <div id="case-detail-state" class="r82-state-host" hidden></div>
+
+    <div id="workbench"></div>
+
+    <p class="section-label">Evidence submission</p>
+    <section class="panel r82-panel">
+      <div class="panel-head">
+        <h2>Submit researcher evidence (R80 envelope)</h2>
+      </div>
+      <div class="panel-body">
+        <p class="page-sub">
+          Watch never acquires evidence. Provide bounded, canonical evidence
+          you obtained under authorization; the backend validates every item.
+          Do not paste URLs, credentials, tokens, cookies, IPs, Mongo ids,
+          request/response bodies or execution instructions.
+        </p>
+        <form id="evidence-form" class="r82-form" autocomplete="off">
+          <label class="r82-control">
+            <span class="r82-kv-label">Requirement</span>
+            <select class="r82-input" id="evidence-requirement" name="evidence-requirement"></select>
+          </label>
+          <label class="r82-control">
+            <span class="r82-kv-label">Source</span>
+            <select class="r82-input" name="evidence-source">
+              <option value="HUMAN_REVIEW">HUMAN_REVIEW</option>
+              <option value="AUTHORIZED_TEST_CONTEXT">AUTHORIZED_TEST_CONTEXT</option>
+              <option value="STORED_RESPONSE">STORED_RESPONSE</option>
+              <option value="EXISTING_CONTEXT">EXISTING_CONTEXT</option>
+              <option value="WATCH_DERIVED">WATCH_DERIVED</option>
+            </select>
+          </label>
+          <label class="r82-control">
+            <span class="r82-kv-label">Effect</span>
+            <select class="r82-input" name="evidence-effect">
+              <option value="PROVIDES">PROVIDES</option>
+              <option value="CONTRADICTS">CONTRADICTS</option>
+              <option value="INVALIDATES">INVALIDATES</option>
+            </select>
+          </label>
+          <label class="r82-control">
+            <span class="r82-kv-label">Canonical evidence reference</span>
+            <input class="r82-input" name="evidence-ref" type="text"
+                   placeholder="kind:value (e.g. response:observation-1)" required>
+          </label>
+          <label class="r82-control">
+            <span class="r82-kv-label">Hypothesis ref</span>
+            <input class="r82-input" name="evidence-hypothesis" type="text" value="H1">
+          </label>
+          <label class="r82-control r82-control-wide">
+            <span class="r82-kv-label">Bounded observation (no raw bodies)</span>
+            <textarea class="r82-input" name="evidence-fact" rows="2"
+                      placeholder="bounded fact from your authorized review"></textarea>
+          </label>
+          <label class="r82-control">
+            <span class="r82-kv-label">Submitted by (optional, non-personal)</span>
+            <input class="r82-input" name="evidence-submitter" type="text"
+                   placeholder="label only, no identity data">
+          </label>
+          <div class="r82-form-actions">
+            <button class="btn-primary" type="submit">Submit evidence</button>
+          </div>
+        </form>
+
+        <div id="submission-result" class="r82-result-host" hidden></div>
+      </div>
+    </section>
+
+    <footer class="app-footer">
+      Research only &middot; execution_performed=false &middot;
+      vulnerability_confirmed=false &middot; exploit_authorized=false &middot;
+      confirmation_state=NOT_CONFIRMED &middot; human_authority_required=true
+    </footer>
+  </main>
+
+  <script src="/static/js/research_dashboard.js"></script>
+</body>
+</html>

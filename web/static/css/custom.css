@@ -1097,3 +1097,128 @@ ul.plain li::before { content: "›"; position: absolute; left: 0; color: var(--
   .rd-cve { font-size: 16px; }
   .filter-chips { margin-top: 4px; }
 }
+
+/* =====================================================================
+   R82 — Research Dashboard (case list / case detail / evidence form)
+   Reuses the existing dark theme tokens and .panel/.tbl/.badge system.
+   ===================================================================== */
+
+.r82-topnav { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.r82-toplink {
+  font-size: 12px; font-weight: 600; color: var(--muted);
+  padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel);
+}
+.r82-toplink:hover { color: var(--text); border-color: var(--accent); text-decoration: none; }
+.r82-toplink.active { color: var(--accent); border-color: rgba(88, 166, 255, 0.55); }
+.r82-button { cursor: pointer; }
+
+.r82-panel { margin-bottom: 14px; }
+.r82-section { margin-bottom: 10px; }
+.r82-section .panel-head { padding: 8px 14px; }
+
+.r82-controls {
+  display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;
+}
+.r82-control { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
+.r82-control-wide { flex: 1 1 100%; }
+.r82-input {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 6px 10px; font-size: 12.5px; outline: none;
+}
+.r82-input:focus { border-color: var(--accent); }
+.r82-form {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px; margin-top: 10px;
+}
+.r82-form-actions { display: flex; align-items: flex-end; }
+
+.r82-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; margin: 1px 4px 1px 0;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--panel2); color: var(--text);
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.r82-chip-kind { color: var(--accent); border-color: rgba(88, 166, 255, 0.45); }
+.r82-chip-missing { color: #e3b341; border-color: rgba(210, 153, 34, 0.55); background: rgba(210, 153, 34, 0.12); }
+.r82-chip-action { color: #56d364; border-color: rgba(63, 185, 80, 0.55); background: rgba(63, 185, 80, 0.12); }
+.r82-chip-review { color: #ff7b72; border-color: rgba(248, 81, 73, 0.55); background: rgba(248, 81, 73, 0.12); }
+.r82-chip-row { display: flex; flex-wrap: wrap; margin: 4px 0; }
+
+.r82-mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; color: var(--text); }
+.r82-kv { margin: 6px 0; }
+.r82-kv-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted); margin: 6px 0 3px;
+}
+.r82-kv-value { font-size: 13px; color: var(--text); margin: 2px 0; }
+.r82-kv-line { font-size: 12.5px; color: var(--text); margin: 2px 0; overflow-wrap: anywhere; }
+.r82-empty { font-size: 12px; color: var(--muted); margin: 4px 0; }
+
+.r82-kinds { margin: 6px 0; }
+.r82-missing-box {
+  border: 1px solid rgba(210, 153, 34, 0.35); border-radius: 8px;
+  background: rgba(210, 153, 34, 0.06); padding: 8px 10px; margin: 8px 0;
+}
+.r82-requirement, .r82-conflict {
+  border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(17, 22, 31, 0.6); padding: 8px 10px; margin: 8px 0;
+}
+.r82-req-kind {
+  font-size: 12.5px; font-weight: 700; color: #e3b341; margin: 0 0 4px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.r82-steps { margin: 6px 0 6px 18px; padding: 0; }
+.r82-steps li { font-size: 12.5px; color: var(--text); margin: 2px 0; }
+.r82-action { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0; }
+
+.r82-review {
+  border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(17, 22, 31, 0.6); padding: 10px 12px; margin: 6px 0;
+}
+.r82-review-required {
+  border-color: rgba(248, 81, 73, 0.55); background: rgba(248, 81, 73, 0.08);
+}
+
+.r82-safety { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.r82-safety-item {
+  border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(17, 22, 31, 0.6); padding: 6px 10px;
+}
+
+.r82-state-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.r82-state-item {
+  border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(17, 22, 31, 0.6); padding: 8px 10px;
+}
+
+.r82-tbl { min-width: 720px; }
+.r82-row td { vertical-align: top; }
+.r82-case-link { color: var(--accent); font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+
+.r82-state-host { margin-bottom: 14px; }
+.r82-state {
+  border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(17, 22, 31, 0.7); padding: 12px 14px;
+}
+.r82-state-title { font-size: 13px; font-weight: 700; color: var(--text); margin: 0 0 4px; }
+.r82-state-detail { font-size: 12px; color: var(--muted); margin: 2px 0; }
+.r82-state-error { border-color: rgba(248, 81, 73, 0.55); }
+.r82-state-unauthorized { border-color: rgba(210, 153, 34, 0.55); }
+.r82-state-loading { border-color: rgba(88, 166, 255, 0.45); }
+
+.r82-result-host { margin-top: 12px; }
+.r82-result {
+  border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(17, 22, 31, 0.7); padding: 10px 12px;
+}
+.r82-result-ok { border-color: rgba(63, 185, 80, 0.55); background: rgba(63, 185, 80, 0.07); }
+.r82-result-warn { border-color: rgba(210, 153, 34, 0.55); background: rgba(210, 153, 34, 0.07); }
+.r82-result-err { border-color: rgba(248, 81, 73, 0.55); background: rgba(248, 81, 73, 0.07); }
+.r82-changes { margin-top: 6px; }
+
+@media (max-width: 760px) {
+  .r82-topnav { flex-wrap: wrap; }
+  .r82-controls { flex-direction: column; }
+}

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WATCH &middot; Research Cases</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bg: '#0b0e14', panel: '#11161f', panel2: '#1a2230',
+            border: '#262f3e', accent: '#58a6ff', accent2: '#f0883e',
+            ok: '#3fb950', warn: '#d29922', err: '#f85149', muted: '#8b949e'
+          }
+        }
+      }
+    };
+  </script>
+  <link rel="stylesheet" href="/static/css/custom.css">
+</head>
+<body class="bg-bg text-gray-200" data-r82-page="case-list">
+
+  <div class="topbar">
+    <a class="brand" id="page-home" href="/">WATCH</a>
+    <span class="brand-sub">research ops</span>
+    <span class="topbar-title">Research &middot; Cases</span>
+    <nav class="r82-topnav">
+      <a class="r82-toplink active" href="index.html">Cases</a>
+      <a class="r82-toplink" href="/docs">API docs</a>
+    </nav>
+  </div>
+
+  <main class="app-content">
+    <div class="page-head">
+      <h1 class="page-title">Research Cases</h1>
+      <p class="page-sub">
+        Bounded research state from the R81 API. Research only &mdash; no
+        execution, no confirmation. <span id="case-count">0</span> cases loaded.
+      </p>
+    </div>
+
+    <div id="case-list-state" class="r82-state-host" hidden></div>
+
+    <section class="panel r82-panel">
+      <div class="panel-head">
+        <h2>Case list</h2>
+      </div>
+      <div class="panel-body">
+        <div class="r82-controls">
+          <label class="r82-control">
+            <span class="r82-kv-label">Search</span>
+            <input id="case-search" class="r82-input" type="search"
+                   placeholder="case id / program / category">
+          </label>
+          <label class="r82-control">
+            <span class="r82-kv-label">Status</span>
+            <select id="case-status-filter" class="r82-input">
+              <option value="">all</option>
+              <option value="WAITING_FOR_EVIDENCE">WAITING_FOR_EVIDENCE</option>
+              <option value="ACTIVE">ACTIVE</option>
+              <option value="READY_FOR_HUMAN_REVIEW">READY_FOR_HUMAN_REVIEW</option>
+              <option value="STOPPED">STOPPED</option>
+            </select>
+          </label>
+          <label class="r82-control">
+            <span class="r82-kv-label">Human review</span>
+            <select id="case-review-filter" class="r82-input">
+              <option value="">all</option>
+              <option value="Yes">required</option>
+              <option value="No">not required</option>
+            </select>
+          </label>
+          <label class="r82-control">
+            <span class="r82-kv-label">Sort</span>
+            <select id="case-sort" class="r82-input">
+              <option value="case_id">case id</option>
+              <option value="program">program</option>
+              <option value="category">category</option>
+              <option value="status">status</option>
+              <option value="readiness">readiness</option>
+              <option value="decision">decision</option>
+              <option value="next_iteration">next iteration</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="table-wrap">
+          <table class="tbl r82-tbl" id="case-list">
+            <thead>
+              <tr>
+                <th>Case</th>
+                <th>Program</th>
+                <th>Category</th>
+                <th>Status</th>
+                <th>Readiness</th>
+                <th>Decision</th>
+                <th>Evidence</th>
+                <th>Missing evidence</th>
+                <th>Human review</th>
+                <th>Next iteration</th>
+              </tr>
+            </thead>
+            <tbody id="case-list-body"></tbody>
+          </table>
+          <p class="r82-empty" id="case-list-empty" hidden>no cases match the filters</p>
+        </div>
+      </div>
+    </section>
+
+    <footer class="app-footer">
+      Research only &middot; execution_performed=false &middot;
+      vulnerability_confirmed=false &middot; confirmation_state=NOT_CONFIRMED
+    </footer>
+  </main>
+
+  <script src="/static/js/research_dashboard.js"></script>
+</body>
+</html>

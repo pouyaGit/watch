@@ -83,6 +83,8 @@
         <span class="side-ico">±</span>Recent Changes</a>
 
       <p class="nav-group">Research</p>
+      <a class="side-link{{ ' active' if active == 'research-cases' }}" href="/static/research/index.html{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">◈</span>Research Cases</a>
       <a class="side-link{{ ' active' if active == 'research' }}" href="{{ research_url }}" @click="navOpen = false">
         <span class="side-ico">☣</span>Research / CVEs</a>
       <a class="side-link{{ ' active' if active == 'research-queue' }}" href="{{ queue_url }}" @click="navOpen = false">
