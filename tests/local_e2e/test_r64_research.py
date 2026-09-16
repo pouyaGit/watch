@@ -668,7 +668,7 @@ class TestResponseParsing(unittest.TestCase):
     def test_valid_response_parsed(self):
         result = fake_run(valid_payload())
         self.assertEqual(result["status"], "COMPLETED")
-        self.assertEqual(result["research_run_version"], "r76-1")
+        self.assertEqual(result["research_run_version"], "r77-1")
         self.assertEqual(
             result["validation"],
             {"accepted_count": 1, "rejected_count": 0, "rejections": []},
@@ -2391,6 +2391,164 @@ class TestR76ResearchCase(unittest.TestCase):
         self.assertIn("research_case_workspace", text)
         self.assertIn("case_id", text)
         self.assertIn("stopping_reason", text)
+        self.assertIn("NOT_CONFIRMED", text)
+        self.assertNotIn("://", text)
+
+
+class TestR77HumanWorkbench(unittest.TestCase):
+    """R77: presentation/workflow composition over the R76 case."""
+
+    def test_envelope_carries_workbench(self):
+        result = fake_run(valid_payload())
+        workbench_set = result["research_workbench"]
+        self.assertEqual(workbench_set["rule_version"], "r77-1")
+        self.assertEqual(workbench_set["status"], "BUILT")
+        self.assertEqual(workbench_set["workbench_count"], 1)
+        self.assertEqual(
+            workbench_set["safety"]["confirmation_state"], "NOT_CONFIRMED"
+        )
+        workbench = workbench_set["workbenches"][0]
+        self.assertEqual(
+            workbench["case_ref"], "case-indeed-a1-object-authorization"
+        )
+        self.assertEqual(workbench["workbench_version"], "r77-1")
+        self.assertEqual(workbench["program"], "indeed")
+        self.assertEqual(workbench["category"], "IDOR")
+        current = workbench["current_state"]
+        self.assertEqual(current["status"], "WAITING_FOR_EVIDENCE")
+        self.assertEqual(current["readiness"], "INSUFFICIENT")
+        self.assertEqual(current["decision"], "NEEDS_EVIDENCE")
+        self.assertEqual(current["feedback"], "EVIDENCE_GAP_REMAINS")
+        self.assertEqual(current["hypothesis_state"], "UNRESOLVED")
+        self.assertEqual(current["next_iteration"], "CONTINUE")
+        self.assertFalse(current["human_review_required"])
+        known = workbench["what_we_know"]
+        self.assertEqual(known["available_count"], 2)
+        self.assertEqual(
+            sorted(known["available_requirement_kinds"]),
+            ["OBJECT_REFERENCE", "WATCH_SIGNAL"],
+        )
+        missing = workbench["what_is_missing"]
+        self.assertEqual(
+            missing["decision_critical_missing"],
+            ["AUTHORIZATION_OUTCOME", "OWNERSHIP_BINDING"],
+        )
+        self.assertEqual(missing["acquisition_plan_ref"], "P1")
+        self.assertTrue(missing["stopping_condition"])
+        next_up = workbench["what_to_do_next"]
+        self.assertTrue(next_up["objective"])
+        self.assertTrue(next_up["recommended_action"])
+        self.assertEqual(next_up["acquisition_method"], "AUTHORIZATION_BEHAVIOR_REVIEW")
+        self.assertTrue(next_up["sources"])
+        self.assertEqual(
+            [step["action"] for step in workbench["next_steps"]],
+            ["PROVIDE_EVIDENCE", "CONTINUE_RESEARCH"],
+        )
+        hypothesis = workbench["hypotheses"][0]
+        self.assertEqual(hypothesis["hypothesis_ref"], "H1")
+        self.assertTrue(hypothesis["title"])
+        self.assertEqual(hypothesis["detail_state"], "AVAILABLE")
+        self.assertEqual(workbench["why_interesting"]["state"], "AVAILABLE")
+        self.assertTrue(workbench["why_interesting"]["reasons"])
+        self.assertEqual(
+            workbench["evidence_input"]["action"], "PROVIDE_EVIDENCE"
+        )
+        self.assertFalse(workbench["evidence_input"]["accepted"])
+        self.assertIn(
+            "R74 intake contract", workbench["evidence_input"]["message"]
+        )
+        self.assertEqual(workbench["conflicts"]["count"], 0)
+        self.assertFalse(workbench["conflicts"]["resolved"])
+        self.assertEqual(len(workbench["history"]), 1)
+        self.assertFalse(workbench["human_review"]["required"])
+
+    def test_partial_evidence_reduces_missing(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            )
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        workbench = result["research_workbench"]["workbenches"][0]
+        self.assertEqual(workbench["current_state"]["status"], "ACTIVE")
+        self.assertEqual(
+            workbench["what_is_missing"]["decision_critical_missing"],
+            ["OWNERSHIP_BINDING"],
+        )
+        self.assertEqual(
+            workbench["what_we_know"]["accepted_evidence_count"], 1
+        )
+        self.assertEqual(
+            workbench["what_we_know"]["supporting_evidence_refs"],
+            ["authorization:external-owner-comparison-1"],
+        )
+
+    def test_ready_case_exposes_human_review(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            ),
+            evidence_item(
+                "OWNERSHIP_BINDING",
+                "response:external-ownership-binding-1",
+            ),
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        workbench = result["research_workbench"]["workbenches"][0]
+        self.assertEqual(
+            workbench["current_state"]["status"], "READY_FOR_HUMAN_REVIEW"
+        )
+        review = workbench["human_review"]
+        self.assertTrue(review["required"])
+        self.assertIn("READINESS_READY_FOR_HUMAN_REVIEW", review["reasons"])
+        actions = [
+            step["action"] for step in workbench["next_steps"]
+        ]
+        self.assertIn("HUMAN_REVIEW", actions)
+
+    def test_conflict_case_exposes_conflict(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            ),
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "response:external-contradiction-1",
+                effect="CONTRADICTS",
+            ),
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        workbench = result["research_workbench"]["workbenches"][0]
+        self.assertEqual(workbench["conflicts"]["count"], 1)
+        self.assertFalse(workbench["conflicts"]["resolved"])
+        self.assertIn(
+            "AUTHORIZATION_OUTCOME",
+            workbench["conflicts"]["requirement_kinds"],
+        )
+        self.assertIn(
+            "CONFLICT_REQUIRES_HUMAN_REVIEW",
+            workbench["human_review"]["reasons"],
+        )
+        actions = [
+            step["action"] for step in workbench["next_steps"]
+        ]
+        self.assertIn("REVIEW_CONFLICT", actions)
+        text = r64.canonical_json(workbench)
+        self.assertNotIn("vulnerable", text.lower())
+        self.assertNotIn("exploitable", text.lower())
+
+    def test_persisted_artifact_contains_workbench(self):
+        result = fake_run(valid_payload())
+        with TemporaryDirectory() as tmp:
+            path = r64.persist_result(result, persist_dir=tmp)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("research_workbench", text)
+        self.assertIn("what_we_know", text)
+        self.assertIn("what_is_missing", text)
+        self.assertIn("next_steps", text)
         self.assertIn("NOT_CONFIRMED", text)
         self.assertNotIn("://", text)
 

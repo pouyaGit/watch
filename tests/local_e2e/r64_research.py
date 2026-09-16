@@ -116,6 +116,14 @@ status (``ACTIVE``/``WAITING_FOR_EVIDENCE``/``READY_FOR_HUMAN_REVIEW``/
 stage, changes no stage output, never resolves conflicts and is never a
 security verdict.
 
+R77 adds the human research workbench (``ai.knowledge.research_workbench``):
+a presentation/workflow composition over an R76 case with five primary
+sections (current state, what we know, what is missing, what to do next,
+human review), bounded hypotheses, preserved conflicts, bounded history and a
+closed workflow-action list. It re-derives nothing, resolves no conflict,
+executes nothing and exposes only a bounded placeholder for external evidence
+entry (the real path stays R74 -> R75 -> R73 -> R72 -> R76).
+
 Hard boundaries preserved: research only, advisory only, no execution, no
 confirmation, no target activity, no secrets, deterministic envelope, bounded
 contexts and prompts, fail-closed validation, opt-in real provider.
@@ -133,6 +141,7 @@ Pipeline position (unchanged)::
       -> R74 external evidence intake + re-evaluation (advisory, adapter)
       -> R75 provenance + conflict analysis (advisory, analysis only)
       -> R76 research case workspace (advisory, aggregation only)
+      -> R77 human research workbench (advisory, presentation only)
       -> research-only result envelope (printed and optionally persisted)
 """
 
@@ -164,6 +173,10 @@ from ai.knowledge.research_evidence_provenance import (
 )
 from ai.knowledge.research_feedback_loop import evaluate_research_iteration
 from ai.knowledge.research_outcome_planner import plan_research_actions
+from ai.knowledge.research_workbench import (
+    ResearchWorkbenchError,
+    build_workbench_set,
+)
 from ai.knowledge.security_skills import render_skills, select_skills
 from ai.llm.base import LLMProvider
 from ai.schemas.agent_orchestrator_registry import CANONICAL_SPECIALIST_ORDER
@@ -173,7 +186,7 @@ from ai.schemas.research_priority import BAND_HIGH, BAND_LOW, BAND_MEDIUM
 from tests.local_e2e import r62_bridge as br
 from tests.local_e2e import recon_snapshot as rs
 
-RULE_VERSION = "r76-1"
+RULE_VERSION = "r77-1"
 
 STATUS_COMPLETED = "COMPLETED"
 STATUS_COMPLETED_WITH_REJECTIONS = "COMPLETED_WITH_REJECTIONS"
@@ -1502,6 +1515,24 @@ def run_research(
             "safety": safety_block(),
             "research_only": True,
         }
+    try:
+        research_workbench = build_workbench_set(
+            research_case_workspace.get("cases") or [],
+            action_plan=action_plan,
+            acquisition_plan=acquisition_plan,
+            evidence_provenance=evidence_provenance,
+        )
+    except ResearchWorkbenchError as exc:
+        research_workbench = {
+            "rule_version": "r77-1",
+            "status": "REJECTED",
+            "error": {"code": exc.code, "message": exc.safe_message[:160]},
+            "workbench_count": 0,
+            "workbenches": [],
+            "summary": {},
+            "safety": safety_block(),
+            "research_only": True,
+        }
 
     findings = input_hygiene(research_context, intelligence_context)
     snapshot_block = {
@@ -1540,6 +1571,7 @@ def run_research(
         "evidence_intake": evidence_intake,
         "evidence_provenance": evidence_provenance,
         "research_case_workspace": research_case_workspace,
+        "research_workbench": research_workbench,
         "safety": safety_block(),
         "limitations": list(LIMITATIONS),
     }
@@ -1564,7 +1596,7 @@ def persist_result(result: Mapping, *, persist_dir: str | Path | None = None) ->
 def _print_result(result: Mapping, persisted_path: str = "") -> None:
     print("")
     print("=" * 66)
-    print("WATCH AI SECURITY RESEARCH (R76, evidence + skills + actions + acquisition + readiness + feedback + intake + provenance + case)")
+    print("WATCH AI SECURITY RESEARCH (R77, evidence + skills + actions + acquisition + readiness + feedback + intake + provenance + case + workbench)")
     print("=" * 66)
     print(f"Status      : {result.get('status')}")
     print(f"Program     : {result.get('program')}")
@@ -1969,6 +2001,87 @@ def _print_result(result: Mapping, persisted_path: str = "") -> None:
             f"{(case_workspace.get('error') or {}).get('code')}"
         )
         print("")
+    workbench_set = result.get("research_workbench") or {}
+    workbenches = workbench_set.get("workbenches") or []
+    if workbenches:
+        print("HUMAN RESEARCH WORKBENCH (advisory only)")
+        print("-" * 66)
+        for workbench in workbenches:
+            current = workbench.get("current_state") or {}
+            known = workbench.get("what_we_know") or {}
+            missing = workbench.get("what_is_missing") or {}
+            next_up = workbench.get("what_to_do_next") or {}
+            review = workbench.get("human_review") or {}
+            conflicts = workbench.get("conflicts") or {}
+            print(
+                f"{workbench.get('case_ref')} :: {workbench.get('title')} "
+                f"[{current.get('status')}]"
+            )
+            print(
+                "   CURRENT STATE      : "
+                f"readiness={current.get('readiness')} "
+                f"decision={current.get('decision')} "
+                f"feedback={current.get('feedback')} "
+                f"state={current.get('hypothesis_state')} -> "
+                f"{current.get('next_iteration')}"
+            )
+            print(
+                "   WHAT WE KNOW       : "
+                f"{known.get('available_count')} available "
+                f"{known.get('available_requirement_kinds')} "
+                f"(accepted={known.get('accepted_evidence_count')})"
+            )
+            print(
+                "   WHAT IS MISSING    : "
+                f"{missing.get('missing_requirement_kinds')} "
+                f"(decision-critical="
+                f"{missing.get('decision_critical_missing')})"
+            )
+            print(
+                "   WHAT TO DO NEXT    : "
+                f"{next_up.get('objective')}"
+            )
+            print(
+                "      Recommended     : "
+                f"{next_up.get('recommended_action')}"
+            )
+            print(
+                "      Method/sources  : "
+                f"{next_up.get('acquisition_method')} "
+                f"{next_up.get('sources')}"
+            )
+            print(
+                "      Stop condition  : "
+                f"{next_up.get('stopping_condition')}"
+            )
+            print(
+                "   NEXT STEPS         : "
+                + ", ".join(
+                    step.get("action", "")
+                    for step in workbench.get("next_steps") or []
+                )
+            )
+            print(
+                "   HUMAN REVIEW       : "
+                f"required={review.get('required')} "
+                f"reasons={review.get('reasons')}"
+            )
+            if conflicts.get("count"):
+                print(
+                    "   CONFLICTS          : "
+                    f"{conflicts.get('count')} "
+                    f"{conflicts.get('requirement_kinds')} "
+                    "(preserved, not resolved)"
+                )
+            print("")
+    elif workbench_set.get("status") == "REJECTED":
+        print("HUMAN RESEARCH WORKBENCH (advisory only)")
+        print("-" * 66)
+        print(
+            "   Rejected           : "
+            f"{(workbench_set.get('error') or {}).get('code')}"
+        )
+        print("")
     print("-" * 66)
     print("[SAFETY] advisory research only; execution_performed=false;")
     print("         vulnerability_confirmed=false; exploit_authorized=false;")
@@ -2001,7 +2114,7 @@ def _mongo_snapshot(program: str, caps: Mapping) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tests.local_e2e.r64_research",
-        description="Watch R76 AI security research run",
+        description="Watch R77 AI security research run",
     )
     parser.add_argument(
         "--source",
@@ -2059,7 +2172,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print("")
-    print("WATCH AI SECURITY RESEARCH (R76, evidence + skills + actions + acquisition + readiness + feedback + intake + provenance + case)")
+    print("WATCH AI SECURITY RESEARCH (R77, evidence + skills + actions + acquisition + readiness + feedback + intake + provenance + case + workbench)")
     print("-" * 66)
     print(f"Program            : {args.program}")
     print(f"Source             : {args.source}")
