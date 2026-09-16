@@ -1,0 +1,16 @@
+[Unit]
+Description=Run the Watch AI activity Telegram report hourly (deduplicated; daily summary after the window)
+Documentation=file:/opt/watch/agent-reports/r84-telegram-ai-activity-reporting.md
+
+# Reporting only. The hourly tick fires at :00 each hour; the first tick after
+# 00:00 Tehran closes the 12:00-00:00 window and sends the deduplicated daily
+# summary. Event reports are sent only on real R83 state transitions. This
+# timer never starts, stops or alters AI research execution.
+[Timer]
+Unit=watch-ai-report.service
+OnCalendar=hourly
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

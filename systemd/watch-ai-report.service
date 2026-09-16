@@ -1,0 +1,31 @@
+[Unit]
+Description=Watch AI activity Telegram report (R83 activity source, R84 reports)
+Documentation=file:/opt/watch/agent-reports/r84-telegram-ai-activity-reporting.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Same service account convention as systemd/watch-research.service; align with
+# the actual deployment account before enabling the timer.
+User=pouya_behnia
+WorkingDirectory=/opt/watch
+EnvironmentFile=/opt/watch/.env
+Environment="PATH=/opt/watch/venv/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Reporting only: reads the R83 activity snapshot and, when configured,
+# sends bounded Telegram reports. Never starts or stops AI research.
+ExecStart=/opt/watch/venv/bin/python3 -m backend.telegram_reporting --mode auto
+TimeoutStartSec=180s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/watch/ai_data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
