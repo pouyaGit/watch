@@ -1,0 +1,443 @@
+"""backend/research_cases.py — Stage R81 researcher research-case service.
+
+Presentation/service glue for the researcher-facing contract:
+
+    LIST CASES     -> bounded case summaries from persisted research artifacts
+    GET CASE       -> R77 workbench (R77 remains the workbench authority)
+    SUBMIT EVIDENCE-> R80 submission boundary -> R74 intake -> R75 provenance
+                      -> R76 case update -> R77 workbench
+
+Authority boundaries (unchanged):
+
+- R77 is the workbench authority: this module only calls
+  ``build_research_workbench`` and never re-implements its logic.
+- R80 is the evidence submission authority: the API calls
+  ``submit_research_evidence`` and never calls R74 directly.
+- R74/R75/R76 remain intake/provenance/case-state authorities; this module
+  composes them and duplicates none of their rules.
+
+Read-only by construction: listing/detail only read persisted artifacts.
+Evidence submission is fully in-memory (no Mongo, no artifact writes, no
+persistence layer); the bounded result is returned to the caller.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Mapping
+
+from ai.knowledge.research_case_workspace import (
+    summarize_research_case,
+    update_research_case,
+)
+from ai.knowledge.research_evidence_provenance import (
+    analyze_evidence_provenance,
+)
+from ai.knowledge.research_evidence_submission import (
+    ERROR_CASE_MISMATCH,
+    ERROR_CASE_REF_REQUIRED,
+    ERROR_CASE_STATE_UNAVAILABLE,
+    ERROR_EXECUTION_CONTENT,
+    ERROR_HYPOTHESIS_NOT_IN_CASE,
+    ERROR_MALFORMED_ENVELOPE,
+    ERROR_SENSITIVE_SUBMISSION,
+    ERROR_SUBMISSION_TOO_LARGE,
+    ERROR_SUBMITTER_NOT_ALLOWED,
+    ERROR_UNKNOWN_CASE,
+    ERROR_UNKNOWN_REQUIREMENT_FOR_CASE,
+    ERROR_UNSUPPORTED_SUBMISSION_VERSION,
+    submit_research_evidence,
+)
+from ai.knowledge.research_workbench import build_research_workbench
+
+RULE_VERSION = "r81-1"
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ARTIFACT_ROOT = PROJECT_ROOT / "ai_data" / "research"
+
+MAX_CASES = 32
+MAX_HISTORY = 8
+MAX_TEXT_CHARS = 320
+
+STAGE_KEYS: tuple[str, ...] = (
+    "action_plan",
+    "acquisition_plan",
+    "readiness_plan",
+    "iteration_plan",
+    "evidence_provenance",
+)
+
+#: Boundary rejection code -> HTTP status (bounded, documented).
+BOUNDARY_HTTP_STATUS: dict[str, int] = {
+    ERROR_MALFORMED_ENVELOPE: 400,
+    ERROR_UNSUPPORTED_SUBMISSION_VERSION: 400,
+    ERROR_CASE_REF_REQUIRED: 400,
+    ERROR_UNKNOWN_CASE: 404,
+    ERROR_CASE_MISMATCH: 409,
+    ERROR_CASE_STATE_UNAVAILABLE: 422,
+    ERROR_UNKNOWN_REQUIREMENT_FOR_CASE: 400,
+    ERROR_HYPOTHESIS_NOT_IN_CASE: 400,
+    ERROR_SUBMITTER_NOT_ALLOWED: 400,
+    ERROR_SENSITIVE_SUBMISSION: 400,
+    ERROR_EXECUTION_CONTENT: 400,
+    ERROR_SUBMISSION_TOO_LARGE: 413,
+}
+
+BOUNDARY_MESSAGES: dict[str, str] = {
+    ERROR_MALFORMED_ENVELOPE: "submission envelope is malformed",
+    ERROR_UNSUPPORTED_SUBMISSION_VERSION: "unsupported submission version",
+    ERROR_CASE_REF_REQUIRED: "case_ref is required",
+    ERROR_UNKNOWN_CASE: "unknown case",
+    ERROR_CASE_MISMATCH: "submission case_ref does not match the target case",
+    ERROR_CASE_STATE_UNAVAILABLE: "case state is unavailable",
+    ERROR_UNKNOWN_REQUIREMENT_FOR_CASE: (
+        "requirement does not belong to this case"
+    ),
+    ERROR_HYPOTHESIS_NOT_IN_CASE: "hypothesis does not belong to this case",
+    ERROR_SUBMITTER_NOT_ALLOWED: "submitter label is not allowed",
+    ERROR_SENSITIVE_SUBMISSION: "submission contains sensitive evidence",
+    ERROR_EXECUTION_CONTENT: "submission contains execution content",
+    ERROR_SUBMISSION_TOO_LARGE: "submission exceeds the bounded size",
+}
+
+
+class CaseServiceError(Exception):
+    """Bounded, secret-free service failure for the API layer."""
+
+    def __init__(self, code: str, *, http_status: int = 400) -> None:
+        self.code = str(code)
+        self.http_status = int(http_status)
+        self.message = BOUNDARY_MESSAGES.get(self.code, "request rejected")
+        super().__init__(f"{self.code}: {self.message}")
+
+
+def _text(value: object) -> str:
+    return str(value if value is not None else "").strip()
+
+
+def _block(value: object) -> dict:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _mapping_items(value: object) -> list[Mapping]:
+    if isinstance(value, Mapping):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [item for item in value if isinstance(item, Mapping)]
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Artifact discovery (read-only; deterministic ordering)
+# ---------------------------------------------------------------------------
+
+
+def _artifact_paths() -> list[Path]:
+    root = Path(ARTIFACT_ROOT)
+    if not root.is_dir():
+        return []
+    return sorted(
+        path
+        for path in root.glob("*/*.json")
+        if path.is_file()
+    )
+
+
+def _load_entry(path: Path) -> dict | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    workspace = _block(payload.get("research_case_workspace"))
+    cases = _mapping_items(workspace.get("cases"))
+    if not cases:
+        return None
+    for key in ("action_plan", "acquisition_plan", "readiness_plan"):
+        if not isinstance(payload.get(key), Mapping):
+            return None
+    entry = {
+        "artifact_path": str(path),
+        "program": _text(payload.get("program")),
+        "source": _text(payload.get("source")),
+        "research_run_version": _text(payload.get("research_run_version")),
+        "case": dict(cases[0]),
+        "hypotheses": list(
+            _block(payload.get("research")).get("hypotheses") or ()
+        ),
+        "stages": {
+            "action_plan": dict(_block(payload.get("action_plan"))),
+            "acquisition_plan": dict(
+                _block(payload.get("acquisition_plan"))
+            ),
+            "readiness_plan": dict(_block(payload.get("readiness_plan"))),
+            "iteration_plan": dict(_block(payload.get("iteration_plan"))),
+            "evidence_provenance": dict(
+                _block(payload.get("evidence_provenance"))
+            ),
+        },
+    }
+    return entry
+
+
+def case_entries() -> list[dict]:
+    """All bounded case entries, deduped by case_id (first path wins)."""
+
+    entries: list[dict] = []
+    seen: set[str] = set()
+    for path in _artifact_paths():
+        loaded = _load_entry(path)
+        if loaded is None:
+            continue
+        case_id = _text(loaded["case"].get("case_id"))
+        if not case_id or case_id in seen:
+            continue
+        seen.add(case_id)
+        entries.append(loaded)
+        if len(entries) >= MAX_CASES:
+            break
+    return entries
+
+
+def get_case_entry(case_id: object) -> dict | None:
+    wanted = _text(case_id)
+    if not wanted:
+        return None
+    for entry in case_entries():
+        if _text(entry["case"].get("case_id")) == wanted:
+            return entry
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Read-only views
+# ---------------------------------------------------------------------------
+
+
+def _case_summary(entry: Mapping) -> dict:
+    case = _block(entry.get("case"))
+    summary = summarize_research_case(case)
+    evidence = _block(case.get("evidence"))
+    return {
+        "case_id": _text(case.get("case_id")),
+        "program": _text(case.get("program")),
+        "category": _text(case.get("category")),
+        "gap_id": _text(case.get("gap_id")),
+        "status": _text(summary.get("status")),
+        "readiness": _text(summary.get("sufficiency_state")),
+        "decision": _text(summary.get("decision_state")),
+        "feedback": _text(summary.get("feedback_state")),
+        "hypothesis_state": _text(summary.get("hypothesis_state")),
+        "next_iteration": _text(summary.get("next_iteration")),
+        "human_review_required": bool(
+            summary.get("human_review_required")
+        ),
+        "evidence": {
+            "available_count": int(summary.get("available_count") or 0),
+            "missing_count": int(summary.get("missing_count") or 0),
+            "decision_missing_count": int(
+                summary.get("decision_missing_count") or 0
+            ),
+            "available_requirement_kinds": [
+                _text(kind)
+                for kind in evidence.get("available_requirement_kinds") or ()
+            ],
+        },
+        "missing_evidence": {
+            "decision_critical": [
+                _text(kind)
+                for kind in _block(case.get("readiness")).get(
+                    "blocking_codes"
+                )
+                or ()
+            ]
+        },
+        "advisory": True,
+        "research_only": True,
+        "confirmation_state": "NOT_CONFIRMED",
+    }
+
+
+def list_cases() -> dict:
+    """Bounded case list for the researcher dashboard."""
+
+    entries = case_entries()
+    return {
+        "rule_version": RULE_VERSION,
+        "total": len(entries),
+        "items": [_case_summary(entry) for entry in entries],
+        "advisory": True,
+        "research_only": True,
+        "confirmation_state": "NOT_CONFIRMED",
+    }
+
+
+def get_case_workbench(case_id: object) -> dict | None:
+    """R77 workbench for one case (R77 remains the authority)."""
+
+    entry = get_case_entry(case_id)
+    if entry is None:
+        return None
+    stages = _block(entry.get("stages"))
+    workbench = build_research_workbench(
+        entry["case"],
+        action_plan=stages.get("action_plan"),
+        acquisition_plan=stages.get("acquisition_plan"),
+        evidence_provenance=stages.get("evidence_provenance"),
+        limit=MAX_HISTORY,
+    )
+    return {
+        "rule_version": RULE_VERSION,
+        "workbench_rule_version": _text(workbench.get("workbench_version")),
+        "case_id": _text(entry["case"].get("case_id")),
+        "program": _text(entry["program"]),
+        "artifact_path": _text(entry.get("artifact_path")),
+        "case_summary": _case_summary(entry),
+        "workbench": workbench,
+        "advisory": True,
+        "research_only": True,
+        "confirmation_state": "NOT_CONFIRMED",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Evidence submission (R80 boundary + composed authorities)
+# ---------------------------------------------------------------------------
+
+
+def _submission_rejection_code(result: Mapping) -> str:
+    for entry in _block(result).get("rejections") or ():
+        if isinstance(entry, Mapping) and entry.get("code"):
+            return _text(entry.get("code"))
+    return ERROR_MALFORMED_ENVELOPE
+
+
+def _bounded_submission_response(
+    case_id: str, submitted: Mapping, provenance: Mapping
+) -> dict:
+    intake = _block(submitted.get("intake"))
+    rejected_codes = [
+        _text(entry.get("code"))
+        for entry in intake.get("rejections") or ()
+        if isinstance(entry, Mapping)
+    ]
+    accepted_items = _mapping_items(intake.get("accepted_items"))
+    conflicts = _mapping_items(_block(provenance).get("conflicts"))
+    records = _mapping_items(_block(provenance).get("records"))
+    conflicting_kinds: list[str] = []
+    for conflict in conflicts:
+        kind = _text(conflict.get("requirement_kind"))
+        if kind and kind not in conflicting_kinds:
+            conflicting_kinds.append(kind)
+    return {
+        "rule_version": RULE_VERSION,
+        "case_id": case_id,
+        "submission_status": _text(submitted.get("status")),
+        "accepted_external_evidence": int(
+            intake.get("accepted_external_evidence") or 0
+        ),
+        "rejected_items": len(rejected_codes),
+        "rejection_codes": rejected_codes,
+        "accepted_requirement_kinds": [
+            _text(item.get("requirement_kind"))
+            for item in accepted_items
+            if item.get("requirement_kind")
+        ],
+        "provenance": {
+            "state": _text(_block(provenance).get("package_status")),
+            "record_count": len(records),
+            "conflict_count": len(conflicts),
+            "conflicting_requirement_kinds": conflicting_kinds[:8],
+            "human_review_required": any(
+                bool(record.get("human_review_required"))
+                for record in records
+            )
+            or bool(conflicts),
+        },
+        "safety": dict(_block(submitted.get("safety"))),
+        "advisory": True,
+        "research_only": True,
+        "confirmation_state": "NOT_CONFIRMED",
+    }
+
+
+def submit_case_evidence(case_id: object, submission: object) -> dict:
+    """Handle one evidence submission: R80 -> R74 -> R75 -> R76 -> R77."""
+
+    wanted = _text(case_id)
+    entry = get_case_entry(wanted)
+    if entry is None:
+        raise CaseServiceError(ERROR_UNKNOWN_CASE, http_status=404)
+
+    body = dict(submission) if isinstance(submission, Mapping) else submission
+    if not isinstance(body, Mapping):
+        raise CaseServiceError(ERROR_MALFORMED_ENVELOPE, http_status=400)
+    body_case_ref = _text(body.get("case_ref"))
+    if not body_case_ref:
+        raise CaseServiceError(ERROR_CASE_REF_REQUIRED, http_status=400)
+    if body_case_ref != wanted:
+        raise CaseServiceError(ERROR_CASE_MISMATCH, http_status=409)
+
+    stages = _block(entry.get("stages"))
+    case = entry["case"]
+    submitted = submit_research_evidence(
+        body,
+        case=case,
+        hypotheses=entry.get("hypotheses"),
+        action_plan=stages.get("action_plan"),
+        acquisition_plan=stages.get("acquisition_plan"),
+        readiness_plan=stages.get("readiness_plan"),
+    )
+    if submitted.get("intake") is None:
+        code = _submission_rejection_code(submitted)
+        raise CaseServiceError(
+            code, http_status=BOUNDARY_HTTP_STATUS.get(code, 400)
+        )
+
+    intake = submitted["intake"]
+    provenance = analyze_evidence_provenance(
+        intake,
+        hypotheses=entry.get("hypotheses"),
+        action_plan=stages.get("action_plan"),
+        acquisition_plan=stages.get("acquisition_plan"),
+        readiness_plan=stages.get("readiness_plan"),
+        previous_provenance=stages.get("evidence_provenance"),
+    )
+    updated_case = update_research_case(
+        case,
+        stages.get("action_plan"),
+        stages.get("acquisition_plan"),
+        stages.get("readiness_plan"),
+        stages.get("iteration_plan"),
+        evidence_intake=intake,
+        evidence_provenance=provenance,
+    )
+    workbench = build_research_workbench(
+        updated_case,
+        action_plan=stages.get("action_plan"),
+        acquisition_plan=stages.get("acquisition_plan"),
+        evidence_provenance=provenance,
+        limit=MAX_HISTORY,
+    )
+    response = _bounded_submission_response(wanted, submitted, provenance)
+    response["case_summary"] = summarize_research_case(updated_case)
+    response["workbench"] = workbench
+    return response
+
+
+__all__ = [
+    "RULE_VERSION",
+    "ARTIFACT_ROOT",
+    "MAX_CASES",
+    "MAX_HISTORY",
+    "BOUNDARY_HTTP_STATUS",
+    "BOUNDARY_MESSAGES",
+    "CaseServiceError",
+    "case_entries",
+    "get_case_entry",
+    "list_cases",
+    "get_case_workbench",
+    "submit_case_evidence",
+]
