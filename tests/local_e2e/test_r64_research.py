@@ -668,7 +668,7 @@ class TestResponseParsing(unittest.TestCase):
     def test_valid_response_parsed(self):
         result = fake_run(valid_payload())
         self.assertEqual(result["status"], "COMPLETED")
-        self.assertEqual(result["research_run_version"], "r73-1")
+        self.assertEqual(result["research_run_version"], "r74-1")
         self.assertEqual(
             result["validation"],
             {"accepted_count": 1, "rejected_count": 0, "rejections": []},
@@ -1923,6 +1923,209 @@ class TestR73FeedbackIteration(unittest.TestCase):
         self.assertIn("iteration_plan", text)
         self.assertIn("feedback_state", text)
         self.assertIn("next_iteration", text)
+        self.assertIn("NOT_CONFIRMED", text)
+        self.assertNotIn("://", text)
+
+
+def evidence_package(*items, version="r74-1"):
+    return {"package_version": version, "items": list(items)}
+
+
+def evidence_item(
+    requirement_kind: str,
+    ref: str,
+    *,
+    hypothesis_ref="H1",
+    effect="PROVIDES",
+    source="HUMAN_REVIEW",
+):
+    return {
+        "hypothesis_ref": hypothesis_ref,
+        "requirement_kind": requirement_kind,
+        "effect": effect,
+        "source": source,
+        "evidence_ref": ref,
+        "observations": [
+            {"ref": ref, "fact": f"external observation {ref.partition(':')[2]}"}
+        ],
+    }
+
+
+class TestR74EvidenceIntake(unittest.TestCase):
+    """R74: external evidence intake re-evaluates readiness and feedback."""
+
+    def test_envelope_carries_intake_not_provided(self):
+        result = fake_run(valid_payload())
+        intake = result["evidence_intake"]
+        self.assertEqual(intake["rule_version"], "r74-1")
+        self.assertEqual(intake["package_version"], "r74-1")
+        self.assertEqual(intake["package_status"], "NOT_PROVIDED")
+        self.assertEqual(intake["accepted_external_evidence"], 0)
+        self.assertEqual(intake["rejections"], [])
+        self.assertEqual(
+            intake["reevaluation"]["transitions"], []
+        )
+        self.assertEqual(
+            intake["summary"]["top_readiness_before"], "INSUFFICIENT"
+        )
+        self.assertEqual(
+            intake["summary"]["top_readiness_after"], "INSUFFICIENT"
+        )
+        self.assertEqual(
+            intake["summary"]["top_feedback_state"],
+            "EVIDENCE_GAP_REMAINS",
+        )
+        self.assertEqual(
+            intake["safety"]["confirmation_state"], "NOT_CONFIRMED"
+        )
+        self.assertFalse(intake["safety"]["vulnerability_confirmed"])
+
+    def test_external_package_reevaluates_readiness(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            )
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        intake = result["evidence_intake"]
+        self.assertEqual(intake["package_status"], "ACCEPTED")
+        self.assertEqual(intake["accepted_external_evidence"], 1)
+        self.assertEqual(intake["rejections"], [])
+        self.assertEqual(intake["accepted_items"][0]["intake_id"], "EI1")
+        self.assertEqual(
+            intake["summary"]["top_readiness_before"], "INSUFFICIENT"
+        )
+        self.assertEqual(
+            intake["summary"]["top_readiness_after"],
+            "PARTIALLY_SUFFICIENT",
+        )
+        self.assertEqual(
+            intake["summary"]["top_feedback_state"],
+            "EVIDENCE_GAP_REDUCED",
+        )
+        self.assertEqual(intake["summary"]["top_current_state"], "REFINE")
+        self.assertEqual(
+            intake["summary"]["top_next_iteration"], "CONTINUE"
+        )
+        transitions = intake["reevaluation"]["transitions"]
+        self.assertEqual(len(transitions), 1)
+        self.assertEqual(
+            transitions[0]["before_sufficiency"], "INSUFFICIENT"
+        )
+        self.assertEqual(
+            transitions[0]["after_sufficiency"], "PARTIALLY_SUFFICIENT"
+        )
+        delta = intake["reevaluation"]["feedback"]["iterations"][0][
+            "evidence_delta"
+        ]
+        self.assertEqual(
+            delta,
+            [
+                {
+                    "requirement_kind": "AUTHORIZATION_OUTCOME",
+                    "from_status": "MISSING",
+                    "to_status": "AVAILABLE",
+                    "cause": "NEW_EVIDENCE",
+                    "hypothesis_ref": "H1",
+                }
+            ],
+        )
+
+    def test_external_package_completes_to_human_review(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            ),
+            evidence_item(
+                "OWNERSHIP_BINDING",
+                "response:external-ownership-binding-1",
+            ),
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        intake = result["evidence_intake"]
+        self.assertEqual(intake["package_status"], "ACCEPTED")
+        self.assertEqual(
+            intake["summary"]["top_readiness_after"],
+            "SUFFICIENT_FOR_REVIEW",
+        )
+        self.assertEqual(
+            intake["summary"]["top_feedback_state"],
+            "HYPOTHESIS_REQUIRES_REVIEW",
+        )
+        self.assertEqual(intake["summary"]["top_current_state"], "STOP")
+        self.assertEqual(
+            intake["summary"]["top_next_iteration"], "HUMAN_REVIEW"
+        )
+        self.assertEqual(len(intake["accepted_items"]), 2)
+        self.assertEqual(
+            [item["intake_id"] for item in intake["accepted_items"]],
+            ["EI1", "EI2"],
+        )
+
+    def test_rejected_package_is_bounded_and_safe(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-1",
+                hypothesis_ref="H9",
+            )
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        intake = result["evidence_intake"]
+        self.assertEqual(intake["package_status"], "REJECTED")
+        self.assertEqual(intake["accepted_external_evidence"], 0)
+        self.assertEqual(
+            [entry["code"] for entry in intake["rejections"]],
+            ["UNKNOWN_HYPOTHESIS_REF"],
+        )
+        self.assertEqual(
+            intake["summary"]["top_readiness_after"], "INSUFFICIENT"
+        )
+        text = r64.canonical_json(intake)
+        self.assertNotIn("://", text)
+        self.assertNotIn("sk-", text)
+
+    def test_correlated_intake_keeps_one_transition(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(title="First IDOR"),
+                hypothesis(title="Second IDOR"),
+            ]
+        )
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-2",
+                hypothesis_ref="H2",
+            )
+        )
+        result = fake_run(payload, external_evidence=package)
+        intake = result["evidence_intake"]
+        self.assertEqual(intake["accepted_external_evidence"], 1)
+        transitions = intake["reevaluation"]["transitions"]
+        self.assertEqual(len(transitions), 1)
+        feedback = intake["reevaluation"]["feedback"]
+        self.assertEqual(len(feedback["iterations"]), 1)
+        self.assertEqual(
+            feedback["iterations"][0]["hypothesis_refs"], ["H1", "H2"]
+        )
+
+    def test_persisted_artifact_contains_intake(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            )
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        with TemporaryDirectory() as tmp:
+            path = r64.persist_result(result, persist_dir=tmp)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("evidence_intake", text)
+        self.assertIn("accepted_external_evidence", text)
+        self.assertIn("transitions", text)
         self.assertIn("NOT_CONFIRMED", text)
         self.assertNotIn("://", text)
 

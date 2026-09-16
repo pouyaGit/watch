@@ -86,6 +86,17 @@ hypothesis research state (``RETAIN``/``REFINE``/``WEAKEN``/``UNRESOLVED``/
 honestly reports no change / gap remains / unresolved; ``STOP`` only means the
 automated loop stops for human review, never that anything is confirmed.
 
+R74 adds the external evidence intake adapter
+(``ai.knowledge.research_evidence_intake``). A bounded external package
+produced by a human researcher or another explicitly authorized external
+process is validated, normalized into R68-compatible canonical evidence and
+fed into the existing R72 readiness and R73 feedback engines; the result
+reports the intake status, accepted/rejected items, readiness before/after
+and the deterministic evidence delta. Watch itself never acquires the
+evidence: no target interaction, no HTTP client, no execution. Without an
+external package the intake honestly reports ``NOT_PROVIDED`` and the chain
+keeps its prior state.
+
 Hard boundaries preserved: research only, advisory only, no execution, no
 confirmation, no target activity, no secrets, deterministic envelope, bounded
 contexts and prompts, fail-closed validation, opt-in real provider.
@@ -100,6 +111,7 @@ Pipeline position (unchanged)::
       -> R71 evidence acquisition plans (advisory, plan-only)
       -> R72 sufficiency + decision readiness (advisory, plan-only)
       -> R73 feedback + iteration state (advisory, plan-only)
+      -> R74 external evidence intake + re-evaluation (advisory, adapter)
       -> research-only result envelope (printed and optionally persisted)
 """
 
@@ -120,6 +132,7 @@ from ai.knowledge.research_decision_readiness_planner import (
 from ai.knowledge.research_evidence_acquisition_planner import (
     plan_evidence_acquisition,
 )
+from ai.knowledge.research_evidence_intake import intake_and_reevaluate
 from ai.knowledge.research_feedback_loop import evaluate_research_iteration
 from ai.knowledge.research_outcome_planner import plan_research_actions
 from ai.knowledge.security_skills import render_skills, select_skills
@@ -131,7 +144,7 @@ from ai.schemas.research_priority import BAND_HIGH, BAND_LOW, BAND_MEDIUM
 from tests.local_e2e import r62_bridge as br
 from tests.local_e2e import recon_snapshot as rs
 
-RULE_VERSION = "r73-1"
+RULE_VERSION = "r74-1"
 
 STATUS_COMPLETED = "COMPLETED"
 STATUS_COMPLETED_WITH_REJECTIONS = "COMPLETED_WITH_REJECTIONS"
@@ -1344,6 +1357,7 @@ def run_research(
     program: str = "",
     source: str = "fixture",
     snapshot: Mapping | None = None,
+    external_evidence: Mapping | None = None,
 ) -> dict:
     """Run one bounded real research exchange (or fail closed)."""
 
@@ -1417,6 +1431,13 @@ def run_research(
         acquisition_plan=acquisition_plan,
         readiness_plan=readiness_plan,
     )
+    evidence_intake = intake_and_reevaluate(
+        external_evidence,
+        hypotheses=research["hypotheses"],
+        action_plan=action_plan,
+        acquisition_plan=acquisition_plan,
+        readiness_plan=readiness_plan,
+    )
 
     findings = input_hygiene(research_context, intelligence_context)
     snapshot_block = {
@@ -1452,6 +1473,7 @@ def run_research(
         "acquisition_plan": acquisition_plan,
         "readiness_plan": readiness_plan,
         "iteration_plan": iteration_plan,
+        "evidence_intake": evidence_intake,
         "safety": safety_block(),
         "limitations": list(LIMITATIONS),
     }
@@ -1476,7 +1498,7 @@ def persist_result(result: Mapping, *, persist_dir: str | Path | None = None) ->
 def _print_result(result: Mapping, persisted_path: str = "") -> None:
     print("")
     print("=" * 66)
-    print("WATCH AI SECURITY RESEARCH (R73, evidence + skills + actions + acquisition + readiness + feedback)")
+    print("WATCH AI SECURITY RESEARCH (R74, evidence + skills + actions + acquisition + readiness + feedback + intake)")
     print("=" * 66)
     print(f"Status      : {result.get('status')}")
     print(f"Program     : {result.get('program')}")
@@ -1730,6 +1752,49 @@ def _print_result(result: Mapping, persisted_path: str = "") -> None:
                 f"{iteration.get('human_review_required')}"
             )
             print("")
+    evidence_intake = result.get("evidence_intake") or {}
+    if evidence_intake:
+        print("EXTERNAL EVIDENCE INTAKE (advisory only)")
+        print("-" * 66)
+        print(
+            "   Package status     : "
+            f"{evidence_intake.get('package_status')} "
+            f"(accepted={evidence_intake.get('accepted_external_evidence')}, "
+            f"rejected={len(evidence_intake.get('rejections') or [])})"
+        )
+        for rejection in evidence_intake.get("rejections") or []:
+            print(
+                f"   Rejected item      : [{rejection.get('index')}] "
+                f"{rejection.get('code')}"
+            )
+        for rejection in evidence_intake.get("package_rejections") or []:
+            print(f"   Package rejection  : {rejection.get('code')}")
+        intake_summary = evidence_intake.get("summary") or {}
+        print(
+            "   Readiness before   : "
+            f"{intake_summary.get('top_readiness_before')}"
+        )
+        print(
+            "   Readiness after    : "
+            f"{intake_summary.get('top_readiness_after')}"
+        )
+        print(
+            "   Feedback           : "
+            f"{intake_summary.get('top_feedback_state')} / "
+            f"{intake_summary.get('top_current_state')} -> "
+            f"{intake_summary.get('top_next_iteration')}"
+        )
+        for transition in (
+            (evidence_intake.get("reevaluation") or {}).get("transitions")
+            or []
+        ):
+            print(
+                "   Transition         : "
+                f"{transition.get('plan_ref')} "
+                f"{transition.get('before_sufficiency')} -> "
+                f"{transition.get('after_sufficiency')}"
+            )
+        print("")
     print("-" * 66)
     print("[SAFETY] advisory research only; execution_performed=false;")
     print("         vulnerability_confirmed=false; exploit_authorized=false;")
@@ -1762,7 +1827,7 @@ def _mongo_snapshot(program: str, caps: Mapping) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tests.local_e2e.r64_research",
-        description="Watch R73 AI security research run",
+        description="Watch R74 AI security research run",
     )
     parser.add_argument(
         "--source",
@@ -1820,7 +1885,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print("")
-    print("WATCH AI SECURITY RESEARCH (R73, evidence + skills + actions + acquisition + readiness + feedback)")
+    print("WATCH AI SECURITY RESEARCH (R74, evidence + skills + actions + acquisition + readiness + feedback + intake)")
     print("-" * 66)
     print(f"Program            : {args.program}")
     print(f"Source             : {args.source}")
