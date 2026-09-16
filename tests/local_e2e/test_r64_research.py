@@ -668,7 +668,7 @@ class TestResponseParsing(unittest.TestCase):
     def test_valid_response_parsed(self):
         result = fake_run(valid_payload())
         self.assertEqual(result["status"], "COMPLETED")
-        self.assertEqual(result["research_run_version"], "r75-1")
+        self.assertEqual(result["research_run_version"], "r76-1")
         self.assertEqual(
             result["validation"],
             {"accepted_count": 1, "rejected_count": 0, "rejections": []},
@@ -2233,6 +2233,164 @@ class TestR75EvidenceProvenance(unittest.TestCase):
         self.assertIn("evidence_provenance", text)
         self.assertIn("provenance_state", text)
         self.assertIn("relation_to_previous", text)
+        self.assertIn("NOT_CONFIRMED", text)
+        self.assertNotIn("://", text)
+
+
+class TestR76ResearchCase(unittest.TestCase):
+    """R76: one bounded research case per correlated R70 action."""
+
+    def test_envelope_carries_research_case(self):
+        result = fake_run(valid_payload())
+        workspace = result["research_case_workspace"]
+        self.assertEqual(workspace["rule_version"], "r76-1")
+        self.assertEqual(workspace["status"], "BUILT")
+        self.assertEqual(
+            workspace["safety"]["confirmation_state"], "NOT_CONFIRMED"
+        )
+        self.assertFalse(workspace["safety"]["vulnerability_confirmed"])
+        self.assertEqual(len(workspace["cases"]), 1)
+        case = workspace["cases"][0]
+        self.assertEqual(
+            case["case_id"], "case-indeed-a1-object-authorization"
+        )
+        self.assertEqual(case["case_version"], "r76-1")
+        self.assertEqual(case["program"], "indeed")
+        self.assertEqual(case["action_ref"], "A1")
+        self.assertEqual(case["hypothesis_refs"], ["H1"])
+        self.assertEqual(case["hypothesis_count"], 1)
+        self.assertEqual(case["gap_id"], "OBJECT_AUTHORIZATION")
+        self.assertEqual(case["category"], "IDOR")
+        self.assertEqual(case["status"], "WAITING_FOR_EVIDENCE")
+        self.assertEqual(case["stopping_reason"], "")
+        self.assertEqual(
+            case["acquisition"]["plan_ref"], "P1"
+        )
+        self.assertEqual(
+            case["readiness"]["readiness_ref"], "R1"
+        )
+        self.assertEqual(
+            case["feedback"]["iteration_ref"], "I1"
+        )
+        self.assertEqual(
+            case["readiness"]["sufficiency_state"], "INSUFFICIENT"
+        )
+        self.assertEqual(
+            case["feedback"]["next_iteration"], "CONTINUE"
+        )
+        self.assertEqual(case["evidence"]["available_count"], 2)
+        self.assertEqual(case["evidence"]["missing_count"], 2)
+        self.assertEqual(case["evidence"]["decision_missing_count"], 2)
+        self.assertEqual(case["evidence"]["intake_state"], "NOT_PROVIDED")
+        self.assertFalse(case["human_review_required"])
+        self.assertEqual(case["iteration_count"], 1)
+        self.assertEqual(len(case["history"]), 1)
+        self.assertFalse(case["history_truncated"])
+        self.assertEqual(
+            workspace["summary"]["status_bands"]["WAITING_FOR_EVIDENCE"], 1
+        )
+
+    def test_correlated_hypotheses_remain_one_case(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(title="First IDOR"),
+                hypothesis(title="Second IDOR"),
+            ]
+        )
+        result = fake_run(payload)
+        cases = result["research_case_workspace"]["cases"]
+        self.assertEqual(len(cases), 1)
+        self.assertEqual(cases[0]["hypothesis_refs"], ["H1", "H2"])
+        self.assertEqual(cases[0]["hypothesis_count"], 2)
+
+    def test_partial_evidence_activates_case(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            )
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        case = result["research_case_workspace"]["cases"][0]
+        self.assertEqual(case["status"], "ACTIVE")
+        self.assertEqual(case["stopping_reason"], "")
+        self.assertEqual(
+            case["readiness"]["sufficiency_state"], "PARTIALLY_SUFFICIENT"
+        )
+        self.assertEqual(
+            case["feedback"]["feedback_state"], "EVIDENCE_GAP_REDUCED"
+        )
+        self.assertEqual(case["evidence"]["accepted_evidence_count"], 1)
+        self.assertEqual(case["evidence"]["intake_state"], "ACCEPTED")
+        self.assertFalse(case["human_review_required"])
+
+    def test_complete_evidence_ready_for_human_review(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            ),
+            evidence_item(
+                "OWNERSHIP_BINDING",
+                "response:external-ownership-binding-1",
+            ),
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        case = result["research_case_workspace"]["cases"][0]
+        self.assertEqual(case["status"], "READY_FOR_HUMAN_REVIEW")
+        self.assertEqual(
+            case["stopping_reason"], "DECISION_EVIDENCE_COMPLETE"
+        )
+        self.assertEqual(
+            case["readiness"]["sufficiency_state"], "SUFFICIENT_FOR_REVIEW"
+        )
+        self.assertTrue(case["human_review_required"])
+
+    def test_conflict_requires_human_review_without_resolving(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            ),
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "response:external-contradiction-1",
+                effect="CONTRADICTS",
+            ),
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        case = result["research_case_workspace"]["cases"][0]
+        self.assertEqual(case["status"], "READY_FOR_HUMAN_REVIEW")
+        self.assertEqual(
+            case["stopping_reason"], "CONFLICT_REQUIRES_HUMAN_REVIEW"
+        )
+        self.assertTrue(case["human_review_required"])
+        self.assertEqual(case["provenance"]["conflict_count"], 1)
+        self.assertIn(
+            "AUTHORIZATION_OUTCOME",
+            case["provenance"]["conflicting_requirement_kinds"],
+        )
+        self.assertEqual(
+            case["readiness"]["sufficiency_state"], "PARTIALLY_SUFFICIENT"
+        )
+        text = r64.canonical_json(case)
+        self.assertNotIn("vulnerable", text.lower())
+        self.assertNotIn("exploitable", text.lower())
+
+    def test_persisted_artifact_contains_research_case(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            )
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        with TemporaryDirectory() as tmp:
+            path = r64.persist_result(result, persist_dir=tmp)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("research_case_workspace", text)
+        self.assertIn("case_id", text)
+        self.assertIn("stopping_reason", text)
         self.assertIn("NOT_CONFIRMED", text)
         self.assertNotIn("://", text)
 

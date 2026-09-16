@@ -107,6 +107,15 @@ never resolves conflicts: incompatible evidence becomes ``CONFLICTING`` with
 readiness or R73 feedback. Wording similarity is never used and source type is
 never treated as truth.
 
+R76 adds the research case workspace
+(``ai.knowledge.research_case_workspace``): a bounded aggregation/state layer
+that gives one deterministic case per correlated R70 action with stage
+references (A/P/R/I), bounded evidence/conflict summaries, a closed research
+status (``ACTIVE``/``WAITING_FOR_EVIDENCE``/``READY_FOR_HUMAN_REVIEW``/
+``STOPPED``), a stopping reason, and bounded iteration history. It re-runs no
+stage, changes no stage output, never resolves conflicts and is never a
+security verdict.
+
 Hard boundaries preserved: research only, advisory only, no execution, no
 confirmation, no target activity, no secrets, deterministic envelope, bounded
 contexts and prompts, fail-closed validation, opt-in real provider.
@@ -123,6 +132,7 @@ Pipeline position (unchanged)::
       -> R73 feedback + iteration state (advisory, plan-only)
       -> R74 external evidence intake + re-evaluation (advisory, adapter)
       -> R75 provenance + conflict analysis (advisory, analysis only)
+      -> R76 research case workspace (advisory, aggregation only)
       -> research-only result envelope (printed and optionally persisted)
 """
 
@@ -137,6 +147,11 @@ import sys
 from pathlib import Path
 from typing import Mapping
 
+from ai.knowledge.research_case_workspace import (
+    ResearchCaseError,
+    build_research_cases,
+    summarize_research_cases,
+)
 from ai.knowledge.research_decision_readiness_planner import (
     plan_decision_readiness,
 )
@@ -158,7 +173,7 @@ from ai.schemas.research_priority import BAND_HIGH, BAND_LOW, BAND_MEDIUM
 from tests.local_e2e import r62_bridge as br
 from tests.local_e2e import recon_snapshot as rs
 
-RULE_VERSION = "r75-1"
+RULE_VERSION = "r76-1"
 
 STATUS_COMPLETED = "COMPLETED"
 STATUS_COMPLETED_WITH_REJECTIONS = "COMPLETED_WITH_REJECTIONS"
@@ -1459,6 +1474,34 @@ def run_research(
         acquisition_plan=acquisition_plan,
         readiness_plan=readiness_plan,
     )
+    try:
+        research_cases = build_research_cases(
+            action_plan,
+            acquisition_plan,
+            readiness_plan,
+            iteration_plan,
+            program=program_name,
+            evidence_intake=evidence_intake,
+            evidence_provenance=evidence_provenance,
+        )
+        research_case_workspace = {
+            "rule_version": "r76-1",
+            "status": "BUILT",
+            "cases": research_cases,
+            "summary": summarize_research_cases(research_cases),
+            "safety": safety_block(),
+            "research_only": True,
+        }
+    except ResearchCaseError as exc:
+        research_case_workspace = {
+            "rule_version": "r76-1",
+            "status": "REJECTED",
+            "error": {"code": exc.code, "message": exc.safe_message[:160]},
+            "cases": [],
+            "summary": {},
+            "safety": safety_block(),
+            "research_only": True,
+        }
 
     findings = input_hygiene(research_context, intelligence_context)
     snapshot_block = {
@@ -1496,6 +1539,7 @@ def run_research(
         "iteration_plan": iteration_plan,
         "evidence_intake": evidence_intake,
         "evidence_provenance": evidence_provenance,
+        "research_case_workspace": research_case_workspace,
         "safety": safety_block(),
         "limitations": list(LIMITATIONS),
     }
@@ -1520,7 +1564,7 @@ def persist_result(result: Mapping, *, persist_dir: str | Path | None = None) ->
 def _print_result(result: Mapping, persisted_path: str = "") -> None:
     print("")
     print("=" * 66)
-    print("WATCH AI SECURITY RESEARCH (R75, evidence + skills + actions + acquisition + readiness + feedback + intake + provenance)")
+    print("WATCH AI SECURITY RESEARCH (R76, evidence + skills + actions + acquisition + readiness + feedback + intake + provenance + case)")
     print("=" * 66)
     print(f"Status      : {result.get('status')}")
     print(f"Program     : {result.get('program')}")
@@ -1858,6 +1902,73 @@ def _print_result(result: Mapping, persisted_path: str = "") -> None:
             f"{provenance.get('summary', {}).get('human_review_required', False)}"
         )
         print("")
+    case_workspace = result.get("research_case_workspace") or {}
+    cases = case_workspace.get("cases") or []
+    if cases:
+        print("RESEARCH CASE (advisory only)")
+        print("-" * 66)
+        for case in cases:
+            readiness = case.get("readiness") or {}
+            feedback = case.get("feedback") or {}
+            evidence = case.get("evidence") or {}
+            provenance_case = case.get("provenance") or {}
+            print(
+                f"{case.get('case_id')} :: {case.get('status')} "
+                f"(stopping={case.get('stopping_reason') or 'NONE'})"
+            )
+            print(
+                "   Hypotheses         : "
+                + ", ".join(case.get("hypothesis_refs") or [])
+            )
+            print(
+                "   Refs               : "
+                f"{case.get('action_ref')} / "
+                f"{(case.get('acquisition') or {}).get('plan_ref')} / "
+                f"{readiness.get('readiness_ref')} / "
+                f"{feedback.get('iteration_ref')}"
+            )
+            print(
+                "   Readiness          : "
+                f"{readiness.get('sufficiency_state')} / "
+                f"{readiness.get('decision_state')}"
+            )
+            print(
+                "   Feedback           : "
+                f"{feedback.get('feedback_state')} / "
+                f"{feedback.get('hypothesis_state')} -> "
+                f"{feedback.get('next_iteration')}"
+            )
+            print(
+                "   Evidence           : "
+                f"available={evidence.get('available_count')} "
+                f"missing={evidence.get('missing_count')} "
+                f"decision_missing={evidence.get('decision_missing_count')} "
+                f"accepted={evidence.get('accepted_evidence_count')} "
+                f"rejected={evidence.get('rejected_evidence_count')}"
+            )
+            print(
+                "   Conflicts          : "
+                f"{provenance_case.get('conflict_count')} "
+                f"(human_review={case.get('human_review_required')})"
+            )
+            print(
+                "   Iterations         : "
+                f"{case.get('iteration_count')}"
+                + (
+                    " (history truncated)"
+                    if case.get("history_truncated")
+                    else ""
+                )
+            )
+            print("")
+    elif case_workspace.get("status") == "REJECTED":
+        print("RESEARCH CASE (advisory only)")
+        print("-" * 66)
+        print(
+            "   Rejected           : "
+            f"{(case_workspace.get('error') or {}).get('code')}"
+        )
+        print("")
     print("-" * 66)
     print("[SAFETY] advisory research only; execution_performed=false;")
     print("         vulnerability_confirmed=false; exploit_authorized=false;")
@@ -1890,7 +2001,7 @@ def _mongo_snapshot(program: str, caps: Mapping) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tests.local_e2e.r64_research",
-        description="Watch R75 AI security research run",
+        description="Watch R76 AI security research run",
     )
     parser.add_argument(
         "--source",
@@ -1948,7 +2059,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print("")
-    print("WATCH AI SECURITY RESEARCH (R75, evidence + skills + actions + acquisition + readiness + feedback + intake + provenance)")
+    print("WATCH AI SECURITY RESEARCH (R76, evidence + skills + actions + acquisition + readiness + feedback + intake + provenance + case)")
     print("-" * 66)
     print(f"Program            : {args.program}")
     print(f"Source             : {args.source}")
