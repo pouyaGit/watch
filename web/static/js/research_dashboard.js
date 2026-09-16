@@ -889,6 +889,178 @@
     }
   }
 
+
+  // =====================================================================
+  // AI ACTIVITY / RUNTIME STATUS (R83, read-only)
+  // =====================================================================
+
+  var ACTIVITY_STATUS_CLASS = {
+    RUNNING: 'badge-running',
+    WAITING_FOR_EVIDENCE: 'badge-neutral',
+    COMPLETED: 'badge-ok',
+    COMPLETED_WITH_REJECTIONS: 'badge-warn',
+    ERROR: 'badge-err',
+    IDLE: 'badge-idle',
+    UNKNOWN: 'badge-idle'
+  };
+
+  function formatDuration(seconds) {
+    if (seconds === null || seconds === undefined || seconds === '') return '—';
+    var value = Number(seconds);
+    if (!isFinite(value) || value < 0) return '—';
+    if (value < 60) return value.toFixed(1) + 's';
+    var minutes = Math.floor(value / 60);
+    var rest = Math.round(value - minutes * 60);
+    if (minutes < 60) return minutes + 'm ' + rest + 's';
+    var hours = Math.floor(minutes / 60);
+    return hours + 'h ' + (minutes - hours * 60) + 'm';
+  }
+
+  function shortTime(iso) {
+    if (!iso) return '—';
+    return String(iso).replace('T', ' ');
+  }
+
+  function activityStatusBadge(status) {
+    return badge(status || 'UNKNOWN', ACTIVITY_STATUS_CLASS[status] || 'badge-idle');
+  }
+
+  function activityLine(container, label, value) {
+    var line = el('p', 'r82-kv-line');
+    line.appendChild(el('span', 'r82-kv-label', label + ': '));
+    line.appendChild(el('span', null, value === null || value === undefined || value === '' ? '—' : String(value)));
+    container.appendChild(line);
+  }
+
+  function renderActivity(body) {
+    var status = body.status || 'UNKNOWN';
+    var statusSlot = document.getElementById('activity-status');
+    if (statusSlot) {
+      clear(statusSlot);
+      statusSlot.appendChild(activityStatusBadge(status));
+    }
+    var timeSlot = document.getElementById('activity-time');
+    if (timeSlot) timeSlot.textContent = shortTime(body.server_time_tehran);
+    var windowBlock = body.window || {};
+    var windowLabel = document.getElementById('activity-window');
+    if (windowLabel) {
+      windowLabel.textContent = 'window: ' + (windowBlock.start || '—') + '-' + (windowBlock.end || '—') + ' ' + (windowBlock.timezone || '');
+    }
+    var windowSlot = document.getElementById('activity-window-label');
+    if (windowSlot) {
+      windowSlot.textContent = (windowBlock.start || '—') + '-' + (windowBlock.end || '—') + ' ' + (windowBlock.timezone || '');
+    }
+    var inWindowSlot = document.getElementById('activity-in-window');
+    if (inWindowSlot) inWindowSlot.textContent = boolText(windowBlock.in_window);
+
+    var lastRun = document.getElementById('activity-last-run');
+    if (lastRun) {
+      clear(lastRun);
+      var run = body.last_run;
+      lastRun.appendChild(el('p', 'r82-kv-label', 'Last run'));
+      if (!run) {
+        lastRun.appendChild(el('p', 'r82-empty', 'no persisted run record'));
+      } else {
+        activityLine(lastRun, 'Run', run.run_id);
+        activityLine(lastRun, 'Status', run.status + ' (' + (run.agent_status || '') + ')' + (run.skipped ? ' skipped=' + run.skipped : ''));
+        activityLine(lastRun, 'Started', shortTime(run.started_at));
+        activityLine(lastRun, 'Finished', shortTime(run.finished_at));
+        activityLine(lastRun, 'Duration', formatDuration(run.duration_seconds));
+        activityLine(lastRun, 'Plans', String(run.plans_processed || 0) + ' / selected ' + String(run.plans_selected || 0));
+        activityLine(lastRun, 'Results', String(run.result_count || 0));
+        activityLine(lastRun, 'Evidence / sources', String(run.evidence_count || 0) + ' / ' + String(run.sources_count || 0));
+        if (run.cve_id || run.program) {
+          activityLine(lastRun, 'Program', (run.program || '—') + ' ' + (run.cve_id || ''));
+        }
+        activityLine(lastRun, 'Failures', String(run.failure_count || 0));
+      }
+    }
+
+    var currentCase = document.getElementById('activity-current-case');
+    if (currentCase) {
+      clear(currentCase);
+      currentCase.appendChild(el('p', 'r82-kv-label', 'Current case'));
+      var entry = body.current_case;
+      if (!entry) {
+        currentCase.appendChild(el('p', 'r82-empty', 'no research case artifact'));
+      } else {
+        activityLine(currentCase, 'Case', entry.case_id);
+        activityLine(currentCase, 'Program / category', (entry.program || '—') + ' / ' + (entry.category || '—'));
+        activityLine(currentCase, 'Case state', entry.case_status + ' · ' + entry.sufficiency_state + ' · ' + entry.decision_state);
+        activityLine(currentCase, 'Evidence available / missing', String(entry.available_count || 0) + ' / ' + String(entry.missing_count || 0));
+        activityLine(currentCase, 'Stage', body.current_stage || 'unknown (not persisted by the agent)');
+      }
+    }
+
+    var daily = document.getElementById('activity-daily');
+    if (daily) {
+      clear(daily);
+      var summary = body.daily || {};
+      daily.appendChild(el('p', 'r82-kv-label', 'Daily window summary'));
+      activityLine(daily, 'Window', summary.window || '—');
+      activityLine(daily, 'Runs', summary.runs);
+      activityLine(daily, 'Plans processed', summary.plans_processed);
+      activityLine(daily, 'Results', summary.results);
+      activityLine(daily, 'Evidence acquired', summary.evidence_acquired);
+      activityLine(daily, 'Cases processed', summary.cases_processed);
+      activityLine(daily, 'Accepted / rejected hypotheses', String(summary.accepted_hypotheses || 0) + ' / ' + String(summary.rejected_hypotheses || 0));
+      activityLine(daily, 'Evidence available / missing', String(summary.evidence_available || 0) + ' / ' + String(summary.evidence_missing || 0));
+      activityLine(daily, 'Actions generated', summary.actions_generated);
+      var totals = body.totals || {};
+      activityLine(daily, 'Totals (all persisted)', 'runs=' + String(totals.runs || 0) + ' results=' + String(totals.results || 0) + ' cases=' + String(totals.cases || 0));
+    }
+
+    var errorSlot = document.getElementById('activity-error');
+    if (errorSlot) {
+      clear(errorSlot);
+      if (body.last_error) {
+        errorSlot.appendChild(el('p', 'r82-kv-label', 'Last error'));
+        errorSlot.appendChild(el('p', 'r82-kv-line', body.last_error));
+      }
+    }
+
+    var note = document.getElementById('activity-note');
+    if (note) {
+      var observability = body.observability || {};
+      var parts = [];
+      parts.push('basis: ' + (body.status_basis || '—'));
+      if (observability.unavailable_fields && observability.unavailable_fields.length) {
+        parts.push('unavailable: ' + observability.unavailable_fields.join(', '));
+      }
+      parts.push('UNKNOWN means the runtime state could not be observed; it does not mean failure.');
+      note.textContent = parts.join(' · ');
+    }
+  }
+
+  async function initActivity() {
+    var container = document.getElementById('activity-state');
+    if (!container) return;
+    showState(container, 'loading', 'Loading AI activity…');
+    var result = await apiFetch('/api/research/activity');
+    if (result.state !== 'ok' || !result.body) {
+      showState(
+        container,
+        result.state === 'unauthorized' ? 'unauthorized' : 'error',
+        result.state === 'unauthorized'
+          ? 'API key required'
+          : result.state === 'unavailable'
+            ? 'API unavailable'
+            : 'Could not load AI activity',
+        result.code || ''
+      );
+      return;
+    }
+    hideState(container);
+    renderActivity(result.body);
+    var refresh = document.getElementById('activity-refresh');
+    if (refresh && !refresh.dataset.bound) {
+      refresh.dataset.bound = '1';
+      refresh.addEventListener('click', function () {
+        initActivity();
+      });
+    }
+  }
+
   // ---------- bootstrap ----------
   document.addEventListener('DOMContentLoaded', function () {
     var page = document.body.getAttribute('data-r82-page');
@@ -896,6 +1068,7 @@
     if (home) home.href = homeUrl();
     if (page === 'case-list') {
       initCaseList();
+      initActivity();
     } else if (page === 'case-detail') {
       initCaseDetail();
     }
@@ -908,7 +1081,9 @@
     statusBadge: statusBadge,
     renderCaseList: renderListRows,
     renderWorkbench: renderWorkbench,
+    renderActivity: renderActivity,
     initCaseList: initCaseList,
+    initActivity: initActivity,
     initCaseDetail: initCaseDetail
   };
 })();

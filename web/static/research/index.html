@@ -44,6 +44,43 @@
 
     <div id="case-list-state" class="r82-state-host" hidden></div>
 
+    <p class="section-label">AI Activity</p>
+    <section class="panel r82-panel" id="activity-panel">
+      <div class="panel-head">
+        <h2>AI Runtime Activity</h2>
+      </div>
+      <div class="panel-body">
+        <div class="r82-controls">
+          <button class="r82-toplink r82-button" id="activity-refresh" type="button">Refresh</button>
+          <span class="r82-kv-line" id="activity-window">window: —</span>
+        </div>
+        <div id="activity-state" class="r82-state-host" hidden></div>
+        <div class="r82-state-grid" id="activity-status-grid">
+          <div class="r82-state-item">
+            <p class="r82-kv-label">Status</p>
+            <span id="activity-status"></span>
+          </div>
+          <div class="r82-state-item">
+            <p class="r82-kv-label">Server time (Asia/Tehran)</p>
+            <p class="r82-kv-value" id="activity-time">—</p>
+          </div>
+          <div class="r82-state-item">
+            <p class="r82-kv-label">Daily window</p>
+            <p class="r82-kv-value" id="activity-window-label">—</p>
+          </div>
+          <div class="r82-state-item">
+            <p class="r82-kv-label">In window</p>
+            <p class="r82-kv-value" id="activity-in-window">—</p>
+          </div>
+        </div>
+        <div class="r82-kv" id="activity-last-run"></div>
+        <div class="r82-kv" id="activity-current-case"></div>
+        <div class="r82-kv" id="activity-daily"></div>
+        <div class="r82-kv" id="activity-error"></div>
+        <p class="r82-empty" id="activity-note"></p>
+      </div>
+    </section>
+
     <section class="panel r82-panel">
       <div class="panel-head">
         <h2>Case list</h2>
