@@ -668,7 +668,7 @@ class TestResponseParsing(unittest.TestCase):
     def test_valid_response_parsed(self):
         result = fake_run(valid_payload())
         self.assertEqual(result["status"], "COMPLETED")
-        self.assertEqual(result["research_run_version"], "r72-1")
+        self.assertEqual(result["research_run_version"], "r73-1")
         self.assertEqual(
             result["validation"],
             {"accepted_count": 1, "rejected_count": 0, "rejections": []},
@@ -1848,6 +1848,81 @@ class TestR72DecisionReadiness(unittest.TestCase):
         self.assertIn("readiness_plan", text)
         self.assertIn("sufficiency_state", text)
         self.assertIn("blocking_requirements", text)
+        self.assertIn("NOT_CONFIRMED", text)
+        self.assertNotIn("://", text)
+
+
+class TestR73FeedbackIteration(unittest.TestCase):
+    """R73: readiness records become bounded feedback/iteration states."""
+
+    def test_envelope_carries_iteration_feedback(self):
+        result = fake_run(valid_payload())
+        iteration_plan = result["iteration_plan"]
+        self.assertEqual(iteration_plan["rule_version"], "r73-1")
+        self.assertEqual(iteration_plan["source_action_rule_version"], "r70-1")
+        self.assertEqual(
+            iteration_plan["source_acquisition_rule_version"], "r71-1"
+        )
+        self.assertEqual(
+            iteration_plan["source_readiness_rule_version"], "r72-1"
+        )
+        self.assertEqual(iteration_plan["rejections"], [])
+        self.assertEqual(len(iteration_plan["iterations"]), 1)
+        iteration = iteration_plan["iterations"][0]
+        self.assertEqual(iteration["iteration_id"], "I1")
+        self.assertEqual(iteration["plan_ref"], "P1")
+        self.assertEqual(iteration["action_ref"], "A1")
+        self.assertEqual(iteration["gap_id"], "OBJECT_AUTHORIZATION")
+        self.assertEqual(iteration["previous_state"], "UNRESOLVED")
+        self.assertEqual(
+            iteration["feedback_state"], "EVIDENCE_GAP_REMAINS"
+        )
+        self.assertEqual(iteration["current_state"], "UNRESOLVED")
+        self.assertEqual(iteration["next_iteration"], "CONTINUE")
+        self.assertEqual(iteration["reason"], "NO_RELEVANT_EVIDENCE")
+        self.assertEqual(iteration["evidence_delta"], [])
+        self.assertEqual(
+            iteration["remaining_decision_requirements"],
+            ["AUTHORIZATION_OUTCOME", "OWNERSHIP_BINDING"],
+        )
+        self.assertEqual(
+            iteration["safety"]["confirmation_state"], "NOT_CONFIRMED"
+        )
+        self.assertFalse(iteration["safety"]["vulnerability_confirmed"])
+
+    def test_iteration_is_deterministic_and_correlated(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(title="First IDOR"),
+                hypothesis(title="Second IDOR"),
+            ]
+        )
+        result = fake_run(payload)
+        first = r64.canonical_json(result["iteration_plan"])
+        second = r64.canonical_json(fake_run(payload)["iteration_plan"])
+        self.assertEqual(first, second)
+        iterations = result["iteration_plan"]["iterations"]
+        self.assertEqual(len(iterations), 1)
+        self.assertEqual(iterations[0]["hypothesis_refs"], ["H1", "H2"])
+        self.assertEqual(iterations[0]["hypothesis_count"], 2)
+
+    def test_no_new_evidence_never_confirms(self):
+        result = fake_run(valid_payload())
+        text = r64.canonical_json(result["iteration_plan"]).lower()
+        self.assertNotIn("vulnerable", text)
+        self.assertNotIn("exploitable", text)
+        self.assertNotIn("://", text)
+        self.assertNotIn("sk-", text)
+        self.assertIn("not_confirmed", text)
+
+    def test_persisted_artifact_contains_iteration_plan(self):
+        result = fake_run(valid_payload())
+        with TemporaryDirectory() as tmp:
+            path = r64.persist_result(result, persist_dir=tmp)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("iteration_plan", text)
+        self.assertIn("feedback_state", text)
+        self.assertIn("next_iteration", text)
         self.assertIn("NOT_CONFIRMED", text)
         self.assertNotIn("://", text)
 

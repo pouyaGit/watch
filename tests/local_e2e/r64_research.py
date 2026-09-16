@@ -75,6 +75,17 @@ next decision step referencing the R71 plan, and the R71 stopping condition.
 Sufficiency is never inferred from priority, confidence, names or model
 wording; ``SUFFICIENT_FOR_REVIEW`` never means a vulnerability is real.
 
+R73 adds the bounded feedback and iteration layer after R72
+(``ai.knowledge.research_feedback_loop``). It compares the previous
+R70/R71/R72 state with explicit new evidence and reports what changed:
+requirement transitions (``MISSING``->``AVAILABLE``, explicit
+``AVAILABLE``->``MISSING`` invalidation), a closed feedback state, a closed
+hypothesis research state (``RETAIN``/``REFINE``/``WEAKEN``/``UNRESOLVED``/
+``STOP``) and a closed next-iteration decision
+(``CONTINUE``/``HUMAN_REVIEW``/``STOP``). Without new evidence the real run
+honestly reports no change / gap remains / unresolved; ``STOP`` only means the
+automated loop stops for human review, never that anything is confirmed.
+
 Hard boundaries preserved: research only, advisory only, no execution, no
 confirmation, no target activity, no secrets, deterministic envelope, bounded
 contexts and prompts, fail-closed validation, opt-in real provider.
@@ -88,6 +99,7 @@ Pipeline position (unchanged)::
       -> R70 outcomes + ranked research actions (advisory, plan-only)
       -> R71 evidence acquisition plans (advisory, plan-only)
       -> R72 sufficiency + decision readiness (advisory, plan-only)
+      -> R73 feedback + iteration state (advisory, plan-only)
       -> research-only result envelope (printed and optionally persisted)
 """
 
@@ -108,6 +120,7 @@ from ai.knowledge.research_decision_readiness_planner import (
 from ai.knowledge.research_evidence_acquisition_planner import (
     plan_evidence_acquisition,
 )
+from ai.knowledge.research_feedback_loop import evaluate_research_iteration
 from ai.knowledge.research_outcome_planner import plan_research_actions
 from ai.knowledge.security_skills import render_skills, select_skills
 from ai.llm.base import LLMProvider
@@ -118,7 +131,7 @@ from ai.schemas.research_priority import BAND_HIGH, BAND_LOW, BAND_MEDIUM
 from tests.local_e2e import r62_bridge as br
 from tests.local_e2e import recon_snapshot as rs
 
-RULE_VERSION = "r72-1"
+RULE_VERSION = "r73-1"
 
 STATUS_COMPLETED = "COMPLETED"
 STATUS_COMPLETED_WITH_REJECTIONS = "COMPLETED_WITH_REJECTIONS"
@@ -1398,6 +1411,12 @@ def run_research(
     action_plan = plan_research_actions(research["hypotheses"])
     acquisition_plan = plan_evidence_acquisition(action_plan)
     readiness_plan = plan_decision_readiness(action_plan, acquisition_plan)
+    iteration_plan = evaluate_research_iteration(
+        research["hypotheses"],
+        action_plan=action_plan,
+        acquisition_plan=acquisition_plan,
+        readiness_plan=readiness_plan,
+    )
 
     findings = input_hygiene(research_context, intelligence_context)
     snapshot_block = {
@@ -1432,6 +1451,7 @@ def run_research(
         "action_plan": action_plan,
         "acquisition_plan": acquisition_plan,
         "readiness_plan": readiness_plan,
+        "iteration_plan": iteration_plan,
         "safety": safety_block(),
         "limitations": list(LIMITATIONS),
     }
@@ -1456,7 +1476,7 @@ def persist_result(result: Mapping, *, persist_dir: str | Path | None = None) ->
 def _print_result(result: Mapping, persisted_path: str = "") -> None:
     print("")
     print("=" * 66)
-    print("WATCH AI SECURITY RESEARCH (R72, evidence + skills + actions + acquisition + readiness)")
+    print("WATCH AI SECURITY RESEARCH (R73, evidence + skills + actions + acquisition + readiness + feedback)")
     print("=" * 66)
     print(f"Status      : {result.get('status')}")
     print(f"Program     : {result.get('program')}")
@@ -1665,6 +1685,51 @@ def _print_result(result: Mapping, persisted_path: str = "") -> None:
                 print("      Sources         : " + ", ".join(step["sources"]))
             print(f"   Stop condition     : {record.get('stop_condition')}")
             print("")
+    iteration_plan = result.get("iteration_plan") or {}
+    iterations = iteration_plan.get("iterations") or []
+    if iterations:
+        print("RESEARCH ITERATION FEEDBACK (advisory only)")
+        print("-" * 66)
+        for iteration in iterations:
+            print(
+                f"{iteration.get('iteration_id')} "
+                f"[{iteration.get('category')}] {iteration.get('gap_id')} :: "
+                f"{iteration.get('feedback_state')} / "
+                f"{iteration.get('current_state')} -> "
+                f"{iteration.get('next_iteration')}"
+            )
+            print(
+                "   Hypotheses         : "
+                + ", ".join(iteration.get("hypothesis_refs") or [])
+            )
+            deltas = iteration.get("evidence_delta") or []
+            if deltas:
+                for delta in deltas:
+                    print(
+                        "   Delta              : "
+                        f"{delta.get('requirement_kind')} "
+                        f"{delta.get('from_status')} -> "
+                        f"{delta.get('to_status')} "
+                        f"({delta.get('cause')})"
+                    )
+            else:
+                print("   Delta              : (none)")
+            print(
+                "   Remaining decision : "
+                + (
+                    ", ".join(
+                        iteration.get("remaining_decision_requirements")
+                        or []
+                    )
+                    or "(none)"
+                )
+            )
+            print(f"   Reason             : {iteration.get('reason')}")
+            print(
+                "   Human review       : "
+                f"{iteration.get('human_review_required')}"
+            )
+            print("")
     print("-" * 66)
     print("[SAFETY] advisory research only; execution_performed=false;")
     print("         vulnerability_confirmed=false; exploit_authorized=false;")
@@ -1697,7 +1762,7 @@ def _mongo_snapshot(program: str, caps: Mapping) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tests.local_e2e.r64_research",
-        description="Watch R72 AI security research run",
+        description="Watch R73 AI security research run",
     )
     parser.add_argument(
         "--source",
@@ -1755,7 +1820,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print("")
-    print("WATCH AI SECURITY RESEARCH (R72, evidence + skills + actions + acquisition + readiness)")
+    print("WATCH AI SECURITY RESEARCH (R73, evidence + skills + actions + acquisition + readiness + feedback)")
     print("-" * 66)
     print(f"Program            : {args.program}")
     print(f"Source             : {args.source}")
