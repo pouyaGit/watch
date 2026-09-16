@@ -668,7 +668,7 @@ class TestResponseParsing(unittest.TestCase):
     def test_valid_response_parsed(self):
         result = fake_run(valid_payload())
         self.assertEqual(result["status"], "COMPLETED")
-        self.assertEqual(result["research_run_version"], "r71-1")
+        self.assertEqual(result["research_run_version"], "r72-1")
         self.assertEqual(
             result["validation"],
             {"accepted_count": 1, "rejected_count": 0, "rejections": []},
@@ -1743,6 +1743,111 @@ class TestR71AcquisitionPlanning(unittest.TestCase):
         self.assertIn("acquisition_plan", text)
         self.assertIn("acquisition_steps", text)
         self.assertIn("decision_impact", text)
+        self.assertIn("NOT_CONFIRMED", text)
+        self.assertNotIn("://", text)
+
+
+class TestR72DecisionReadiness(unittest.TestCase):
+    """R72: R71 acquisition plans become sufficiency/readiness records."""
+
+    def test_envelope_carries_decision_readiness(self):
+        result = fake_run(valid_payload())
+        readiness = result["readiness_plan"]
+        self.assertEqual(readiness["rule_version"], "r72-1")
+        self.assertEqual(readiness["source_action_rule_version"], "r70-1")
+        self.assertEqual(
+            readiness["source_acquisition_rule_version"], "r71-1"
+        )
+        self.assertEqual(len(readiness["records"]), 1)
+        record = readiness["records"][0]
+        self.assertEqual(record["readiness_id"], "R1")
+        self.assertEqual(record["plan_ref"], "P1")
+        self.assertEqual(record["action_ref"], "A1")
+        self.assertEqual(record["gap_id"], "OBJECT_AUTHORIZATION")
+        self.assertEqual(
+            record["sufficiency_state"], "INSUFFICIENT"
+        )
+        self.assertEqual(record["decision_state"], "NEEDS_EVIDENCE")
+        self.assertEqual(
+            record["blocking_codes"],
+            ["AUTHORIZATION_OUTCOME", "OWNERSHIP_BINDING"],
+        )
+        self.assertEqual(
+            record["safety"]["confirmation_state"], "NOT_CONFIRMED"
+        )
+        self.assertFalse(record["safety"]["vulnerability_confirmed"])
+        self.assertEqual(readiness["summary"]["record_count"], 1)
+        self.assertEqual(readiness["summary"]["top_readiness_id"], "R1")
+
+    def test_readiness_never_confirms_and_references_r71(self):
+        result = fake_run(valid_payload())
+        record = result["readiness_plan"]["records"][0]
+        self.assertEqual(
+            record["next_decision_step"]["instruction"],
+            "ACQUIRE_MISSING_DECISION_EVIDENCE",
+        )
+        self.assertEqual(record["next_decision_step"]["plan_ref"], "P1")
+        self.assertEqual(record["next_decision_step"]["action_ref"], "A1")
+        self.assertTrue(record["stop_condition"])
+        text = r64.canonical_json(result["readiness_plan"])
+        self.assertNotIn("vulnerable", text.lower())
+        self.assertNotIn("exploitable", text.lower())
+        self.assertIn("NOT_CONFIRMED", text)
+
+    def test_structural_only_is_insufficient(self):
+        result = fake_run(valid_payload())
+        record = result["readiness_plan"]["records"][0]
+        self.assertEqual(record["sufficiency_state"], "INSUFFICIENT")
+        self.assertEqual(record["decision_state"], "NEEDS_EVIDENCE")
+
+    def test_category_aware_readiness(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(
+                    title="Version exposure for CVE review",
+                    category="CVE_RESEARCH",
+                    priority="LOW",
+                    confidence="UNKNOWN",
+                    evidence_refs=[
+                        ref_id(TECH_NGINX),
+                        ref_id(VERSION_NGINX),
+                    ],
+                    inference=(
+                        "Known issues may affect these versions; component "
+                        "mapping was not verified."
+                    ),
+                )
+            ]
+        )
+        result = fake_run(payload)
+        record = result["readiness_plan"]["records"][0]
+        self.assertEqual(record["category"], "CVE_RESEARCH")
+        self.assertEqual(record["gap_id"], "COMPONENT_MAPPING")
+        self.assertEqual(record["sufficiency_state"], "INSUFFICIENT")
+        self.assertEqual(record["decision_state"], "NEEDS_EVIDENCE")
+        self.assertIn("COMPONENT_BINDING", record["blocking_codes"])
+
+    def test_shared_gap_stays_correlated(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(title="First IDOR"),
+                hypothesis(title="Second IDOR"),
+            ]
+        )
+        result = fake_run(payload)
+        records = result["readiness_plan"]["records"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["hypothesis_refs"], ["H1", "H2"])
+        self.assertEqual(records[0]["hypothesis_count"], 2)
+
+    def test_persisted_artifact_contains_readiness(self):
+        result = fake_run(valid_payload())
+        with TemporaryDirectory() as tmp:
+            path = r64.persist_result(result, persist_dir=tmp)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("readiness_plan", text)
+        self.assertIn("sufficiency_state", text)
+        self.assertIn("blocking_requirements", text)
         self.assertIn("NOT_CONFIRMED", text)
         self.assertNotIn("://", text)
 

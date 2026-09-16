@@ -62,6 +62,19 @@ to stop. Existing evidence is never requested again, plans are correlated
 through the R70 action, and the plan is advisory only, forces
 ``NOT_CONFIRMED``, and never executes, authorizes or confirms anything.
 
+R72 adds a deterministic, research-only evidence sufficiency and decision
+readiness layer after R71
+(``ai.knowledge.research_decision_readiness_planner``). Every R71 acquisition
+plan gets one bounded readiness record that answers "do we have enough
+evidence for a meaningful human review decision?": required evidence split
+into support vs decision classes, a closed sufficiency state
+(``INSUFFICIENT``/``PARTIALLY_SUFFICIENT``/``SUFFICIENT_FOR_REVIEW``), a closed
+decision state (``NEEDS_EVIDENCE``/``READY_FOR_HUMAN_REVIEW``/
+``REMAINS_UNRESOLVED``), explicit blocking requirements, a decision basis, the
+next decision step referencing the R71 plan, and the R71 stopping condition.
+Sufficiency is never inferred from priority, confidence, names or model
+wording; ``SUFFICIENT_FOR_REVIEW`` never means a vulnerability is real.
+
 Hard boundaries preserved: research only, advisory only, no execution, no
 confirmation, no target activity, no secrets, deterministic envelope, bounded
 contexts and prompts, fail-closed validation, opt-in real provider.
@@ -74,6 +87,7 @@ Pipeline position (unchanged)::
       -> Watch-side evidence resolution + per-hypothesis validation
       -> R70 outcomes + ranked research actions (advisory, plan-only)
       -> R71 evidence acquisition plans (advisory, plan-only)
+      -> R72 sufficiency + decision readiness (advisory, plan-only)
       -> research-only result envelope (printed and optionally persisted)
 """
 
@@ -88,6 +102,9 @@ import sys
 from pathlib import Path
 from typing import Mapping
 
+from ai.knowledge.research_decision_readiness_planner import (
+    plan_decision_readiness,
+)
 from ai.knowledge.research_evidence_acquisition_planner import (
     plan_evidence_acquisition,
 )
@@ -101,7 +118,7 @@ from ai.schemas.research_priority import BAND_HIGH, BAND_LOW, BAND_MEDIUM
 from tests.local_e2e import r62_bridge as br
 from tests.local_e2e import recon_snapshot as rs
 
-RULE_VERSION = "r71-1"
+RULE_VERSION = "r72-1"
 
 STATUS_COMPLETED = "COMPLETED"
 STATUS_COMPLETED_WITH_REJECTIONS = "COMPLETED_WITH_REJECTIONS"
@@ -1380,6 +1397,7 @@ def run_research(
     )
     action_plan = plan_research_actions(research["hypotheses"])
     acquisition_plan = plan_evidence_acquisition(action_plan)
+    readiness_plan = plan_decision_readiness(action_plan, acquisition_plan)
 
     findings = input_hygiene(research_context, intelligence_context)
     snapshot_block = {
@@ -1413,6 +1431,7 @@ def run_research(
         "validation": validation,
         "action_plan": action_plan,
         "acquisition_plan": acquisition_plan,
+        "readiness_plan": readiness_plan,
         "safety": safety_block(),
         "limitations": list(LIMITATIONS),
     }
@@ -1437,7 +1456,7 @@ def persist_result(result: Mapping, *, persist_dir: str | Path | None = None) ->
 def _print_result(result: Mapping, persisted_path: str = "") -> None:
     print("")
     print("=" * 66)
-    print("WATCH AI SECURITY RESEARCH (R71, evidence + skills + actions + acquisition)")
+    print("WATCH AI SECURITY RESEARCH (R72, evidence + skills + actions + acquisition + readiness)")
     print("=" * 66)
     print(f"Status      : {result.get('status')}")
     print(f"Program     : {result.get('program')}")
@@ -1590,6 +1609,62 @@ def _print_result(result: Mapping, persisted_path: str = "") -> None:
             )
             print(f"   Stop condition     : {plan.get('stopping_condition')}")
             print("")
+    readiness_plan = result.get("readiness_plan") or {}
+    records = readiness_plan.get("records") or []
+    if records:
+        print("DECISION READINESS (advisory only)")
+        print("-" * 66)
+        for record in records:
+            print(
+                f"{record.get('readiness_id')} [{record.get('category')}] "
+                f"{record.get('gap_id')} :: {record.get('sufficiency_state')} / "
+                f"{record.get('decision_state')}"
+            )
+            print(f"   Plan               : {record.get('plan_ref')}")
+            print(f"   Action             : {record.get('action_ref')}")
+            print(
+                "   Hypotheses         : "
+                + ", ".join(record.get("hypothesis_refs") or [])
+            )
+            print(
+                "   Evidence state     : "
+                f"{record.get('evidence_state')}"
+            )
+            print(
+                "   Available evidence : "
+                + (
+                    ", ".join(
+                        entry.get("requirement_kind", "")
+                        for entry in record.get("available_evidence") or []
+                    )
+                    or "(none)"
+                )
+            )
+            print(
+                "   Missing evidence   : "
+                + (
+                    ", ".join(
+                        entry.get("requirement_kind", "")
+                        for entry in record.get("missing_evidence") or []
+                    )
+                    or "(none)"
+                )
+            )
+            print(
+                "   Blocking           : "
+                + (
+                    ", ".join(record.get("blocking_codes") or [])
+                    or "(none)"
+                )
+            )
+            step = record.get("next_decision_step") or {}
+            print(f"   Next decision step : {step.get('instruction')}")
+            if step.get("targets"):
+                print("      Targets         : " + ", ".join(step["targets"]))
+            if step.get("sources"):
+                print("      Sources         : " + ", ".join(step["sources"]))
+            print(f"   Stop condition     : {record.get('stop_condition')}")
+            print("")
     print("-" * 66)
     print("[SAFETY] advisory research only; execution_performed=false;")
     print("         vulnerability_confirmed=false; exploit_authorized=false;")
@@ -1622,7 +1697,7 @@ def _mongo_snapshot(program: str, caps: Mapping) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tests.local_e2e.r64_research",
-        description="Watch R71 AI security research run",
+        description="Watch R72 AI security research run",
     )
     parser.add_argument(
         "--source",
@@ -1680,7 +1755,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print("")
-    print("WATCH AI SECURITY RESEARCH (R71, evidence + skills + actions + acquisition)")
+    print("WATCH AI SECURITY RESEARCH (R72, evidence + skills + actions + acquisition + readiness)")
     print("-" * 66)
     print(f"Program            : {args.program}")
     print(f"Source             : {args.source}")
