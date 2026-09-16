@@ -668,7 +668,7 @@ class TestResponseParsing(unittest.TestCase):
     def test_valid_response_parsed(self):
         result = fake_run(valid_payload())
         self.assertEqual(result["status"], "COMPLETED")
-        self.assertEqual(result["research_run_version"], "r74-1")
+        self.assertEqual(result["research_run_version"], "r75-1")
         self.assertEqual(
             result["validation"],
             {"accepted_count": 1, "rejected_count": 0, "rejections": []},
@@ -2126,6 +2126,113 @@ class TestR74EvidenceIntake(unittest.TestCase):
         self.assertIn("evidence_intake", text)
         self.assertIn("accepted_external_evidence", text)
         self.assertIn("transitions", text)
+        self.assertIn("NOT_CONFIRMED", text)
+        self.assertNotIn("://", text)
+
+
+class TestR75EvidenceProvenance(unittest.TestCase):
+    """R75: provenance/conflict analysis over R74-accepted evidence."""
+
+    def test_envelope_carries_provenance_empty(self):
+        result = fake_run(valid_payload())
+        provenance = result["evidence_provenance"]
+        self.assertEqual(provenance["rule_version"], "r75-1")
+        self.assertEqual(
+            provenance["source_intake_rule_version"], "r74-1"
+        )
+        self.assertEqual(provenance["package_status"], "NOT_PROVIDED")
+        self.assertEqual(provenance["records"], [])
+        self.assertEqual(provenance["conflicts"], [])
+        summary = provenance["summary"]
+        self.assertEqual(summary["record_count"], 0)
+        self.assertFalse(summary["human_review_required"])
+        self.assertEqual(
+            provenance["safety"]["confirmation_state"], "NOT_CONFIRMED"
+        )
+        self.assertFalse(provenance["safety"]["vulnerability_confirmed"])
+
+    def test_accepted_evidence_gets_complete_new_provenance(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            )
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        provenance = result["evidence_provenance"]
+        self.assertEqual(len(provenance["records"]), 1)
+        record = provenance["records"][0]
+        self.assertEqual(record["provenance_id"], "PR1")
+        self.assertEqual(record["evidence_id"], "EI1")
+        self.assertEqual(record["provenance_state"], "COMPLETE")
+        self.assertEqual(record["relation_to_previous"], "NEW")
+        self.assertEqual(record["conflict_state"], "NONE")
+        self.assertFalse(record["human_review_required"])
+        self.assertEqual(record["hypothesis_ref"], "H1")
+        self.assertEqual(record["requirement_kind"], "AUTHORIZATION_OUTCOME")
+
+    def test_in_package_conflict_requires_human_review(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            ),
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "response:external-contradiction-1",
+                effect="CONTRADICTS",
+            ),
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        provenance = result["evidence_provenance"]
+        relations = {
+            record["relation_to_previous"]
+            for record in provenance["records"]
+        }
+        self.assertIn("CONFLICTING", relations)
+        self.assertEqual(len(provenance["conflicts"]), 1)
+        conflict = provenance["conflicts"][0]
+        self.assertEqual(conflict["hypothesis_ref"], "H1")
+        self.assertTrue(conflict["existing_evidence_refs"])
+        self.assertTrue(conflict["new_evidence_refs"])
+        self.assertTrue(provenance["summary"]["human_review_required"])
+        text = r64.canonical_json(provenance)
+        self.assertNotIn("vulnerable", text.lower())
+        self.assertNotIn("exploitable", text.lower())
+        self.assertIn("NOT_CONFIRMED", text)
+
+    def test_rejected_evidence_becomes_invalid_provenance(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-1",
+                hypothesis_ref="H9",
+            )
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        provenance = result["evidence_provenance"]
+        self.assertEqual(len(provenance["records"]), 1)
+        record = provenance["records"][0]
+        self.assertEqual(record["provenance_state"], "MISSING")
+        self.assertEqual(record["relation_to_previous"], "NONE")
+        self.assertEqual(record["reason"], "UNKNOWN_HYPOTHESIS_REF")
+        self.assertEqual(record["evidence_refs"], [])
+        self.assertFalse(record["human_review_required"])
+
+    def test_persisted_artifact_contains_provenance(self):
+        package = evidence_package(
+            evidence_item(
+                "AUTHORIZATION_OUTCOME",
+                "authorization:external-owner-comparison-1",
+            )
+        )
+        result = fake_run(valid_payload(), external_evidence=package)
+        with TemporaryDirectory() as tmp:
+            path = r64.persist_result(result, persist_dir=tmp)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("evidence_provenance", text)
+        self.assertIn("provenance_state", text)
+        self.assertIn("relation_to_previous", text)
         self.assertIn("NOT_CONFIRMED", text)
         self.assertNotIn("://", text)
 

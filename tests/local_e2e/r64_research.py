@@ -97,6 +97,16 @@ evidence: no target interaction, no HTTP client, no execution. Without an
 external package the intake honestly reports ``NOT_PROVIDED`` and the chain
 keeps its prior state.
 
+R75 adds the provenance and conflict analysis layer
+(``ai.knowledge.research_evidence_provenance``). For every accepted evidence
+item it derives a bounded provenance record (state, relationship to previous
+evidence, conflict state) using only structured fields: same hypothesis, same
+requirement, canonical refs, explicit effect and explicit invalidation. It
+never resolves conflicts: incompatible evidence becomes ``CONFLICTING`` with
+``human_review_required=true`` and both sides preserved; it does not alter R72
+readiness or R73 feedback. Wording similarity is never used and source type is
+never treated as truth.
+
 Hard boundaries preserved: research only, advisory only, no execution, no
 confirmation, no target activity, no secrets, deterministic envelope, bounded
 contexts and prompts, fail-closed validation, opt-in real provider.
@@ -112,6 +122,7 @@ Pipeline position (unchanged)::
       -> R72 sufficiency + decision readiness (advisory, plan-only)
       -> R73 feedback + iteration state (advisory, plan-only)
       -> R74 external evidence intake + re-evaluation (advisory, adapter)
+      -> R75 provenance + conflict analysis (advisory, analysis only)
       -> research-only result envelope (printed and optionally persisted)
 """
 
@@ -133,6 +144,9 @@ from ai.knowledge.research_evidence_acquisition_planner import (
     plan_evidence_acquisition,
 )
 from ai.knowledge.research_evidence_intake import intake_and_reevaluate
+from ai.knowledge.research_evidence_provenance import (
+    analyze_evidence_provenance,
+)
 from ai.knowledge.research_feedback_loop import evaluate_research_iteration
 from ai.knowledge.research_outcome_planner import plan_research_actions
 from ai.knowledge.security_skills import render_skills, select_skills
@@ -144,7 +158,7 @@ from ai.schemas.research_priority import BAND_HIGH, BAND_LOW, BAND_MEDIUM
 from tests.local_e2e import r62_bridge as br
 from tests.local_e2e import recon_snapshot as rs
 
-RULE_VERSION = "r74-1"
+RULE_VERSION = "r75-1"
 
 STATUS_COMPLETED = "COMPLETED"
 STATUS_COMPLETED_WITH_REJECTIONS = "COMPLETED_WITH_REJECTIONS"
@@ -1438,6 +1452,13 @@ def run_research(
         acquisition_plan=acquisition_plan,
         readiness_plan=readiness_plan,
     )
+    evidence_provenance = analyze_evidence_provenance(
+        evidence_intake,
+        hypotheses=research["hypotheses"],
+        action_plan=action_plan,
+        acquisition_plan=acquisition_plan,
+        readiness_plan=readiness_plan,
+    )
 
     findings = input_hygiene(research_context, intelligence_context)
     snapshot_block = {
@@ -1474,6 +1495,7 @@ def run_research(
         "readiness_plan": readiness_plan,
         "iteration_plan": iteration_plan,
         "evidence_intake": evidence_intake,
+        "evidence_provenance": evidence_provenance,
         "safety": safety_block(),
         "limitations": list(LIMITATIONS),
     }
@@ -1498,7 +1520,7 @@ def persist_result(result: Mapping, *, persist_dir: str | Path | None = None) ->
 def _print_result(result: Mapping, persisted_path: str = "") -> None:
     print("")
     print("=" * 66)
-    print("WATCH AI SECURITY RESEARCH (R74, evidence + skills + actions + acquisition + readiness + feedback + intake)")
+    print("WATCH AI SECURITY RESEARCH (R75, evidence + skills + actions + acquisition + readiness + feedback + intake + provenance)")
     print("=" * 66)
     print(f"Status      : {result.get('status')}")
     print(f"Program     : {result.get('program')}")
@@ -1795,6 +1817,47 @@ def _print_result(result: Mapping, persisted_path: str = "") -> None:
                 f"{transition.get('after_sufficiency')}"
             )
         print("")
+    provenance = result.get("evidence_provenance") or {}
+    records = provenance.get("records") or []
+    if records:
+        print("EVIDENCE PROVENANCE (advisory only)")
+        print("-" * 66)
+        for record in records:
+            print(
+                f"{record.get('provenance_id')} "
+                f"[{record.get('hypothesis_ref')}/"
+                f"{record.get('requirement_kind')}] "
+                f"{record.get('provenance_state')} / "
+                f"{record.get('relation_to_previous')}"
+            )
+            print(
+                "   Evidence           : "
+                f"{record.get('evidence_id')} "
+                f"{record.get('effect')} "
+                f"{record.get('source')}"
+            )
+            if record.get("conflict_state") == "CONFLICTING":
+                print(
+                    "   Conflict           : CONFLICTING "
+                    "(human review required; no automatic resolution)"
+                )
+            print(f"   Reason             : {record.get('reason')}")
+            print("")
+        print(
+            "   Summary            : "
+            f"{provenance.get('summary', {}).get('complete_provenance', 0)} "
+            "complete / "
+            f"{provenance.get('summary', {}).get('partial_provenance', 0)} "
+            "partial / "
+            f"{provenance.get('summary', {}).get('missing_provenance', 0)} "
+            "missing / "
+            f"{provenance.get('summary', {}).get('invalid_provenance', 0)} "
+            "invalid; conflicts="
+            f"{provenance.get('summary', {}).get('conflict_count', 0)}; "
+            "human_review="
+            f"{provenance.get('summary', {}).get('human_review_required', False)}"
+        )
+        print("")
     print("-" * 66)
     print("[SAFETY] advisory research only; execution_performed=false;")
     print("         vulnerability_confirmed=false; exploit_authorized=false;")
@@ -1827,7 +1890,7 @@ def _mongo_snapshot(program: str, caps: Mapping) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tests.local_e2e.r64_research",
-        description="Watch R74 AI security research run",
+        description="Watch R75 AI security research run",
     )
     parser.add_argument(
         "--source",
@@ -1885,7 +1948,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print("")
-    print("WATCH AI SECURITY RESEARCH (R74, evidence + skills + actions + acquisition + readiness + feedback + intake)")
+    print("WATCH AI SECURITY RESEARCH (R75, evidence + skills + actions + acquisition + readiness + feedback + intake + provenance)")
     print("-" * 66)
     print(f"Program            : {args.program}")
     print(f"Source             : {args.source}")
