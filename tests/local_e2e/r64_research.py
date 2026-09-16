@@ -52,6 +52,16 @@ into one action; and the actions are ranked with documented bounded factor
 points. The plan is advisory only, forces ``NOT_CONFIRMED``, and never
 executes, authorizes or confirms anything.
 
+R71 adds a deterministic, research-only evidence acquisition planner after
+R70 (``ai.knowledge.research_evidence_acquisition_planner``). Every ranked R70
+action gets a bounded acquisition plan: what evidence is required, which of it
+is already available in the selected evidence, what is missing, which bounded
+sources and ordered offline steps could acquire it, what the evidence would
+change (``SUPPORTS``/``WEAKENS``/``RESOLVES``/``REMAINS_UNRESOLVED``), and when
+to stop. Existing evidence is never requested again, plans are correlated
+through the R70 action, and the plan is advisory only, forces
+``NOT_CONFIRMED``, and never executes, authorizes or confirms anything.
+
 Hard boundaries preserved: research only, advisory only, no execution, no
 confirmation, no target activity, no secrets, deterministic envelope, bounded
 contexts and prompts, fail-closed validation, opt-in real provider.
@@ -63,6 +73,7 @@ Pipeline position (unchanged)::
       -> existing ai.llm.openrouter.OpenRouterProvider (real, opt-in)
       -> Watch-side evidence resolution + per-hypothesis validation
       -> R70 outcomes + ranked research actions (advisory, plan-only)
+      -> R71 evidence acquisition plans (advisory, plan-only)
       -> research-only result envelope (printed and optionally persisted)
 """
 
@@ -77,6 +88,9 @@ import sys
 from pathlib import Path
 from typing import Mapping
 
+from ai.knowledge.research_evidence_acquisition_planner import (
+    plan_evidence_acquisition,
+)
 from ai.knowledge.research_outcome_planner import plan_research_actions
 from ai.knowledge.security_skills import render_skills, select_skills
 from ai.llm.base import LLMProvider
@@ -87,7 +101,7 @@ from ai.schemas.research_priority import BAND_HIGH, BAND_LOW, BAND_MEDIUM
 from tests.local_e2e import r62_bridge as br
 from tests.local_e2e import recon_snapshot as rs
 
-RULE_VERSION = "r70-1"
+RULE_VERSION = "r71-1"
 
 STATUS_COMPLETED = "COMPLETED"
 STATUS_COMPLETED_WITH_REJECTIONS = "COMPLETED_WITH_REJECTIONS"
@@ -1365,6 +1379,7 @@ def run_research(
         else STATUS_COMPLETED
     )
     action_plan = plan_research_actions(research["hypotheses"])
+    acquisition_plan = plan_evidence_acquisition(action_plan)
 
     findings = input_hygiene(research_context, intelligence_context)
     snapshot_block = {
@@ -1397,6 +1412,7 @@ def run_research(
         "research": research,
         "validation": validation,
         "action_plan": action_plan,
+        "acquisition_plan": acquisition_plan,
         "safety": safety_block(),
         "limitations": list(LIMITATIONS),
     }
@@ -1421,7 +1437,7 @@ def persist_result(result: Mapping, *, persist_dir: str | Path | None = None) ->
 def _print_result(result: Mapping, persisted_path: str = "") -> None:
     print("")
     print("=" * 66)
-    print("WATCH AI SECURITY RESEARCH (R70, evidence + skills + actions)")
+    print("WATCH AI SECURITY RESEARCH (R71, evidence + skills + actions + acquisition)")
     print("=" * 66)
     print(f"Status      : {result.get('status')}")
     print(f"Program     : {result.get('program')}")
@@ -1517,6 +1533,63 @@ def _print_result(result: Mapping, persisted_path: str = "") -> None:
             print(f"   Reason            : {action.get('reason')}")
             print(f"   Stop condition    : {action.get('stopping_condition')}")
             print("")
+    acquisition_plan = result.get("acquisition_plan") or {}
+    plans = acquisition_plan.get("plans") or []
+    if plans:
+        print("EVIDENCE ACQUISITION PLAN (ranked, advisory only)")
+        print("-" * 66)
+        for plan in plans:
+            print(
+                f"{plan.get('plan_id')} [{plan.get('category')}] "
+                f"{plan.get('gap_id')} :: {plan.get('acquisition_goal')}"
+            )
+            print(f"   Action             : {plan.get('action_ref')}")
+            print(
+                "   Hypotheses         : "
+                + ", ".join(plan.get("hypothesis_refs") or [])
+            )
+            available = plan.get("currently_available_evidence") or []
+            print(
+                "   Available evidence : "
+                + (
+                    ", ".join(
+                        entry.get("requirement_kind", "")
+                        for entry in available
+                    )
+                    or "(none)"
+                )
+            )
+            missing = plan.get("missing_evidence") or []
+            print(
+                "   Missing evidence   : "
+                + (
+                    ", ".join(
+                        entry.get("requirement_kind", "")
+                        for entry in missing
+                    )
+                    or "(none)"
+                )
+            )
+            print(
+                "   Sources (in order) : "
+                + ", ".join(plan.get("acquisition_sources") or [])
+            )
+            for step in plan.get("acquisition_steps") or []:
+                print(
+                    f"      {step.get('step')}. [{step.get('source')}] "
+                    f"{step.get('expected')}"
+                )
+            print(f"   Expected result    : {plan.get('expected_result')}")
+            impact = plan.get("decision_impact") or {}
+            print(
+                "   Decision impact    : "
+                f"support={impact.get('if_confirming_evidence_obtained')}, "
+                f"contradict={impact.get('if_contradicting_evidence_obtained')}, "
+                f"complete={impact.get('if_required_evidence_complete')}, "
+                f"unavailable={impact.get('if_evidence_cannot_be_acquired')}"
+            )
+            print(f"   Stop condition     : {plan.get('stopping_condition')}")
+            print("")
     print("-" * 66)
     print("[SAFETY] advisory research only; execution_performed=false;")
     print("         vulnerability_confirmed=false; exploit_authorized=false;")
@@ -1549,7 +1622,7 @@ def _mongo_snapshot(program: str, caps: Mapping) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tests.local_e2e.r64_research",
-        description="Watch R70 AI security research run",
+        description="Watch R71 AI security research run",
     )
     parser.add_argument(
         "--source",
@@ -1607,7 +1680,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print("")
-    print("WATCH AI SECURITY RESEARCH (R70, evidence + skills + actions)")
+    print("WATCH AI SECURITY RESEARCH (R71, evidence + skills + actions + acquisition)")
     print("-" * 66)
     print(f"Program            : {args.program}")
     print(f"Source             : {args.source}")

@@ -668,7 +668,7 @@ class TestResponseParsing(unittest.TestCase):
     def test_valid_response_parsed(self):
         result = fake_run(valid_payload())
         self.assertEqual(result["status"], "COMPLETED")
-        self.assertEqual(result["research_run_version"], "r70-1")
+        self.assertEqual(result["research_run_version"], "r71-1")
         self.assertEqual(
             result["validation"],
             {"accepted_count": 1, "rejected_count": 0, "rejections": []},
@@ -1643,6 +1643,106 @@ class TestR70ActionPlanning(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
         self.assertIn("action_plan", text)
         self.assertIn("recommended_action", text)
+        self.assertIn("NOT_CONFIRMED", text)
+        self.assertNotIn("://", text)
+
+
+class TestR71AcquisitionPlanning(unittest.TestCase):
+    """R71: R70 actions become ranked, evidence-aware acquisition plans."""
+
+    def test_envelope_carries_evidence_acquisition_plan(self):
+        result = fake_run(valid_payload())
+        acquisition = result["acquisition_plan"]
+        self.assertEqual(acquisition["rule_version"], "r71-1")
+        self.assertEqual(acquisition["source_action_rule_version"], "r70-1")
+        self.assertEqual(len(acquisition["plans"]), 1)
+        plan = acquisition["plans"][0]
+        self.assertEqual(plan["plan_id"], "P1")
+        self.assertEqual(plan["action_ref"], "A1")
+        self.assertEqual(plan["gap_id"], "OBJECT_AUTHORIZATION")
+        self.assertEqual(plan["category"], "IDOR")
+        statuses = {
+            entry["requirement_kind"]: entry["status"]
+            for entry in plan["required_evidence"]
+        }
+        self.assertEqual(statuses["OBJECT_REFERENCE"], "AVAILABLE")
+        self.assertEqual(statuses["WATCH_SIGNAL"], "AVAILABLE")
+        self.assertEqual(statuses["AUTHORIZATION_OUTCOME"], "MISSING")
+        self.assertEqual(statuses["OWNERSHIP_BINDING"], "MISSING")
+        self.assertEqual(
+            plan["safety"]["confirmation_state"], "NOT_CONFIRMED"
+        )
+        self.assertFalse(plan["safety"]["vulnerability_confirmed"])
+        self.assertEqual(acquisition["summary"]["plan_count"], 1)
+        self.assertEqual(acquisition["summary"]["top_plan_id"], "P1")
+
+    def test_existing_evidence_is_not_requested_again(self):
+        result = fake_run(valid_payload())
+        plan = result["acquisition_plan"]["plans"][0]
+        self.assertEqual(
+            plan["acquisition_sources"][0], "EXISTING_EVIDENCE"
+        )
+        for step in plan["acquisition_steps"][1:]:
+            self.assertNotIn("OBJECT_REFERENCE", step["requirement_kinds"])
+            self.assertNotIn("WATCH_SIGNAL", step["requirement_kinds"])
+
+    def test_shared_gap_produces_one_acquisition_plan(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(title="First IDOR"),
+                hypothesis(title="Second IDOR"),
+            ]
+        )
+        result = fake_run(payload)
+        plans = result["acquisition_plan"]["plans"]
+        self.assertEqual(len(plans), 1)
+        self.assertEqual(plans[0]["hypothesis_refs"], ["H1", "H2"])
+        self.assertEqual(plans[0]["hypothesis_count"], 2)
+
+    def test_category_aware_sources(self):
+        payload = valid_payload(
+            hypotheses=[
+                hypothesis(),
+                hypothesis(
+                    title="Version exposure for CVE review",
+                    category="CVE_RESEARCH",
+                    priority="LOW",
+                    confidence="UNKNOWN",
+                    evidence_refs=[
+                        ref_id(TECH_NGINX),
+                        ref_id(VERSION_NGINX),
+                    ],
+                    inference=(
+                        "Known issues may affect these versions; component "
+                        "mapping was not verified."
+                    ),
+                ),
+            ]
+        )
+        result = fake_run(payload)
+        by_gap = {
+            plan["gap_id"]: plan
+            for plan in result["acquisition_plan"]["plans"]
+        }
+        cve = by_gap["COMPONENT_MAPPING"]
+        self.assertIn("COMPONENT_METADATA", cve["acquisition_sources"])
+        self.assertIn("VERSION_MAPPING", cve["acquisition_sources"])
+        self.assertNotIn(
+            "AUTHORIZED_TEST_CONTEXT", cve["acquisition_sources"]
+        )
+        self.assertIn(
+            "RESPONSE_OBSERVATION",
+            by_gap["OBJECT_AUTHORIZATION"]["acquisition_sources"],
+        )
+
+    def test_persisted_artifact_contains_acquisition_plan(self):
+        result = fake_run(valid_payload())
+        with TemporaryDirectory() as tmp:
+            path = r64.persist_result(result, persist_dir=tmp)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("acquisition_plan", text)
+        self.assertIn("acquisition_steps", text)
+        self.assertIn("decision_impact", text)
         self.assertIn("NOT_CONFIRMED", text)
         self.assertNotIn("://", text)
 
