@@ -817,7 +817,12 @@ def intake_and_reevaluate(
     acquisition_plan: object = None,
     readiness_plan: object = None,
 ) -> dict:
-    """Validate external evidence, then re-evaluate readiness and feedback."""
+    """Validate external evidence, then re-evaluate readiness and feedback.
+
+    ``reevaluation.acquisition_after`` exposes the projected R71 plan with the
+    authoritative R73 delta applied, so successive evidence rounds can chain
+    without re-deriving anything (prior accepted evidence is retained).
+    """
 
     intake = normalize_evidence_package(
         package,
@@ -861,6 +866,7 @@ def intake_and_reevaluate(
         "reevaluation": {
             "readiness_before_summary": before_summary,
             "readiness_after": after,
+            "acquisition_after": updated_plan,
             "transitions": transitions,
             "feedback": feedback,
         },

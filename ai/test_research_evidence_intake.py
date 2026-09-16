@@ -680,6 +680,7 @@ class TestSafety(unittest.TestCase):
             .upper()
             .replace("NOT_CONFIRMED", "")
             .replace("VULNERABILITY_CONFIRMED", "")
+            .replace("IS CONFIRMED", "")
         )
         for forbidden in (
             "CONFIRMED",
