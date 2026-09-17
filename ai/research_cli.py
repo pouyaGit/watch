@@ -2817,6 +2817,24 @@ def run_agent_dry_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _activate_cases(config) -> dict | None:
+    """R86 post-run case activation (offline, idempotent, fail-soft).
+
+    Maps persisted research results into the existing R70-R77 case lifecycle
+    through ``ai.research_agent.case_bridge``. Never affects the run record,
+    the scheduler or any research behavior; a failure returns ``None``.
+    """
+    try:
+        from ai.research_agent.case_bridge import activate_persisted_results
+
+        return activate_persisted_results(
+            agent_dir=config.agent_dir,
+            cases_dir=Path(config.research_dir) / "cases",
+        )
+    except Exception:
+        return None
+
+
 def run_agent_run(args: argparse.Namespace) -> int:
     from ai.research_agent.scheduler import ResearchScheduler, SchedulerConfig
 
@@ -2835,8 +2853,14 @@ def run_agent_run(args: argparse.Namespace) -> int:
         dry_run=False,
         network=network,
     )
+    activation = None
+    if record.get("plans_processed"):
+        activation = _activate_cases(config)
     if getattr(args, "json", False):
-        print(json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True))
+        payload = dict(record)
+        if activation is not None:
+            payload["case_activation"] = activation
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     print(f"RUN: {record['run_id']}")
     print(f"STATUS: {record['status']}")
@@ -2853,6 +2877,51 @@ def run_agent_run(args: argparse.Namespace) -> int:
     for failure in record.get("failures", []):
         print(f"  failure: {failure}")
     print("MODE: research-only (no target interaction, no Nuclei, no findings)")
+    if activation is not None:
+        print(
+            f"CASES: activated={activation['activated']} "
+            f"existing={activation['existing']} "
+            f"ineligible={activation['ineligible']} "
+            f"rejected={activation['build_rejected']} "
+            f"errors={activation['errors']}"
+        )
+    return 0
+
+
+def run_agent_cases(args: argparse.Namespace) -> int:
+    """R86: activate cases from persisted agent results (read-only + writes
+    only under the cases directory; deterministic and idempotent)."""
+
+    from ai.research_agent.case_bridge import (
+        MAX_RESULTS,
+        activate_persisted_results,
+    )
+    from ai.research_agent.scheduler import SchedulerConfig
+
+    config = SchedulerConfig.from_env()
+    limit = getattr(args, "limit", None)
+    summary = activate_persisted_results(
+        agent_dir=config.agent_dir,
+        cases_dir=Path(config.research_dir) / "cases",
+        limit=MAX_RESULTS if limit is None else int(limit),
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    print("Research case activation")
+    print("========================")
+    for item in summary["items"]:
+        print(
+            f"{item['artifact']} | {item['result_kind'] or 'unknown'} | "
+            f"{item['status']} | case={item['case_id'] or '-'} | "
+            f"{item['reason'] or 'eligible'}"
+        )
+    print(
+        f"CASES: processed={summary['processed']} "
+        f"activated={summary['activated']} existing={summary['existing']} "
+        f"ineligible={summary['ineligible']} "
+        f"rejected={summary['build_rejected']} errors={summary['errors']}"
+    )
     return 0
 
 
@@ -2896,6 +2965,8 @@ def run_agent(args: argparse.Namespace) -> int:
         return run_agent_dry_run(args)
     if command == "report":
         return run_agent_report(args)
+    if command == "cases":
+        return run_agent_cases(args)
     return 2
 
 
@@ -3633,6 +3704,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_report.add_argument(
         "--json", action="store_true", help="emit results as JSON"
+    )
+
+    agent_cases = agent_sub.add_parser(
+        "cases",
+        help="activate research cases from persisted results through the "
+        "existing R70-R77 lifecycle (offline, deterministic, idempotent)",
+    )
+    agent_cases.add_argument(
+        "--limit", type=int, default=None, help="process at most this many results"
+    )
+    agent_cases.add_argument(
+        "--json", action="store_true", help="emit the activation summary as JSON"
     )
 
     # Stage R13: re-fetch persisted reference archives and update the
