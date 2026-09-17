@@ -1,11 +1,15 @@
-"""backend/research_cases.py — Stage R81 researcher research-case service.
+"""backend/research_cases.py — Stage R81/R89 researcher research-case service.
 
 Presentation/service glue for the researcher-facing contract:
 
     LIST CASES     -> bounded case summaries from persisted research artifacts
     GET CASE       -> R77 workbench (R77 remains the workbench authority)
     SUBMIT EVIDENCE-> R80 submission boundary -> R74 intake -> R75 provenance
-                      -> R76 case update -> R77 workbench
+                      -> R76 case update -> R77 workbench (in-memory preview)
+    SUBMIT HUMAN   -> R89 controlled human evidence: the same R80 boundary and
+                      authorities, persisted atomically through the existing
+                      R89 case-update path (opt-in route; the R81 preview
+                      route and its in-memory contract are unchanged)
 
 Authority boundaries (unchanged):
 
@@ -16,9 +20,11 @@ Authority boundaries (unchanged):
 - R74/R75/R76 remain intake/provenance/case-state authorities; this module
   composes them and duplicates none of their rules.
 
-Read-only by construction: listing/detail only read persisted artifacts.
-Evidence submission is fully in-memory (no Mongo, no artifact writes, no
-persistence layer); the bounded result is returned to the caller.
+Read-only by construction: listing/detail only read persisted artifacts. The
+R81 evidence submission is fully in-memory (no Mongo, no artifact writes, no
+persistence layer). The R89 human-evidence route delegates to the existing
+R89 module, which owns the single atomic case-artifact write; this module
+contains no write primitives of its own.
 """
 
 from __future__ import annotations
@@ -52,6 +58,7 @@ from ai.knowledge.research_evidence_submission import (
 from ai.knowledge.research_workbench import build_research_workbench
 
 RULE_VERSION = "r81-1"
+HUMAN_RULE_VERSION = "r89-1"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT_ROOT = PROJECT_ROOT / "ai_data" / "research"
@@ -84,6 +91,14 @@ BOUNDARY_HTTP_STATUS: dict[str, int] = {
     ERROR_SUBMISSION_TOO_LARGE: 413,
 }
 
+#: R89 human-boundary rejection code -> HTTP status (bounded, documented).
+HUMAN_EVIDENCE_HTTP_STATUS: dict[str, int] = {
+    "MALFORMED_SUBMISSION": 400,
+    "SUBMISSION_TOO_LARGE": 413,
+    "NON_HUMAN_SOURCE": 400,
+    "UNSUPPORTED_DETERMINISTIC_REF": 409,
+}
+
 BOUNDARY_MESSAGES: dict[str, str] = {
     ERROR_MALFORMED_ENVELOPE: "submission envelope is malformed",
     ERROR_UNSUPPORTED_SUBMISSION_VERSION: "unsupported submission version",
@@ -99,6 +114,15 @@ BOUNDARY_MESSAGES: dict[str, str] = {
     ERROR_SENSITIVE_SUBMISSION: "submission contains sensitive evidence",
     ERROR_EXECUTION_CONTENT: "submission contains execution content",
     ERROR_SUBMISSION_TOO_LARGE: "submission exceeds the bounded size",
+    "MALFORMED_SUBMISSION": "human submission envelope is malformed",
+    "SUBMISSION_TOO_LARGE": "human submission exceeds the bounded size",
+    "NON_HUMAN_SOURCE": (
+        "human evidence must use the existing HUMAN_REVIEW source"
+    ),
+    "UNSUPPORTED_DETERMINISTIC_REF": (
+        "claimed Watch-deterministic reference is not in the case projection"
+    ),
+    "INTERNAL_PROCESSING_FAILURE": "internal processing failure",
 }
 
 
@@ -427,12 +451,142 @@ def submit_case_evidence(case_id: object, submission: object) -> dict:
     return response
 
 
+# ---------------------------------------------------------------------------
+# Controlled human evidence submission (Stage R89; persisted)
+# ---------------------------------------------------------------------------
+
+
+def _bounded_human_response(
+    case_id: str, outcome: Mapping, entry: Mapping
+) -> dict:
+    """Bounded public result of one persisted human submission."""
+
+    provenance = _block(outcome.get("provenance"))
+    accepted = _mapping_items(outcome.get("submitted_evidence"))
+    codes: list[str] = []
+    for code in outcome.get("rejection_codes") or ():
+        text = _text(code)
+        if text and text not in codes:
+            codes.append(text)
+    return {
+        "rule_version": HUMAN_RULE_VERSION,
+        "case_id": case_id,
+        "submission_status": _text(outcome.get("status")),
+        "accepted_external_evidence": int(
+            outcome.get("accepted_items") or 0
+        ),
+        "replayed_items": int(outcome.get("replayed_items") or 0),
+        "rejected_items": int(outcome.get("rejected_items") or 0),
+        "rejection_codes": codes[:8],
+        "accepted_requirement_kinds": [
+            _text(item.get("requirement_kind"))
+            for item in accepted
+            if item.get("requirement_kind")
+        ],
+        "provenance": {
+            "state": _text(provenance.get("package_status")),
+            "record_count": int(provenance.get("record_count") or 0),
+            "conflict_count": int(provenance.get("conflict_count") or 0),
+            "human_review_required": bool(
+                provenance.get("human_review_required")
+            ),
+        },
+        "persistence": {
+            "written": bool(outcome.get("written")),
+            "artifact_path": _text(entry.get("artifact_path")),
+        },
+        "safety": {
+            "advisory": True,
+            "research_only": True,
+            "confirmation_state": "NOT_CONFIRMED",
+            "execution_performed": False,
+            "exploit_authorized": False,
+            "human_authority_required": True,
+            "vulnerability_confirmed": False,
+        },
+        "advisory": True,
+        "research_only": True,
+        "confirmation_state": "NOT_CONFIRMED",
+    }
+
+
+def submit_human_case_evidence(case_id: object, submission: object) -> dict:
+    """R89: persist one controlled human evidence submission for one case.
+
+    The route is opt-in and additive: the R81 in-memory preview contract is
+    unchanged. Every item must use the existing ``HUMAN_REVIEW`` source and
+    may only claim Watch-deterministic references that the existing R30.1
+    projection actually contains; the R89 module owns the single atomic
+    case-artifact write.
+    """
+
+    wanted = _text(case_id)
+    entry = get_case_entry(wanted)
+    if entry is None:
+        raise CaseServiceError(ERROR_UNKNOWN_CASE, http_status=404)
+
+    body = dict(submission) if isinstance(submission, Mapping) else submission
+    if not isinstance(body, Mapping):
+        raise CaseServiceError(ERROR_MALFORMED_ENVELOPE, http_status=400)
+    body_case_ref = _text(body.get("case_ref"))
+    if not body_case_ref:
+        raise CaseServiceError(ERROR_CASE_REF_REQUIRED, http_status=400)
+    if body_case_ref != wanted:
+        raise CaseServiceError(ERROR_CASE_MISMATCH, http_status=409)
+
+    from ai.research_agent.case_evidence import (
+        submit_human_case_evidence as _submit_human_evidence,
+    )
+
+    outcome = _submit_human_evidence(
+        entry["artifact_path"],
+        body,
+        expected_case_id=wanted,
+        write=True,
+    )
+    status = _text(outcome.get("status"))
+    if status == "ERROR":
+        raise CaseServiceError(
+            "INTERNAL_PROCESSING_FAILURE", http_status=500
+        )
+    if status == "REJECTED":
+        code = ""
+        for candidate in outcome.get("rejection_codes") or ():
+            text = _text(candidate)
+            if text:
+                code = text
+                break
+        code = code or _text(outcome.get("reason")) or ERROR_MALFORMED_ENVELOPE
+        raise CaseServiceError(
+            code,
+            http_status=BOUNDARY_HTTP_STATUS.get(
+                code, HUMAN_EVIDENCE_HTTP_STATUS.get(code, 400)
+            ),
+        )
+
+    after = get_case_entry(wanted) or entry
+    stages = _block(after.get("stages"))
+    workbench = build_research_workbench(
+        after["case"],
+        action_plan=stages.get("action_plan"),
+        acquisition_plan=stages.get("acquisition_plan"),
+        evidence_provenance=stages.get("evidence_provenance"),
+        limit=MAX_HISTORY,
+    )
+    response = _bounded_human_response(wanted, outcome, after)
+    response["case_summary"] = _case_summary(after)
+    response["workbench"] = workbench
+    return response
+
+
 __all__ = [
     "RULE_VERSION",
+    "HUMAN_RULE_VERSION",
     "ARTIFACT_ROOT",
     "MAX_CASES",
     "MAX_HISTORY",
     "BOUNDARY_HTTP_STATUS",
+    "HUMAN_EVIDENCE_HTTP_STATUS",
     "BOUNDARY_MESSAGES",
     "CaseServiceError",
     "case_entries",
@@ -440,4 +594,5 @@ __all__ = [
     "list_cases",
     "get_case_workbench",
     "submit_case_evidence",
+    "submit_human_case_evidence",
 ]

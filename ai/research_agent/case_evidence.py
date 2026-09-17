@@ -1,4 +1,12 @@
-"""Stage R87 — real evidence completion for persisted research cases.
+"""Stage R87/R89 — real evidence completion for persisted research cases.
+
+R89 adds the controlled human-evidence submission entry point next to the R87
+deterministic completion. A human reviewer submits the existing R80 envelope;
+every item must use the existing ``HUMAN_REVIEW`` source and may only claim
+Watch-deterministic references that the unchanged R30.1 projection actually
+contains. Both entry points share one case-update and one atomic-write
+implementation (``_apply_intake_and_persist``), so there is exactly one
+evidence mechanism and one persistence path.
 
 R86 activated real cases from persisted research results, but every external
 evidence package was ``NOT_PROVIDED``, so the production case stayed
@@ -71,11 +79,15 @@ from ai.knowledge.research_evidence_provenance import (
     analyze_evidence_provenance,
 )
 from ai.knowledge.research_evidence_submission import (
+    ERROR_CASE_MISMATCH,
+    ERROR_CASE_REF_REQUIRED,
+    ERROR_UNSUPPORTED_SUBMISSION_VERSION,
     SUBMISSION_VERSION,
     submit_research_evidence,
 )
 from ai.knowledge.research_feedback_loop import (
     EFFECT_PROVIDES,
+    SOURCE_HUMAN_REVIEW,
     SOURCE_WATCH_DERIVED,
 )
 from ai.knowledge.research_outcome_planner import SAFETY_BLOCK
@@ -133,6 +145,10 @@ REASON_NO_ITEMS = "NO_GENUINE_EVIDENCE"
 REASON_ALL_REPLAYED = "ALL_EVIDENCE_ALREADY_RECORDED"
 REASON_BOUNDARY_REJECTED = "BOUNDARY_REJECTED"
 REASON_WRITE_FAILED = "WRITE_FAILED"
+REASON_MALFORMED_SUBMISSION = "MALFORMED_SUBMISSION"
+REASON_SUBMISSION_TOO_LARGE = "SUBMISSION_TOO_LARGE"
+REASON_NON_HUMAN_SOURCE = "NON_HUMAN_SOURCE"
+REASON_UNSUPPORTED_DETERMINISTIC_REF = "UNSUPPORTED_DETERMINISTIC_REF"
 
 COMPLETION_REASONS: tuple[str, ...] = (
     REASON_MALFORMED_ARTIFACT,
@@ -144,6 +160,10 @@ COMPLETION_REASONS: tuple[str, ...] = (
     REASON_ALL_REPLAYED,
     REASON_BOUNDARY_REJECTED,
     REASON_WRITE_FAILED,
+    REASON_MALFORMED_SUBMISSION,
+    REASON_SUBMISSION_TOO_LARGE,
+    REASON_NON_HUMAN_SOURCE,
+    REASON_UNSUPPORTED_DETERMINISTIC_REF,
 )
 
 _CASE_ID_RE = re.compile(r"^case-[a-z0-9-]{1,72}$")
@@ -629,8 +649,45 @@ def complete_case_evidence(
         outcome["reason"] = _text(type(exc).__name__, 64)
         return outcome
 
-    intake = submitted.get("intake")
-    if not isinstance(intake, Mapping):
+    return _apply_intake_and_persist(
+        path=path,
+        artifact=artifact,
+        workspace=workspace,
+        case=case,
+        hypotheses=hypotheses,
+        stages=stages,
+        previous_provenance=previous_provenance,
+        submitted=submitted,
+        outcome=outcome,
+        write=write,
+    )
+
+
+def _apply_intake_and_persist(
+    *,
+    path: Path,
+    artifact: Mapping,
+    workspace: Mapping,
+    case: Mapping,
+    hypotheses: object,
+    stages: Mapping,
+    previous_provenance: Mapping,
+    submitted: Mapping,
+    outcome: dict,
+    write: bool,
+) -> dict:
+    """Shared composition + persistence for one accepted R80 submission.
+
+    R87 (deterministic completion) and R89 (human evidence) both funnel their
+    accepted intake through this single path so there is exactly one case
+    update and one atomic artifact write implementation.
+    """
+
+    action_plan = _block(stages.get("action_plan"))
+    acquisition_plan = _block(stages.get("acquisition_plan"))
+    readiness_plan = _block(stages.get("readiness_plan"))
+    intake = _block(submitted.get("intake"))
+    if not intake:
         outcome["status"] = STATUS_REJECTED
         outcome["reason"] = REASON_BOUNDARY_REJECTED
         for entry in _mapping_items(submitted.get("rejections")):
@@ -744,10 +801,12 @@ def complete_case_evidence(
     updated_artifact["research_case_workspace"] = updated_workspace
     updated_artifact["research_workbench"] = workbench
     updated_artifact["evidence_completion"] = {
-        "rule_version": RULE_VERSION,
+        "rule_version": _text(
+            outcome.get("rule_version") or RULE_VERSION, 32
+        ),
         "status": STATUS_COMPLETED,
         "accepted_items": len(accepted),
-        "replayed_items": len(replay),
+        "replayed_items": int(outcome.get("replayed_items") or 0),
         "requirement_kinds": sorted(
             {
                 _upper(item.get("requirement_kind"))
@@ -781,6 +840,251 @@ def complete_case_evidence(
     return outcome
 
 
+# ---------------------------------------------------------------------------
+# R89 controlled human evidence submission (same R80 boundary + R76 write)
+# ---------------------------------------------------------------------------
+
+HUMAN_EVIDENCE_RULE_VERSION = "r89-1"
+
+HUMAN_EVIDENCE_SOURCE = SOURCE_HUMAN_REVIEW
+
+DETERMINISTIC_REF_KINDS: tuple[str, ...] = (
+    "record",
+    "technology",
+    "version",
+)
+
+
+def _ref_kind(value: object) -> str:
+    return _text(value, MAX_REF_CHARS).partition(":")[0].strip().lower()
+
+
+def _deterministic_claims(item: Mapping) -> list[str]:
+    """Watch-identity refs claimed by one human item (primary + observations)."""
+
+    refs: list[str] = []
+    primary = _text(item.get("evidence_ref"), MAX_REF_CHARS)
+    if primary:
+        refs.append(primary)
+    for entry in _mapping_items(item.get("observations")):
+        ref = _text(entry.get("ref"), MAX_REF_CHARS)
+        if ref:
+            refs.append(ref)
+    out: list[str] = []
+    for ref in refs:
+        if _ref_kind(ref) in DETERMINISTIC_REF_KINDS and ref not in out:
+            out.append(ref)
+    return out
+
+
+def _deterministic_refs(
+    case: object, cve_id: object, match_loader: MatchLoader | None
+) -> set[str]:
+    """Genuine Watch-deterministic refs for this case (existing R30.1 rows)."""
+
+    loader = match_loader or default_match_loader
+    try:
+        match_items = loader(cve_id)
+    except Exception:
+        match_items = []
+    items, _ = build_completion_items(case, cve_id, match_items)
+    return {_text(item.get("evidence_ref"), MAX_REF_CHARS) for item in items}
+
+
+def _human_items_error(
+    item_blocks: Sequence[Mapping],
+    case: object,
+    cve_id: object,
+    match_loader: MatchLoader | None,
+) -> str:
+    """First fail-closed violation for a controlled human submission."""
+
+    for item in item_blocks:
+        if _upper(item.get("source")) != HUMAN_EVIDENCE_SOURCE:
+            return REASON_NON_HUMAN_SOURCE
+    claims: list[str] = []
+    for item in item_blocks:
+        for ref in _deterministic_claims(item):
+            if ref not in claims:
+                claims.append(ref)
+    if not claims:
+        return ""
+    allowed = _deterministic_refs(case, cve_id, match_loader)
+    for ref in claims:
+        if ref not in allowed:
+            return REASON_UNSUPPORTED_DETERMINISTIC_REF
+    return ""
+
+
+def submit_human_case_evidence(
+    case_path: object,
+    submission: object,
+    *,
+    expected_case_id: str = "",
+    match_loader: MatchLoader | None = None,
+    write: bool = False,
+) -> dict:
+    """R89: persist one controlled human evidence submission for one case.
+
+    The submission is the existing R80 envelope. Every item must use the
+    existing ``HUMAN_REVIEW`` source, and any claimed Watch-deterministic
+    reference (``record:`` / ``technology:`` / ``version:``) must exist in the
+    unchanged R30.1 projection for this case. Accepted items flow through the
+    unchanged R80 -> R74 -> R75 -> R72 -> R73 -> R76 -> R77 authorities; the
+    case artifact is updated atomically only with ``write``. Repeated
+    submissions are replayed, never duplicated.
+    """
+
+    outcome = _outcome()
+    outcome["rule_version"] = HUMAN_EVIDENCE_RULE_VERSION
+    path = Path(case_path)
+    outcome["case_path"] = path.name
+    try:
+        artifact = load_case_artifact(path)
+        case, workspace = _extract_case(artifact, expected_case_id)
+    except CaseEvidenceError as exc:
+        outcome["status"] = STATUS_ERROR
+        outcome["reason"] = exc.code
+        outcome["detail"] = exc.safe_message
+        return outcome
+    except Exception as exc:
+        outcome["status"] = STATUS_ERROR
+        outcome["reason"] = _text(type(exc).__name__, 64)
+        return outcome
+
+    case_id = _text(case.get("case_id"), 96)
+    program = _text(case.get("program"), 64)
+    result = _block(artifact.get("result"))
+    cve_id = _upper(result.get("cve_id"))
+    outcome["case_id"] = case_id
+    outcome["program"] = program
+    outcome["cve_id"] = cve_id
+    outcome["before_status"] = _upper(case.get("status"))
+    if not cve_id:
+        outcome["status"] = STATUS_ERROR
+        outcome["reason"] = REASON_CVE_MISSING
+        return outcome
+
+    stages = {
+        key: _block(artifact.get(key))
+        for key in ("action_plan", "acquisition_plan", "readiness_plan")
+    }
+    if any(not stage for stage in stages.values()):
+        outcome["status"] = STATUS_ERROR
+        outcome["reason"] = REASON_STAGE_MISSING
+        return outcome
+    hypotheses = _block(artifact.get("research")).get("hypotheses")
+    previous_provenance = _block(artifact.get("evidence_provenance"))
+
+    if not isinstance(submission, Mapping):
+        outcome["status"] = STATUS_REJECTED
+        outcome["reason"] = REASON_MALFORMED_SUBMISSION
+        return outcome
+    version = _text(submission.get("submission_version"), 32)
+    if version != SUBMISSION_VERSION:
+        outcome["status"] = STATUS_REJECTED
+        outcome["reason"] = REASON_BOUNDARY_REJECTED
+        outcome["rejection_codes"] = [ERROR_UNSUPPORTED_SUBMISSION_VERSION]
+        return outcome
+    case_ref = _text(submission.get("case_ref"), 96)
+    if not case_ref:
+        outcome["status"] = STATUS_REJECTED
+        outcome["reason"] = REASON_BOUNDARY_REJECTED
+        outcome["rejection_codes"] = [ERROR_CASE_REF_REQUIRED]
+        return outcome
+    if case_ref != case_id:
+        outcome["status"] = STATUS_REJECTED
+        outcome["reason"] = REASON_BOUNDARY_REJECTED
+        outcome["rejection_codes"] = [ERROR_CASE_MISMATCH]
+        return outcome
+    raw_items = submission.get("items")
+    if not isinstance(raw_items, (list, tuple)) or not raw_items:
+        outcome["status"] = STATUS_REJECTED
+        outcome["reason"] = REASON_MALFORMED_SUBMISSION
+        return outcome
+    if len(raw_items) > MAX_ITEMS:
+        outcome["status"] = STATUS_REJECTED
+        outcome["reason"] = REASON_SUBMISSION_TOO_LARGE
+        return outcome
+    item_blocks = [
+        dict(item) for item in raw_items if isinstance(item, Mapping)
+    ]
+    if len(item_blocks) != len(raw_items):
+        outcome["status"] = STATUS_REJECTED
+        outcome["reason"] = REASON_MALFORMED_SUBMISSION
+        return outcome
+
+    try:
+        error = _human_items_error(item_blocks, case, cve_id, match_loader)
+    except Exception as exc:
+        outcome["status"] = STATUS_ERROR
+        outcome["reason"] = _text(type(exc).__name__, 64)
+        return outcome
+    if error:
+        outcome["status"] = STATUS_REJECTED
+        outcome["reason"] = error
+        outcome["rejection_codes"] = [error]
+        return outcome
+
+    outcome["eligible_items"] = len(item_blocks)
+    recorded = _recorded_signatures(previous_provenance)
+    replay = [
+        item for item in item_blocks if _item_signature(item) in recorded
+    ]
+    fresh = [
+        item for item in item_blocks if _item_signature(item) not in recorded
+    ]
+    outcome["replayed_items"] = len(replay)
+    if not fresh:
+        outcome["status"] = STATUS_REPLAYED
+        outcome["reason"] = REASON_ALL_REPLAYED
+        return outcome
+
+    outcome["submitted_evidence"] = [
+        {
+            "hypothesis_ref": _text(item.get("hypothesis_ref"), 16),
+            "requirement_kind": _text(item.get("requirement_kind"), 64),
+            "evidence_ref": _text(item.get("evidence_ref"), MAX_REF_CHARS),
+        }
+        for item in fresh[:MAX_ITEMS]
+    ]
+
+    body = {
+        "submission_version": _text(
+            submission.get("submission_version"), 32
+        ),
+        "case_ref": _text(submission.get("case_ref"), 96),
+        "submitted_by": _text(submission.get("submitted_by"), 64),
+        "items": fresh[:MAX_ITEMS],
+    }
+    try:
+        submitted = submit_research_evidence(
+            body,
+            case=case,
+            hypotheses=hypotheses,
+            action_plan=stages["action_plan"],
+            acquisition_plan=stages["acquisition_plan"],
+            readiness_plan=stages["readiness_plan"],
+        )
+    except Exception as exc:
+        outcome["status"] = STATUS_ERROR
+        outcome["reason"] = _text(type(exc).__name__, 64)
+        return outcome
+
+    return _apply_intake_and_persist(
+        path=path,
+        artifact=artifact,
+        workspace=workspace,
+        case=case,
+        hypotheses=hypotheses,
+        stages=stages,
+        previous_provenance=previous_provenance,
+        submitted=submitted,
+        outcome=outcome,
+        write=write,
+    )
+
+
 __all__ = [
     "RULE_VERSION",
     "DEFAULT_CASES_DIR",
@@ -806,10 +1110,18 @@ __all__ = [
     "REASON_ALL_REPLAYED",
     "REASON_BOUNDARY_REJECTED",
     "REASON_WRITE_FAILED",
+    "REASON_MALFORMED_SUBMISSION",
+    "REASON_SUBMISSION_TOO_LARGE",
+    "REASON_NON_HUMAN_SOURCE",
+    "REASON_UNSUPPORTED_DETERMINISTIC_REF",
     "COMPLETION_REASONS",
+    "HUMAN_EVIDENCE_RULE_VERSION",
+    "HUMAN_EVIDENCE_SOURCE",
+    "DETERMINISTIC_REF_KINDS",
     "CaseEvidenceError",
     "default_match_loader",
     "build_completion_items",
     "load_case_artifact",
     "complete_case_evidence",
+    "submit_human_case_evidence",
 ]

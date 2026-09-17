@@ -15,6 +15,12 @@ unchanged authorities.
         Delegates to R80 -> R74 -> R75 -> R76 -> R77. Fully in-memory: no
         Mongo writes and no persistence layer.
 
+    POST /api/research/cases/{case_id}/human-evidence
+        Stage R89 controlled human evidence. The same R80 envelope, but every
+        item must use the existing HUMAN_REVIEW source; accepted submissions
+        are persisted atomically through the existing R89 case-update path
+        (the R81 in-memory preview route above is unchanged).
+
 All routes are behind ``verify_api_key`` like the existing routers. R81 does
 not invent authentication: it reuses the existing API-key gate.
 """
@@ -75,10 +81,33 @@ def get_research_case(case_id: str):
 def submit_research_case_evidence(
     case_id: str, body: EvidenceSubmissionRequest
 ):
-    """Submit researcher evidence through the R80 boundary."""
+    """Submit researcher evidence through the R80 boundary (in-memory)."""
 
     try:
         return research_cases.submit_case_evidence(
+            case_id, body.model_dump()
+        )
+    except research_cases.CaseServiceError as exc:
+        raise _rejection(exc) from None
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="INTERNAL_PROCESSING_FAILURE: internal processing failure",
+        ) from None
+
+
+@router.post(
+    "/api/research/cases/{case_id}/human-evidence", dependencies=_AUTH
+)
+def submit_research_case_human_evidence(
+    case_id: str, body: EvidenceSubmissionRequest
+):
+    """Submit controlled human evidence through the R89 persisted boundary."""
+
+    try:
+        return research_cases.submit_human_case_evidence(
             case_id, body.model_dump()
         )
     except research_cases.CaseServiceError as exc:

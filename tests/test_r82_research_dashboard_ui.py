@@ -102,13 +102,13 @@ class TestAssetsServed(_ClientTestCase):
 
 
 class TestApiIntegrationContract(unittest.TestCase):
-    def test_js_uses_only_r81_endpoints(self):
+    def test_js_uses_only_bounded_endpoints(self):
         source = DASHBOARD_JS.read_text(encoding="utf-8")
         self.assertIn("'/api/research/cases'", source)
-        self.assertIn("'/evidence'", source)
+        self.assertIn("'/human-evidence'", source)
         self.assertNotIn("intake_and_reevaluate", source)
         self.assertNotIn("/api/research/tasks", source)
-        # exactly one POST target, the R81 evidence endpoint
+        # exactly one POST target, the R89 persisted human-evidence endpoint
         self.assertEqual(source.count("method: 'POST'"), 1)
 
     def test_js_reads_api_key_from_location_only(self):
@@ -150,20 +150,22 @@ class TestApiIntegrationContract(unittest.TestCase):
         ):
             self.assertIn(label, source, label)
 
-    def test_submission_uses_r80_envelope(self):
+    def test_submission_uses_r80_envelope_and_human_boundary(self):
         source = DASHBOARD_JS.read_text(encoding="utf-8")
         self.assertIn("submission_version: 'r80-1'", source)
         self.assertIn("case_ref", source)
         self.assertIn("items", source)
         form = CASE_HTML.read_text(encoding="utf-8")
+        self.assertIn("HUMAN_REVIEW", form)
+        # R89: the human boundary accepts only the human source; model or
+        # research output can never be submitted as human evidence here.
         for source_name in (
-            "HUMAN_REVIEW",
             "AUTHORIZED_TEST_CONTEXT",
             "STORED_RESPONSE",
             "EXISTING_CONTEXT",
             "WATCH_DERIVED",
         ):
-            self.assertIn(source_name, form, source_name)
+            self.assertNotIn(source_name, form, source_name)
 
     def test_error_states_implemented(self):
         source = DASHBOARD_JS.read_text(encoding="utf-8")

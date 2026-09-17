@@ -48,15 +48,18 @@
 
     <div id="workbench"></div>
 
-    <p class="section-label">Evidence submission</p>
+    <p class="section-label">Human evidence submission</p>
     <section class="panel r82-panel">
       <div class="panel-head">
-        <h2>Submit researcher evidence (R80 envelope)</h2>
+        <h2>Submit human evidence (R80 envelope, persisted)</h2>
       </div>
       <div class="panel-body">
         <p class="page-sub">
           Watch never acquires evidence. Provide bounded, canonical evidence
-          you obtained under authorization; the backend validates every item.
+          you obtained under authorization; the backend validates every item
+          and persists accepted human evidence atomically to the case
+          artifact. Only the HUMAN_REVIEW source is accepted here &mdash;
+          model or research output is never submitted as human evidence.
           Do not paste URLs, credentials, tokens, cookies, IPs, Mongo ids,
           request/response bodies or execution instructions.
         </p>
@@ -66,13 +69,9 @@
             <select class="r82-input" id="evidence-requirement" name="evidence-requirement"></select>
           </label>
           <label class="r82-control">
-            <span class="r82-kv-label">Source</span>
+            <span class="r82-kv-label">Source (human boundary)</span>
             <select class="r82-input" name="evidence-source">
               <option value="HUMAN_REVIEW">HUMAN_REVIEW</option>
-              <option value="AUTHORIZED_TEST_CONTEXT">AUTHORIZED_TEST_CONTEXT</option>
-              <option value="STORED_RESPONSE">STORED_RESPONSE</option>
-              <option value="EXISTING_CONTEXT">EXISTING_CONTEXT</option>
-              <option value="WATCH_DERIVED">WATCH_DERIVED</option>
             </select>
           </label>
           <label class="r82-control">
@@ -103,7 +102,7 @@
                    placeholder="label only, no identity data">
           </label>
           <div class="r82-form-actions">
-            <button class="btn-primary" type="submit">Submit evidence</button>
+            <button class="btn-primary" type="submit">Submit human evidence</button>
           </div>
         </form>
 

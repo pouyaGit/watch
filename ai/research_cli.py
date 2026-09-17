@@ -3026,6 +3026,131 @@ def run_agent_evidence(args: argparse.Namespace) -> int:
     return 0 if outcome["status"] != "ERROR" else 1
 
 
+MAX_HUMAN_ENVELOPE_CHARS = 65536
+
+
+def run_agent_human_evidence(args: argparse.Namespace) -> int:
+    """R89: persist one controlled human evidence submission for one case
+    through the existing R80-R77 lifecycle (dry-run by default; --apply
+    writes one atomic case update)."""
+
+    import signal
+
+    from ai.research_agent.case_bridge import case_artifact_path
+    from ai.research_agent.case_evidence import (
+        submit_human_case_evidence,
+    )
+    from ai.research_agent.scheduler import SchedulerConfig
+
+    config = SchedulerConfig.from_env()
+    cases_dir = (
+        Path(args.cases_dir)
+        if getattr(args, "cases_dir", None)
+        else Path(config.research_dir) / "cases"
+    )
+    case_id = str(getattr(args, "case", "") or "").strip()
+    try:
+        case_path = case_artifact_path(case_id, cases_dir)
+    except Exception:
+        print(f"agent human-evidence: invalid case id {case_id!r}")
+        return 2
+
+    source = str(getattr(args, "file", "") or "").strip()
+    try:
+        if source in ("", "-"):
+            raw = sys.stdin.read(MAX_HUMAN_ENVELOPE_CHARS + 1)
+        else:
+            raw = Path(source).read_text(
+                encoding="utf-8"
+            )[: MAX_HUMAN_ENVELOPE_CHARS + 1]
+    except OSError:
+        print("agent human-evidence: submission file is not readable")
+        return 2
+    if len(raw) > MAX_HUMAN_ENVELOPE_CHARS:
+        print("agent human-evidence: submission exceeds the bounded size")
+        return 2
+    try:
+        submission = json.loads(raw)
+    except ValueError:
+        print("agent human-evidence: submission is not valid JSON")
+        return 2
+
+    class _HumanEvidenceTimeout(Exception):
+        pass
+
+    def _on_timeout(signum, frame):
+        raise _HumanEvidenceTimeout()
+
+    timeout_seconds = 300
+    previous_handler = None
+    try:
+        previous_handler = signal.signal(signal.SIGALRM, _on_timeout)
+        signal.alarm(timeout_seconds)
+    except (AttributeError, OSError, ValueError):
+        previous_handler = None
+    try:
+        outcome = submit_human_case_evidence(
+            case_path,
+            submission,
+            expected_case_id=case_id,
+            write=bool(getattr(args, "apply", False)),
+        )
+    except _HumanEvidenceTimeout:
+        print(
+            f"agent human-evidence: timed out after {timeout_seconds}s while "
+            "building the deterministic matcher projection (no write "
+            "performed)"
+        )
+        return 1
+    finally:
+        if previous_handler is not None:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous_handler)
+    if getattr(args, "json", False):
+        print(json.dumps(outcome, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if outcome["status"] != "ERROR" else 1
+    print("Research case human evidence submission")
+    print("=======================================")
+    print(
+        f"{outcome['case_id'] or case_id} | program={outcome['program'] or '-'} "
+        f"| cve={outcome['cve_id'] or '-'} | {outcome['status']} "
+        f"| {outcome['reason'] or 'completed'}"
+    )
+    print(
+        f"  status: {outcome['before_status'] or '-'} -> "
+        f"{outcome['after_status'] or '-'}"
+    )
+    print(
+        f"  items: eligible={outcome['eligible_items']} "
+        f"accepted={outcome['accepted_items']} "
+        f"replayed={outcome['replayed_items']} "
+        f"rejected={outcome['rejected_items']}"
+    )
+    for entry in outcome["submitted_evidence"]:
+        print(
+            f"  evidence: {entry['requirement_kind']} "
+            f"{entry['evidence_ref']} ({entry['hypothesis_ref']})"
+        )
+    if outcome["rejection_codes"]:
+        print(f"  rejection codes: {', '.join(outcome['rejection_codes'])}")
+    if outcome["available_requirement_kinds"]:
+        print(
+            "  available: "
+            + ", ".join(outcome["available_requirement_kinds"])
+        )
+    if outcome["missing_requirement_kinds"]:
+        print(
+            "  missing: " + ", ".join(outcome["missing_requirement_kinds"])
+        )
+    if outcome["readiness"]:
+        print(
+            f"  readiness: {outcome['readiness'].get('sufficiency_state')} / "
+            f"{outcome['readiness'].get('decision_state')}"
+        )
+    print(f"  written: {outcome['written']}")
+    return 0 if outcome["status"] != "ERROR" else 1
+
+
 def run_agent_report(args: argparse.Namespace) -> int:
     from ai.research_agent import storage
     from ai.research_agent.scheduler import SchedulerConfig
@@ -3070,6 +3195,8 @@ def run_agent(args: argparse.Namespace) -> int:
         return run_agent_cases(args)
     if command == "evidence":
         return run_agent_evidence(args)
+    if command == "human-evidence":
+        return run_agent_human_evidence(args)
     return 2
 
 
@@ -3840,6 +3967,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_evidence.add_argument(
         "--json", action="store_true", help="emit the completion outcome as JSON"
+    )
+
+    agent_human = agent_sub.add_parser(
+        "human-evidence",
+        help="submit controlled human evidence for one persisted research case "
+        "through the existing R80-R77 lifecycle (dry-run by default; "
+        "--apply persists one atomic case update)",
+    )
+    agent_human.add_argument(
+        "--case",
+        required=True,
+        help="persisted case id, e.g. case-dell-a1-component-mapping",
+    )
+    agent_human.add_argument(
+        "--file",
+        default="-",
+        help="R80 submission envelope JSON file ('-' reads stdin)",
+    )
+    agent_human.add_argument(
+        "--cases-dir", default=None, help="override the cases directory"
+    )
+    agent_human.add_argument(
+        "--apply",
+        action="store_true",
+        help="persist the bounded case update (default: dry-run, no write)",
+    )
+    agent_human.add_argument(
+        "--json", action="store_true", help="emit the submission outcome as JSON"
     )
 
     # Stage R13: re-fetch persisted reference archives and update the

@@ -648,12 +648,12 @@
     clear(container);
 
     var current = { container: container };
-    renderCurrentState(section(current, 'Current state', 'section-current-state'), workbench, summary);
-    renderWhatWeKnow(section(current, 'What we know', 'section-what-we-know'), workbench);
-    renderWhatIsMissing(section(current, 'What is missing', 'section-what-is-missing'), workbench);
+    renderCurrentState(section(current, 'Current state (derived)', 'section-current-state'), workbench, summary);
+    renderWhatWeKnow(section(current, 'What we know (evidence)', 'section-what-we-know'), workbench);
+    renderWhatIsMissing(section(current, 'What is missing (requirements)', 'section-what-is-missing'), workbench);
     renderNext(section(current, 'What to do next', 'section-what-to-do-next'), workbench);
-    renderHumanReview(section(current, 'Human review', 'section-human-review'), workbench);
-    renderHypotheses(section(current, 'Hypotheses', 'section-hypotheses'), workbench);
+    renderHumanReview(section(current, 'Human review (human-only)', 'section-human-review'), workbench);
+    renderHypotheses(section(current, 'Hypotheses (model/research output)', 'section-hypotheses'), workbench);
     renderWhy(section(current, 'Why interesting', 'section-why-interesting'), workbench);
     renderConflicts(section(current, 'Conflicts', 'section-conflicts'), workbench);
     renderHistory(section(current, 'History', 'section-history'), workbench);
@@ -684,9 +684,10 @@
     var select = document.getElementById('evidence-requirement');
     if (!select) return;
     clear(select);
-    var kinds = (snapshot && snapshot.missing) || [];
+    var kinds = (snapshot && snapshot.missingAll) || [];
+    if (!kinds.length) kinds = (snapshot && snapshot.missing) || [];
     if (!kinds.length) {
-      var option = el('option', null, 'no decision-critical requirements missing');
+      var option = el('option', null, 'no missing requirements');
       option.value = '';
       select.appendChild(option);
       return;
@@ -708,6 +709,7 @@
       decision: state.decision || '',
       know: (known.available_requirement_kinds || []).slice(),
       missing: (missing.decision_critical_missing || []).slice(),
+      missingAll: (missing.missing_requirement_kinds || []).slice(),
       review: !!state.human_review_required
     };
   }
@@ -738,11 +740,17 @@
     clear(box);
     box.hidden = false;
     var ok = result.submission_status === 'ACCEPTED' || result.submission_status === 'PARTIAL';
-    var head = el('div', ok ? 'r82-result r82-result-ok' : 'r82-result r82-result-warn');
+    var replayed = result.submission_status === 'REPLAYED';
+    var head = el('div', ok || replayed ? 'r82-result r82-result-ok' : 'r82-result r82-result-warn');
     head.appendChild(
-      el('p', 'r82-state-title', 'Submission ' + (result.submission_status || 'processed'))
+      el('p', 'r82-state-title', 'Human submission ' + (result.submission_status || 'processed'))
     );
     head.appendChild(el('p', 'r82-kv-line', 'Accepted evidence: ' + String(result.accepted_external_evidence || 0)));
+    if (result.persistence) {
+      head.appendChild(
+        el('p', 'r82-kv-line', 'Persisted to case artifact: ' + boolText(result.persistence.written))
+      );
+    }
     if (result.rejection_codes && result.rejection_codes.length) {
       var row = el('div', 'r82-chip-row');
       result.rejection_codes.forEach(function (code) {
@@ -820,7 +828,7 @@
         items: [item]
       };
       var result = await apiFetch(
-        API_CASES + '/' + encodeURIComponent(caseId) + '/evidence',
+        API_CASES + '/' + encodeURIComponent(caseId) + '/human-evidence',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
