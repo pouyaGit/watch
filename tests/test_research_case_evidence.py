@@ -27,6 +27,10 @@ from ai.knowledge.research_evidence_submission import (
     SUBMISSION_VERSION,
     submit_research_evidence,
 )
+from ai.knowledge.asset_cve_matching import match_component, match_plugin
+from ai.knowledge.version_component_association import (
+    evaluate_version_association,
+)
 from ai.knowledge.research_evidence_provenance import (
     analyze_evidence_provenance,
 )
@@ -511,6 +515,283 @@ class TestBoundaryRejections(CaseEvidenceTestCase):
         self.assertEqual(
             submitted["intake"]["rejections"][0]["code"],
             "MALFORMED_EVIDENCE",
+        )
+
+
+class TestComponentVersionCorrelation(CaseEvidenceTestCase):
+    """R88: deterministic component/version correlation boundaries.
+
+    The component/version rules are the existing R30.1/R30.3 authorities:
+    a component binding exists only when the matcher produces an explicit
+    row, and a version exists only when the association rule exposes an
+    engine version owned by the affected component. Naming similarity, CVE
+    research text and CVE affected ranges never become evidence.
+    """
+
+    COMPONENT = "wp-responsive-images"
+
+    def _correlate(self, **kwargs):
+        base = {
+            "cve_families": ["WordPress"],
+            "cve_plugins": ["WP Responsive Images"],
+            "cve_versions": ["<=1.0"],
+        }
+        base.update(kwargs)
+        return evaluate_version_association(**base)
+
+    def test_exact_normalized_component_match_is_supported(self):
+        match = match_plugin(["WP Responsive Images"], [self.COMPONENT])
+        self.assertIsNotNone(match)
+        self.assertEqual(match.match_type, "PLUGIN")
+        self.assertEqual(match.normalized_value, "wp responsive images")
+
+    def test_similar_or_wrong_components_are_not_matches(self):
+        self.assertIsNone(
+            match_plugin(["WP Responsive Images"], ["wp-smushit"])
+        )
+        self.assertIsNone(
+            match_component(["WP Responsive Images"], ["TinyMCE"])
+        )
+
+    def test_component_match_row_becomes_component_binding_evidence(self):
+        case = self.stages(self.artifact())["case"]
+        items, unavailable = build_completion_items(
+            case,
+            CVE,
+            [
+                match_row(
+                    technology="WordPress",
+                    component=self.COMPONENT,
+                    match_id="am-2cf8fb279dde4632",
+                )
+            ],
+        )
+        binding = [
+            item
+            for item in items
+            if item["requirement_kind"] == "COMPONENT_BINDING"
+        ]
+        self.assertEqual(len(binding), 1)
+        self.assertEqual(
+            binding[0]["evidence_ref"], "record:am-2cf8fb279dde4632"
+        )
+        self.assertNotIn("COMPONENT_BINDING", unavailable)
+
+    def test_no_component_row_means_no_binding(self):
+        case = self.stages(self.artifact())["case"]
+        items, unavailable = build_completion_items(
+            case, CVE, [match_row(technology="WordPress")]
+        )
+        self.assertEqual(
+            [
+                item
+                for item in items
+                if item["requirement_kind"] == "COMPONENT_BINDING"
+            ],
+            [],
+        )
+        self.assertEqual(
+            unavailable.get("COMPONENT_BINDING"), "NO_MATCHING_OBSERVATION"
+        )
+
+    def test_unowned_version_is_withheld(self):
+        result = self._correlate(
+            observed_versions=[
+                {
+                    "version": "1.0",
+                    "technology_family": "WordPress",
+                    "component": "",
+                }
+            ],
+            observed_plugins=["wp-smushit"],
+        )
+        self.assertEqual(
+            result.state, "VERSION_MATCH_WITHOUT_COMPONENT_ASSOCIATION"
+        )
+        self.assertEqual(result.engine_versions, ())
+        self.assertFalse(result.component_available)
+
+    def test_family_mismatch_is_withheld(self):
+        result = self._correlate(
+            observed_versions=[
+                {
+                    "version": "4.2.0",
+                    "technology_family": "jQuery",
+                    "component": "",
+                }
+            ]
+        )
+        self.assertEqual(result.state, "FAMILY_MISMATCH")
+        self.assertEqual(result.engine_versions, ())
+
+    def test_cve_affected_range_alone_is_not_version_evidence(self):
+        result = self._correlate(observed_versions=[])
+        self.assertEqual(result.state, "NO_VERSION_OBSERVATION")
+        self.assertEqual(result.engine_versions, ())
+
+        case = self.stages(self.artifact())["case"]
+        items, unavailable = build_completion_items(
+            case, CVE, [match_row(technology="WordPress")]
+        )
+        self.assertEqual(
+            [
+                item
+                for item in items
+                if item["requirement_kind"] == "VERSION_IDENTITY"
+            ],
+            [],
+        )
+        self.assertEqual(
+            unavailable.get("VERSION_IDENTITY"), "NO_MATCHING_OBSERVATION"
+        )
+
+    def test_only_an_owned_matching_version_is_exposed(self):
+        result = self._correlate(
+            observed_versions=[
+                {
+                    "version": "1.0",
+                    "technology_family": "WordPress",
+                    "component": self.COMPONENT,
+                }
+            ],
+            observed_plugins=[self.COMPONENT],
+        )
+        self.assertEqual(result.state, "VERSION_MATCH_WITHIN_SAME_FAMILY")
+        self.assertEqual(result.engine_versions, ("1.0",))
+        self.assertEqual(result.component, self.COMPONENT)
+
+    def test_model_text_never_becomes_component_evidence(self):
+        case = dict(self.stages(self.artifact())["case"])
+        case["title"] = "WP Responsive Images plugin observed at 1.0"
+        case["recommended_action"] = "bind wp-responsive-images"
+        items, unavailable = build_completion_items(case, CVE, [])
+        self.assertEqual(items, [])
+        self.assertEqual(
+            unavailable.get("COMPONENT_BINDING"), "NO_MATCHING_OBSERVATION"
+        )
+
+    def test_component_evidence_transitions_naturally_and_is_idempotent(self):
+        rows = [
+            match_row(
+                technology="WordPress",
+                component=self.COMPONENT,
+                match_id="am-2cf8fb279dde4632",
+            )
+        ]
+        first = complete_case_evidence(
+            self.case_path,
+            expected_case_id=CASE_ID,
+            match_loader=self.loader(rows),
+            write=True,
+        )
+        self.assertEqual(first["status"], STATUS_COMPLETED)
+        self.assertEqual(first["accepted_items"], 2)
+        self.assertEqual(first["after_status"], "READY_FOR_HUMAN_REVIEW")
+        self.assertEqual(
+            first["readiness"]["decision_state"], "READY_FOR_HUMAN_REVIEW"
+        )
+        self.assertEqual(
+            first["missing_requirement_kinds"],
+            ["VERSION_IDENTITY", "WATCH_SIGNAL"],
+        )
+        after_first = self.case_path.read_bytes()
+
+        second = complete_case_evidence(
+            self.case_path,
+            expected_case_id=CASE_ID,
+            match_loader=self.loader(rows),
+            write=True,
+        )
+        self.assertEqual(second["status"], STATUS_REPLAYED)
+        self.assertEqual(second["reason"], REASON_ALL_REPLAYED)
+        self.assertFalse(second["written"])
+        self.assertEqual(self.case_path.read_bytes(), after_first)
+
+    def test_no_new_evidence_leaves_case_state_unchanged(self):
+        first = complete_case_evidence(
+            self.case_path,
+            expected_case_id=CASE_ID,
+            match_loader=self.loader([match_row(technology="WordPress")]),
+            write=True,
+        )
+        self.assertEqual(first["status"], STATUS_COMPLETED)
+        self.assertEqual(first["after_status"], "ACTIVE")
+        after_first = self.case_path.read_bytes()
+
+        second = complete_case_evidence(
+            self.case_path,
+            expected_case_id=CASE_ID,
+            match_loader=self.loader([]),
+            write=True,
+        )
+        self.assertEqual(second["status"], STATUS_NO_EVIDENCE)
+        self.assertEqual(second["reason"], REASON_NO_ITEMS)
+        self.assertFalse(second["written"])
+        self.assertEqual(self.case_path.read_bytes(), after_first)
+        case = self.artifact()["research_case_workspace"]["cases"][0]
+        self.assertEqual(case["status"], "ACTIVE")
+        self.assertEqual(
+            case["evidence"]["available_requirement_kinds"],
+            ["TECHNOLOGY_IDENTITY"],
+        )
+
+    def test_component_contradiction_is_preserved(self):
+        first = complete_case_evidence(
+            self.case_path,
+            expected_case_id=CASE_ID,
+            match_loader=self.loader(
+                [
+                    match_row(
+                        technology="WordPress",
+                        component=self.COMPONENT,
+                        match_id="am-2cf8fb279dde4632",
+                    )
+                ]
+            ),
+            write=True,
+        )
+        self.assertEqual(first["status"], STATUS_COMPLETED)
+        artifact = self.artifact()
+        stages = self.stages(artifact)
+        contradiction = {
+            "hypothesis_ref": "H1",
+            "requirement_kind": "COMPONENT_BINDING",
+            "effect": "CONTRADICTS",
+            "source": "HUMAN_REVIEW",
+            "evidence_ref": "record:am-0000000000000000",
+            "observations": [
+                {
+                    "ref": "record:am-0000000000000000",
+                    "fact": "the affected component is not the observed one",
+                }
+            ],
+        }
+        submitted = self.boundary_call(artifact, [contradiction])
+        self.assertEqual(submitted["status"], "ACCEPTED")
+        provenance = analyze_evidence_provenance(
+            submitted["intake"],
+            hypotheses=stages["hypotheses"],
+            action_plan=stages["action_plan"],
+            acquisition_plan=stages["acquisition_plan"],
+            readiness_plan=stages["readiness_plan"],
+            previous_provenance=artifact["evidence_provenance"],
+        )
+        record = provenance["records"][0]
+        self.assertEqual(record["conflict_state"], "CONFLICTING")
+        self.assertTrue(record["human_review_required"])
+        reevaluation = submitted["intake"]["reevaluation"]
+        updated = update_research_case(
+            stages["case"],
+            stages["action_plan"],
+            reevaluation["acquisition_after"],
+            reevaluation["readiness_after"],
+            reevaluation["feedback"],
+            evidence_intake=submitted["intake"],
+            evidence_provenance=provenance,
+        )
+        self.assertTrue(updated["human_review_required"])
+        self.assertIn(
+            updated["status"], ("STOPPED", "READY_FOR_HUMAN_REVIEW")
         )
 
 
