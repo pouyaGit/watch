@@ -10,6 +10,10 @@ unchanged authorities.
     GET  /api/research/cases/{case_id}
         R77 workbench for one case (R77 remains the workbench authority).
 
+    GET  /api/research/acquisition-ledger
+        R91 read-only acquisition ledger portfolio across persisted cases
+        (what was attempted per requirement, and the bounded next action).
+
     POST /api/research/cases/{case_id}/evidence
         R80 submission envelope; the URL case_id must match ``case_ref``.
         Delegates to R80 -> R74 -> R75 -> R76 -> R77. Fully in-memory: no
@@ -56,6 +60,13 @@ def _rejection(exc: research_cases.CaseServiceError) -> HTTPException:
         status_code=exc.http_status,
         detail=f"{exc.code}: {exc.message}",
     )
+
+
+@router.get("/api/research/acquisition-ledger", dependencies=_AUTH)
+def research_acquisition_portfolio():
+    """R91 read-only acquisition ledger portfolio (all persisted cases)."""
+
+    return research_cases.acquisition_portfolio()
 
 
 @router.get("/api/research/cases", dependencies=_AUTH)

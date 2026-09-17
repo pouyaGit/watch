@@ -66,6 +66,13 @@ import re
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from ai.knowledge.research_acquisition_ledger import (
+    OUTCOME_ACCEPTED,
+    SOURCE_HUMAN_REVIEW as LEDGER_SOURCE_HUMAN_REVIEW,
+    SOURCE_WATCH_DERIVED as LEDGER_SOURCE_WATCH_DERIVED,
+    acquisition_block,
+    merge_acquisition_attempts,
+)
 from ai.knowledge.research_case_workspace import (
     summarize_research_cases,
     update_research_case,
@@ -790,6 +797,54 @@ def _apply_intake_and_persist(
     }
 
     updated_artifact = dict(artifact)
+    iteration_number = int(updated_case.get("iteration_count") or 0)
+    new_attempts: list[dict] = []
+    for kind, reason in sorted(
+        _block(outcome.get("unavailable_requirements")).items()
+    ):
+        kind_text = _upper(kind)
+        reason_text = _upper(reason)
+        if not kind_text or not reason_text:
+            continue
+        new_attempts.append(
+            {
+                "requirement_kind": kind_text,
+                "source": LEDGER_SOURCE_WATCH_DERIVED,
+                "outcome": reason_text,
+                "evidence_refs": [],
+                "last_iteration": iteration_number,
+                "rule_version": _text(outcome.get("rule_version"), 32),
+            }
+        )
+    for item in accepted:
+        kind_text = _upper(item.get("requirement_kind"))
+        source_text = _upper(item.get("source"))
+        if not kind_text or source_text not in (
+            LEDGER_SOURCE_WATCH_DERIVED,
+            LEDGER_SOURCE_HUMAN_REVIEW,
+        ):
+            continue
+        refs: list[str] = []
+        for observation in _mapping_items(item.get("observations")):
+            ref = _text(observation.get("ref"), MAX_REF_CHARS)
+            if ref and ref not in refs:
+                refs.append(ref)
+        new_attempts.append(
+            {
+                "requirement_kind": kind_text,
+                "source": source_text,
+                "outcome": OUTCOME_ACCEPTED,
+                "evidence_refs": refs,
+                "last_iteration": iteration_number,
+                "rule_version": _text(outcome.get("rule_version"), 32),
+            }
+        )
+    updated_artifact["evidence_acquisition"] = acquisition_block(
+        merge_acquisition_attempts(
+            _block(artifact.get("evidence_acquisition")).get("attempts"),
+            new_attempts,
+        )
+    )
     updated_artifact["acquisition_plan"] = new_acquisition
     updated_artifact["readiness_plan"] = new_readiness
     updated_artifact["iteration_plan"] = new_iteration

@@ -33,6 +33,11 @@ import json
 from pathlib import Path
 from typing import Mapping
 
+from ai.knowledge.research_acquisition_ledger import (
+    AcquisitionLedgerError,
+    build_acquisition_portfolio,
+    build_case_acquisition_ledger,
+)
 from ai.knowledge.research_case_workspace import (
     summarize_research_case,
     update_research_case,
@@ -201,6 +206,15 @@ def _load_entry(path: Path) -> dict | None:
             "evidence_provenance": dict(
                 _block(payload.get("evidence_provenance"))
             ),
+            "evidence_intake": dict(
+                _block(payload.get("evidence_intake"))
+            ),
+            "evidence_completion": dict(
+                _block(payload.get("evidence_completion"))
+            ),
+            "evidence_acquisition": dict(
+                _block(payload.get("evidence_acquisition"))
+            ),
         },
     }
     return entry
@@ -298,8 +312,36 @@ def list_cases() -> dict:
     }
 
 
+def _case_acquisition_ledger(entry: Mapping) -> dict | None:
+    """R91 acquisition ledger for one entry (None when unavailable)."""
+
+    stages = _block(entry.get("stages"))
+    try:
+        return build_case_acquisition_ledger(
+            entry.get("case"),
+            acquisition_plan=stages.get("acquisition_plan"),
+            readiness_plan=stages.get("readiness_plan"),
+            evidence_provenance=stages.get("evidence_provenance"),
+            evidence_completion=stages.get("evidence_completion"),
+            evidence_acquisition=stages.get("evidence_acquisition"),
+        )
+    except AcquisitionLedgerError:
+        return None
+
+
+def acquisition_portfolio() -> dict:
+    """R91 read-only acquisition ledger portfolio over persisted cases."""
+
+    ledgers: list[dict] = []
+    for entry in case_entries():
+        ledger = _case_acquisition_ledger(entry)
+        if ledger is not None:
+            ledgers.append(ledger)
+    return build_acquisition_portfolio(ledgers)
+
+
 def get_case_workbench(case_id: object) -> dict | None:
-    """R77 workbench for one case (R77 remains the authority)."""
+    """R77 workbench for one case (R77 remains the workbench authority)."""
 
     entry = get_case_entry(case_id)
     if entry is None:
@@ -320,6 +362,7 @@ def get_case_workbench(case_id: object) -> dict | None:
         "artifact_path": _text(entry.get("artifact_path")),
         "case_summary": _case_summary(entry),
         "workbench": workbench,
+        "acquisition_ledger": _case_acquisition_ledger(entry),
         "advisory": True,
         "research_only": True,
         "confirmation_state": "NOT_CONFIRMED",
@@ -593,6 +636,7 @@ __all__ = [
     "get_case_entry",
     "list_cases",
     "get_case_workbench",
+    "acquisition_portfolio",
     "submit_case_evidence",
     "submit_human_case_evidence",
 ]

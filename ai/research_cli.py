@@ -3151,6 +3151,122 @@ def run_agent_human_evidence(args: argparse.Namespace) -> int:
     return 0 if outcome["status"] != "ERROR" else 1
 
 
+def run_agent_acquisitions(args: argparse.Namespace) -> int:
+    """R91: read-only acquisition ledger for one case or the case portfolio
+    (what was attempted per requirement, with the bounded next action)."""
+
+    from ai.knowledge.research_acquisition_ledger import (
+        build_acquisition_portfolio,
+        build_case_acquisition_ledger,
+    )
+    from ai.research_agent.case_bridge import case_artifact_path
+    from ai.research_agent.case_evidence import load_case_artifact
+    from ai.research_agent.scheduler import SchedulerConfig
+
+    config = SchedulerConfig.from_env()
+    cases_dir = (
+        Path(args.cases_dir)
+        if getattr(args, "cases_dir", None)
+        else Path(config.research_dir) / "cases"
+    )
+    case_id = str(getattr(args, "case", "") or "").strip()
+
+    def _ledger_for(path: Path):
+        try:
+            artifact = load_case_artifact(path)
+        except Exception:
+            return None
+        workspace = artifact.get("research_case_workspace")
+        cases = (
+            workspace.get("cases") if isinstance(workspace, dict) else None
+        )
+        case = cases[0] if isinstance(cases, list) and cases else None
+        if not isinstance(case, dict):
+            return None
+        try:
+            return build_case_acquisition_ledger(
+                case,
+                acquisition_plan=artifact.get("acquisition_plan"),
+                readiness_plan=artifact.get("readiness_plan"),
+                evidence_provenance=artifact.get("evidence_provenance"),
+                evidence_completion=artifact.get("evidence_completion"),
+                evidence_acquisition=artifact.get("evidence_acquisition"),
+            )
+        except Exception:
+            return None
+
+    if case_id:
+        try:
+            case_path = case_artifact_path(case_id, cases_dir)
+        except Exception:
+            print(f"agent acquisitions: invalid case id {case_id!r}")
+            return 2
+        ledger = _ledger_for(case_path)
+        if ledger is None:
+            print(
+                f"agent acquisitions: no readable case artifact for {case_id}"
+            )
+            return 1
+        if getattr(args, "json", False):
+            print(
+                json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True)
+            )
+            return 0
+        print("Case acquisition ledger")
+        print("=======================")
+        print(
+            f"{ledger['case_id']} | program={ledger['program'] or '-'} "
+            f"| {ledger['case_status']} | {ledger['sufficiency_state']} / "
+            f"{ledger['decision_state']} | next={ledger['next_action']}"
+        )
+        for entry in ledger["requirements"]:
+            sources = ", ".join(entry["remaining_sources"]) or "-"
+            print(
+                f"  {entry['requirement_kind']} "
+                f"[{entry['requirement_class']}] {entry['status']} "
+                f"| remaining: {sources}"
+            )
+            for attempt in entry["attempts"]:
+                print(
+                    f"      attempt: {attempt['source']} "
+                    f"{attempt['outcome']} "
+                    f"iter={attempt['last_iteration']} "
+                    f"count={attempt['count']}"
+                )
+        for line in ledger["why"]:
+            print(f"  why: {line}")
+        return 0
+
+    if not cases_dir.is_dir():
+        print("agent acquisitions: cases directory not found")
+        return 1
+    ledgers = []
+    for path in sorted(cases_dir.glob("*.json")):
+        ledger = _ledger_for(path)
+        if ledger is not None:
+            ledgers.append(ledger)
+    portfolio = build_acquisition_portfolio(ledgers)
+    if getattr(args, "json", False):
+        print(
+            json.dumps(portfolio, ensure_ascii=False, indent=2, sort_keys=True)
+        )
+        return 0
+    print("Case acquisition portfolio")
+    print("==========================")
+    print(
+        f"cases: {portfolio['total']} | human action required: "
+        f"{portfolio['summary']['human_action_required']} | offline "
+        f"exhausted: {portfolio['summary']['offline_sources_exhausted']}"
+    )
+    for row in portfolio["items"]:
+        print(
+            f"  {row['next_action']:18s} {row['case_id']} "
+            f"| {row['case_status']} | missing={row['missing']} "
+            f"decision_missing={row['decision_missing']}"
+        )
+    return 0
+
+
 def run_agent_report(args: argparse.Namespace) -> int:
     from ai.research_agent import storage
     from ai.research_agent.scheduler import SchedulerConfig
@@ -3197,6 +3313,8 @@ def run_agent(args: argparse.Namespace) -> int:
         return run_agent_evidence(args)
     if command == "human-evidence":
         return run_agent_human_evidence(args)
+    if command == "acquisitions":
+        return run_agent_acquisitions(args)
     return 2
 
 
@@ -3995,6 +4113,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_human.add_argument(
         "--json", action="store_true", help="emit the submission outcome as JSON"
+    )
+
+    agent_acquisitions = agent_sub.add_parser(
+        "acquisitions",
+        help="read-only R91 acquisition ledger for one persisted case or the "
+        "case portfolio (attempts per requirement + bounded next action)",
+    )
+    agent_acquisitions.add_argument(
+        "--case", default="", help="optional persisted case id"
+    )
+    agent_acquisitions.add_argument(
+        "--cases-dir", default=None, help="override the cases directory"
+    )
+    agent_acquisitions.add_argument(
+        "--json", action="store_true", help="emit the ledger as JSON"
     )
 
     # Stage R13: re-fetch persisted reference archives and update the
