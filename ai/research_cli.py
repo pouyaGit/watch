@@ -3267,6 +3267,91 @@ def run_agent_acquisitions(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_agent_schedule(args: argparse.Namespace) -> int:
+    """R92: read-only case-aware scheduling preview (no execution, no writes)."""
+
+    from ai.research_agent.scheduler import (
+        ResearchScheduler,
+        SchedulerConfig,
+        load_case_contexts,
+    )
+
+    config = SchedulerConfig.from_env()
+    cases_dir = getattr(args, "cases_dir", None)
+    loader = None
+    if cases_dir:
+        loader = lambda: load_case_contexts(cases_dir)  # noqa: E731
+    scheduler = ResearchScheduler(config, case_context_loader=loader)
+    preview = scheduler.schedule_preview(
+        plan_id=getattr(args, "plan", None),
+        limit=getattr(args, "limit", None),
+        case_id=getattr(args, "case", None),
+    )
+    if preview.get("case_known") is False:
+        print(
+            f"agent schedule: no readable case artifact for "
+            f"{getattr(args, 'case', '')!r}"
+        )
+        return 1
+    if getattr(args, "json", False):
+        print(json.dumps(preview, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    scheduling = preview["case_scheduling"]
+    summary = scheduling["summary"]
+    print("Research Agent - case-aware scheduling")
+    print("======================================")
+    print(
+        f"Cases: {summary['contexts']} "
+        f"(malformed contexts: {summary['malformed_contexts']}) | "
+        f"Plans: {summary['plans']} | Eligible: "
+        f"{summary['plans_eligible']} | Unbound: {summary['plans_unbound']}"
+    )
+    print()
+    print("Case attention:")
+    if not scheduling["case_attention"]:
+        print("  (none)")
+    for row in scheduling["case_attention"]:
+        print(
+            f"  {row['next_action'] or '-':18s} {row['case_id']} "
+            f"| {row['case_status']} "
+            f"| actionable={str(row['actionable']).lower()} "
+            f"| reason={row['reason_code'] or '-'}"
+        )
+        print(
+            f"      acquisition: missing={row['missing']} "
+            f"decision_missing={row['decision_missing']} "
+            f"offline_exhausted="
+            f"{str(row['offline_sources_exhausted']).lower()} "
+            f"human_action="
+            f"{str(row['human_action_required']).lower()}"
+        )
+    print()
+    print("Scheduled plans:")
+    if not preview["plans"]:
+        print("  (none)")
+    for index, plan in enumerate(preview["plans"], start=1):
+        print(
+            f"  #{index} {plan.get('plan_id')} {plan.get('cve_id')} -> "
+            f"{plan.get('program')}"
+        )
+    print()
+    print("Decisions:")
+    decisions = scheduling["decisions"]
+    for decision in decisions[:40]:
+        print(
+            f"  {decision['decision']:6s} {decision['plan_id']} "
+            f"case={decision['case_id'] or '-'} "
+            f"reason={decision['reason_code'] or 'ELIGIBLE'} "
+            f"bound_by={decision.get('bound_by') or '-'}"
+        )
+    if len(decisions) > 40:
+        print(f"  ... {len(decisions) - 40} more decision(s)")
+    print()
+    print("MODE: research-planning only (read-only, no execution, no writes)")
+    return 0
+
+
 def run_agent_report(args: argparse.Namespace) -> int:
     from ai.research_agent import storage
     from ai.research_agent.scheduler import SchedulerConfig
@@ -3315,6 +3400,8 @@ def run_agent(args: argparse.Namespace) -> int:
         return run_agent_human_evidence(args)
     if command == "acquisitions":
         return run_agent_acquisitions(args)
+    if command == "schedule":
+        return run_agent_schedule(args)
     return 2
 
 
@@ -4128,6 +4215,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_acquisitions.add_argument(
         "--json", action="store_true", help="emit the ledger as JSON"
+    )
+
+    agent_schedule = agent_sub.add_parser(
+        "schedule",
+        help="read-only R92 case-aware scheduling preview: per-case attention "
+        "and SELECT/SKIP decisions for candidate plans (no execution, "
+        "no network, no writes)",
+    )
+    agent_schedule.add_argument(
+        "--case", default="", help="optional persisted case id"
+    )
+    agent_schedule.add_argument(
+        "--plan", default=None, help="optional plan id filter"
+    )
+    agent_schedule.add_argument(
+        "--cases-dir", default=None, help="override the cases directory"
+    )
+    agent_schedule.add_argument(
+        "--limit", type=int, default=None, help="show at most this many plans"
+    )
+    agent_schedule.add_argument(
+        "--json", action="store_true", help="emit the scheduling preview as JSON"
     )
 
     # Stage R13: re-fetch persisted reference archives and update the

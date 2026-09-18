@@ -35,6 +35,7 @@ __all__ = [
     "priority_rank",
     "select_plans",
     "acquire_lock",
+    "load_case_contexts",
 ]
 
 RUN_STATUS_COMPLETED = "RESEARCH_COMPLETED"
@@ -208,6 +209,10 @@ class SchedulerConfig:
     llm_fallback_model: str = ""
     llm_max_retries: int = 0
     llm_response_format: str = "json"
+    # Stage R92: opt-in case-aware scheduling. Disabled by default; when
+    # false (and no explicit case_context_loader is injected) selection
+    # semantics are byte-identical to the R23 baseline.
+    case_aware: bool = False
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "SchedulerConfig":
@@ -272,6 +277,7 @@ class SchedulerConfig:
             llm_response_format=str(
                 get("WATCH_RESEARCH_LLM_RESPONSE_FORMAT", "json") or "json"
             ),
+            case_aware=_parse_bool(get("WATCH_RESEARCH_CASE_AWARE"), False),
         )
 
     @property
@@ -291,6 +297,98 @@ def _default_plan_loader() -> list[dict]:
         return []
 
 
+def load_case_contexts(cases_dir: str | Path) -> list[dict]:
+    """Read-only R92 scheduling contexts for persisted case artifacts.
+
+    Fail-soft per artifact and never writes: a readable artifact is projected
+    through the existing R91 ledger and the R92 context builder; a malformed
+    artifact yields an explicit ``malformed`` marker (never a fabricated
+    fact); an unreadable directory yields ``[]`` (case-aware mode then fails
+    closed). No network, no Mongo, no LLM, no target interaction.
+    """
+
+    from ai.research_agent.case_scheduling import (
+        RULE_VERSION,
+        build_case_scheduling_context,
+    )
+    from ai.knowledge.research_acquisition_ledger import (
+        build_case_acquisition_ledger,
+    )
+
+    contexts: list[dict] = []
+    directory = Path(cases_dir)
+    if not directory.is_dir():
+        return contexts
+    try:
+        from ai.research_agent.case_evidence import load_case_artifact
+    except Exception:
+        return contexts
+    for path in sorted(directory.glob("*.json")):
+        if path.name.endswith(".tmp"):
+            continue
+        try:
+            artifact = load_case_artifact(path)
+            workspace = artifact.get("research_case_workspace")
+            cases = (
+                workspace.get("cases")
+                if isinstance(workspace, dict)
+                else None
+            )
+            case = (
+                cases[0]
+                if isinstance(cases, list) and cases and isinstance(cases[0], dict)
+                else None
+            )
+            if case is None:
+                raise ValueError("case workspace is missing")
+            ledger = build_case_acquisition_ledger(
+                case,
+                acquisition_plan=artifact.get("acquisition_plan"),
+                readiness_plan=artifact.get("readiness_plan"),
+                evidence_provenance=artifact.get("evidence_provenance"),
+                evidence_completion=artifact.get("evidence_completion"),
+                evidence_acquisition=artifact.get("evidence_acquisition"),
+            )
+            result = artifact.get("result")
+            result = result if isinstance(result, dict) else {}
+            contexts.append(
+                build_case_scheduling_context(
+                    case,
+                    acquisition_ledger=ledger,
+                    source_plan_ref=result.get("plan_id") or "",
+                    source_cve=result.get("cve_id") or "",
+                )
+            )
+        except Exception:
+            contexts.append(
+                {
+                    "context_version": RULE_VERSION,
+                    "case_ref": "",
+                    "artifact": path.name,
+                }
+            )
+    return contexts
+
+
+def _bounded_scheduling(selection: object) -> dict:
+    """Compact, serializable scheduling projection for status/run records."""
+
+    block = selection if isinstance(selection, dict) else {}
+    reasons: dict[str, int] = {}
+    for decision in block.get("decisions") or []:
+        if not isinstance(decision, dict):
+            continue
+        code = decision.get("reason_code") or "ELIGIBLE"
+        reasons[code] = reasons.get(code, 0) + 1
+    return {
+        "rule_version": block.get("rule_version", ""),
+        "summary": dict(block.get("summary") or {}),
+        "case_attention": list(block.get("case_attention") or []),
+        "eligible_plan_ids": list(block.get("eligible_plan_ids") or []),
+        "reason_counts": {key: reasons[key] for key in sorted(reasons)},
+    }
+
+
 def _run_id_for(now: datetime) -> str:
     return "run-" + now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -306,12 +404,52 @@ class ResearchScheduler:
         plan_loader: Callable[[], list[dict]] | None = None,
         now_fn: Callable[[], datetime] | None = None,
         monotonic_fn: Callable[[], float] | None = None,
+        case_context_loader: Callable[[], list[dict]] | None = None,
     ) -> None:
         self.config = config or SchedulerConfig.from_env()
         self.agent = agent
         self.plan_loader = plan_loader or _default_plan_loader
         self._now_fn = now_fn
         self._monotonic = monotonic_fn or (lambda: __import__("time").monotonic())
+        # R92: an explicit loader is itself an opt-in (test/CLI injection);
+        # otherwise ``WATCH_RESEARCH_CASE_AWARE`` controls the mode.
+        self.case_context_loader = case_context_loader
+        self._case_aware = bool(
+            self.config.case_aware or case_context_loader is not None
+        )
+
+    # -- R92 case awareness ------------------------------------------------
+    def _case_contexts(self) -> list[dict]:
+        """Read-only case scheduling contexts; fail closed on any failure."""
+
+        loader = self.case_context_loader
+        if loader is None:
+            loader = lambda: load_case_contexts(  # noqa: E731
+                Path(self.config.research_dir) / "cases"
+            )
+        try:
+            contexts = loader() or []
+        except Exception:
+            return []
+        return contexts if isinstance(contexts, list) else []
+
+    def _case_selection(
+        self, plans: list[dict], cap: int
+    ) -> tuple[list[dict], dict]:
+        """(scheduled plans, full selection) under R92 case awareness."""
+
+        from ai.research_agent.case_scheduling import (
+            select_case_aware_plans,
+        )
+
+        selection = select_case_aware_plans(plans, self._case_contexts())
+        eligible_ids = set(selection.get("eligible_plan_ids") or [])
+        eligible = [
+            plan
+            for plan in plans
+            if isinstance(plan, dict) and plan.get("plan_id") in eligible_ids
+        ]
+        return select_plans(eligible, cap), selection
 
     # -- time -------------------------------------------------------------
     def _now(self) -> datetime:
@@ -347,11 +485,20 @@ class ResearchScheduler:
         }
 
     # -- read-only preview ------------------------------------------------
+    def _read_only_selection(
+        self, plans: list[dict], cap: int
+    ) -> tuple[list[dict], dict | None]:
+        if not self._case_aware:
+            return select_plans(plans, cap), None
+        return self._case_selection(plans, cap)
+
     def status(self, now: datetime | None = None) -> dict:
         moment = now or self._now()
         plans = self.plan_loader() or []
-        eligible = select_plans(plans, self.config.max_plans)
-        return {
+        eligible, selection = self._read_only_selection(
+            plans, self.config.max_plans
+        )
+        info = {
             "enabled": self.config.enabled,
             "window": self.config.window_label(),
             "window_start": self.config.window_start,
@@ -372,6 +519,10 @@ class ResearchScheduler:
             "next_run": self.next_run(moment),
             "now": moment.isoformat(),
         }
+        if selection is not None:
+            info["case_aware"] = True
+            info["case_scheduling"] = _bounded_scheduling(selection)
+        return info
 
     def preview(
         self,
@@ -385,8 +536,8 @@ class ResearchScheduler:
         if plan_id:
             plans = [p for p in plans if p.get("plan_id") == plan_id]
         cap = self.config.max_plans if limit is None else max(int(limit), 0)
-        selected = select_plans(plans, cap)
-        return {
+        selected, selection = self._read_only_selection(plans, cap)
+        result = {
             "enabled": self.config.enabled,
             "in_window": in_window(
                 moment, self.config.window_start, self.config.window_end
@@ -397,6 +548,66 @@ class ResearchScheduler:
             "discovery": self.config.discovery,
             "discovery_budget": self._discovery_budget(),
             "plans": selected,
+        }
+        if selection is not None:
+            result["case_aware"] = True
+            result["case_scheduling"] = _bounded_scheduling(selection)
+        return result
+
+    def schedule_preview(
+        self,
+        *,
+        plan_id: str | None = None,
+        limit: int | None = None,
+        case_id: str | None = None,
+    ) -> dict:
+        """Read-only R92 case-aware scheduling preview.
+
+        Consumes the persisted case contexts (R76 + R91) and candidate R22
+        plans and returns per-case attention plus one SELECT/SKIP decision per
+        (plan, bound case). Performs no network activity, executes no plan,
+        writes nothing and never authorizes execution.
+        """
+
+        from ai.research_agent.case_scheduling import (
+            select_case_aware_plans,
+        )
+
+        plans = self.plan_loader() or []
+        if plan_id:
+            plans = [p for p in plans if p.get("plan_id") == plan_id]
+        contexts = self._case_contexts()
+        wanted = str(case_id or "").strip()
+        case_known: bool | None = None
+        if wanted:
+            filtered = [
+                context
+                for context in contexts
+                if isinstance(context, dict)
+                and str(context.get("case_ref") or "") == wanted
+            ]
+            case_known = bool(filtered)
+            contexts = filtered
+        selection = select_case_aware_plans(plans, contexts)
+        eligible_ids = set(selection.get("eligible_plan_ids") or [])
+        eligible = [
+            plan
+            for plan in plans
+            if isinstance(plan, dict) and plan.get("plan_id") in eligible_ids
+        ]
+        cap = self.config.max_plans if limit is None else max(int(limit), 0)
+        return {
+            "enabled": self.config.enabled,
+            "in_window": self.in_window(),
+            "window": self.config.window_label(),
+            "network": self.config.network,
+            "llm": self.config.llm,
+            "discovery": self.config.discovery,
+            "case_aware": True,
+            "case_ref": wanted,
+            "case_known": case_known,
+            "plans": select_plans(eligible, cap),
+            "case_scheduling": selection,
         }
 
     # -- execution --------------------------------------------------------
@@ -455,7 +666,13 @@ class ResearchScheduler:
             if plan_id:
                 plans = [p for p in plans if p.get("plan_id") == plan_id]
             cap = self.config.max_plans if limit is None else max(int(limit), 0)
-            selected = select_plans(plans, cap)
+            selection = None
+            if self._case_aware:
+                selected, selection = self._case_selection(plans, cap)
+                record["case_aware"] = True
+                record["case_scheduling"] = _bounded_scheduling(selection)
+            else:
+                selected = select_plans(plans, cap)
             record["plans_selected"] = len(selected)
 
             if dry_run:
