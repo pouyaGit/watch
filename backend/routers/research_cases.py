@@ -8,7 +8,11 @@ unchanged authorities.
         Bounded case summaries (no raw model output, no sensitive data).
 
     GET  /api/research/cases/{case_id}
-        R77 workbench for one case (R77 remains the workbench authority).
+        R77 workbench for one case (R77 remains the workbench authority)
+        plus the R91 acquisition ledger and the read-only R95 deterministic
+        human evidence request (``evidence_request``; ``None`` when
+        unavailable). Exposing the request never submits or fabricates
+        evidence.
 
     GET  /api/research/acquisition-ledger
         R91 read-only acquisition ledger portfolio across persisted cases

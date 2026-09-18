@@ -17,6 +17,7 @@
   'use strict';
 
   var API_CASES = '/api/research/cases';
+  var currentRequest = null;
 
   // ---------- runtime API key (existing dashboard convention) ----------
   function apiKey() {
@@ -680,23 +681,135 @@
     if (home) home.href = homeUrl();
   }
 
-  function fillEvidenceForm(snapshot, summary) {
+  function requestRequirementKinds(request) {
+    if (!request || request.request_state !== 'EVIDENCE_REQUESTED') return [];
+    return (request.requirements || [])
+      .map(function (entry) { return entry.requirement_kind; })
+      .filter(function (kind) { return !!kind; });
+  }
+
+  function fillEvidenceForm(snapshot, summary, request) {
     var select = document.getElementById('evidence-requirement');
     if (!select) return;
     clear(select);
-    var kinds = (snapshot && snapshot.missingAll) || [];
+    // R96: prefer the R95 request requirements (the operator-facing
+    // hand-off); fall back to the unchanged R77 missing lists.
+    var kinds = requestRequirementKinds(request);
+    if (!kinds.length) kinds = (snapshot && snapshot.missingAll) || [];
     if (!kinds.length) kinds = (snapshot && snapshot.missing) || [];
     if (!kinds.length) {
       var option = el('option', null, 'no missing requirements');
       option.value = '';
       select.appendChild(option);
+    } else {
+      kinds.forEach(function (kind) {
+        var option = el('option', null, kind);
+        option.value = kind;
+        select.appendChild(option);
+      });
+    }
+    var datalist = document.getElementById('evidence-hypotheses');
+    if (datalist) {
+      clear(datalist);
+      var refs = (request && request.hypothesis_refs) || [];
+      refs.forEach(function (ref) {
+        var refOption = el('option', null, ref);
+        refOption.value = ref;
+        datalist.appendChild(refOption);
+      });
+    }
+  }
+
+  function useRequestItem(kind) {
+    var select = document.getElementById('evidence-requirement');
+    if (select) select.value = kind;
+    var note = document.getElementById('evidence-request-note');
+    if (note && currentRequest) {
+      note.textContent =
+        'request ' + (currentRequest.request_ref || '') +
+        ' · requirement ' + kind +
+        ' · source HUMAN_REVIEW — fill the observation yourself';
+    }
+    var refInput = document.querySelector('input[name="evidence-ref"]');
+    if (refInput) refInput.focus();
+  }
+
+  function renderEvidenceRequest(request, summary) {
+    var host = document.getElementById('evidence-request');
+    if (!host) return;
+    clear(host);
+    currentRequest = request || null;
+    var panel = el('section', 'panel r82-panel');
+    var head = el('div', 'panel-head');
+    head.appendChild(
+      el('h2', null, 'Evidence request (R95 — requested, not evidence)')
+    );
+    panel.appendChild(head);
+    var body = el('div', 'panel-body');
+    if (!request) {
+      body.appendChild(
+        el('p', 'r82-empty', 'No operator-facing evidence request is available (fail closed).')
+      );
+      panel.appendChild(body);
+      host.appendChild(panel);
       return;
     }
-    kinds.forEach(function (kind) {
-      var option = el('option', null, kind);
-      option.value = kind;
-      select.appendChild(option);
-    });
+    body.appendChild(el('p', 'r82-kv-line',
+      'Request: ' + (request.request_ref || '—') +
+      ' · state ' + (request.request_state || '—') +
+      ' · next ' + (request.next_action || '—')));
+    body.appendChild(el('p', 'r82-kv-line',
+      'Human action required: ' + boolText(request.human_action_required) +
+      ' · offline sources exhausted: ' + boolText(request.offline_sources_exhausted)));
+    if (request.request_state !== 'EVIDENCE_REQUESTED') {
+      body.appendChild(el('p', 'r82-empty', request.reason || 'No evidence request is required.'));
+    } else {
+      (request.requirements || []).forEach(function (entry) {
+        var box = el('div', 'r82-requirement');
+        box.appendChild(el('p', 'r82-req-kind',
+          entry.requirement_kind + ' [' + (entry.requirement_class || '—') + ']'));
+        box.appendChild(el('p', 'r82-kv-line',
+          'Status: ' + (entry.status || '—') +
+          ' · acquisition: ' + (entry.acquisition_type || '—') +
+          ' · offline exhausted: ' + boolText(entry.offline_exhausted)));
+        box.appendChild(el('p', 'r82-kv-line', 'Expected output: ' + (entry.expected_output || '—')));
+        box.appendChild(el('p', 'r82-kv-line', 'Completion: ' + (entry.completion_condition || '—')));
+        if (entry.hypothesis_refs && entry.hypothesis_refs.length) {
+          box.appendChild(el('p', 'r82-kv-line', 'Valid hypothesis refs: ' + entry.hypothesis_refs.join(', ')));
+        }
+        var use = el('button', 'btn-secondary', 'Use in submission');
+        use.type = 'button';
+        use.addEventListener('click', function () { useRequestItem(entry.requirement_kind); });
+        box.appendChild(use);
+        body.appendChild(box);
+      });
+      body.appendChild(el('p', 'r82-kv-label', 'Provenance requirements (unchanged R80/R89 boundary)'));
+      (request.provenance_requirements || []).forEach(function (entry) {
+        body.appendChild(el('p', 'r82-kv-line', '· ' + entry));
+      });
+      body.appendChild(el('p', 'r82-kv-label', 'Safety boundary'));
+      (request.safety_boundary || []).forEach(function (entry) {
+        body.appendChild(el('p', 'r82-kv-line', '· ' + entry));
+      });
+      body.appendChild(el('p', 'r82-kv-line',
+        'The R80 envelope template stays empty here; the human supplies the ' +
+        'observation. A read-only template is available via ' +
+        'agent acquisitions --request --json.'));
+    }
+    panel.appendChild(body);
+    host.appendChild(panel);
+  }
+
+  async function refreshEvidenceRequest(caseId) {
+    var result = await apiFetch(API_CASES + '/' + encodeURIComponent(caseId));
+    if (result.state !== 'ok' || !result.body) return;
+    var request = result.body.evidence_request || null;
+    renderEvidenceRequest(request, result.body.case_summary || {});
+    fillEvidenceForm(
+      snapshotFromWorkbench(result.body.workbench || {}),
+      result.body.case_summary || {},
+      request
+    );
   }
 
   function snapshotFromWorkbench(workbench) {
@@ -841,8 +954,9 @@
         var changes = changesBetween(before, after);
         renderSubmissionResult(result.body, changes);
         renderWorkbench(workbench, result.body.case_summary || {});
-        fillEvidenceForm(after, result.body.case_summary || {});
+        fillEvidenceForm(after, result.body.case_summary || {}, currentRequest);
         before = after;
+        await refreshEvidenceRequest(caseId);
         return;
       }
       if (result.state === 'rejected') {
@@ -886,8 +1000,9 @@
     var workbench = body.workbench || {};
     renderCaseHeader(body.case_summary || {}, body.program);
     renderWorkbench(workbench, body.case_summary || {});
+    renderEvidenceRequest(body.evidence_request || null, body.case_summary || {});
     var snapshot = snapshotFromWorkbench(workbench);
-    fillEvidenceForm(snapshot, body.case_summary || {});
+    fillEvidenceForm(snapshot, body.case_summary || {}, body.evidence_request || null);
     initEvidenceForm(caseId, snapshot);
     var refresh = document.getElementById('case-refresh');
     if (refresh) {
@@ -1089,6 +1204,7 @@
     statusBadge: statusBadge,
     renderCaseList: renderListRows,
     renderWorkbench: renderWorkbench,
+    renderEvidenceRequest: renderEvidenceRequest,
     renderActivity: renderActivity,
     initCaseList: initCaseList,
     initActivity: initActivity,

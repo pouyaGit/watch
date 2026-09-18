@@ -194,6 +194,41 @@ class TestApiIntegrationContract(unittest.TestCase):
             self.assertNotIn(api_key, base)
 
 
+class TestEvidenceRequestUiContract(unittest.TestCase):
+    """R96: dashboard exposes the R95 request and the R89 hand-off."""
+
+    def test_request_section_and_handoff_present(self):
+        source = DASHBOARD_JS.read_text(encoding="utf-8")
+        for marker in (
+            "renderEvidenceRequest",
+            "requestRequirementKinds",
+            "EVIDENCE_REQUESTED",
+            "evidence_request",
+            "request_ref",
+            "acquisition_type",
+            "Use in submission",
+            "requested, not evidence",
+        ):
+            self.assertIn(marker, source, marker)
+        html = CASE_HTML.read_text(encoding="utf-8")
+        self.assertIn('id="evidence-request"', html)
+        self.assertIn('id="evidence-hypotheses"', html)
+        self.assertIn('list="evidence-hypotheses"', html)
+        self.assertIn('id="evidence-request-note"', html)
+
+    def test_request_form_keeps_r77_fallback_and_empty_evidence(self):
+        source = DASHBOARD_JS.read_text(encoding="utf-8")
+        # the unchanged R77 missing lists remain the fallback
+        self.assertIn("snapshot.missingAll", source)
+        # the client never ships sample facts or observations
+        self.assertNotIn("NON-REAL", source)
+        self.assertNotIn("response:observation-1", source)
+
+    def test_request_refresh_after_submission(self):
+        source = DASHBOARD_JS.read_text(encoding="utf-8")
+        self.assertIn("refreshEvidenceRequest(caseId)", source)
+
+
 class TestSidebarNavigation(unittest.TestCase):
     def test_sidebar_link_present(self):
         text = BASE_HTML.read_text(encoding="utf-8")

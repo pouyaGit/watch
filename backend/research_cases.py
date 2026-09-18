@@ -4,6 +4,7 @@ Presentation/service glue for the researcher-facing contract:
 
     LIST CASES     -> bounded case summaries from persisted research artifacts
     GET CASE       -> R77 workbench (R77 remains the workbench authority)
+                      + R91 acquisition ledger + R95 evidence request projection
     SUBMIT EVIDENCE-> R80 submission boundary -> R74 intake -> R75 provenance
                       -> R76 case update -> R77 workbench (in-memory preview)
     SUBMIT HUMAN   -> R89 controlled human evidence: the same R80 boundary and
@@ -44,6 +45,10 @@ from ai.knowledge.research_case_workspace import (
 )
 from ai.knowledge.research_evidence_provenance import (
     analyze_evidence_provenance,
+)
+from ai.knowledge.research_evidence_request import (
+    EvidenceRequestError,
+    build_case_evidence_request,
 )
 from ai.knowledge.research_evidence_submission import (
     ERROR_CASE_MISMATCH,
@@ -192,6 +197,7 @@ def _load_entry(path: Path) -> dict | None:
         "program": _text(payload.get("program")),
         "source": _text(payload.get("source")),
         "research_run_version": _text(payload.get("research_run_version")),
+        "result_cve": _text(_block(payload.get("result")).get("cve_id")),
         "case": dict(cases[0]),
         "hypotheses": list(
             _block(payload.get("research")).get("hypotheses") or ()
@@ -340,8 +346,38 @@ def acquisition_portfolio() -> dict:
     return build_acquisition_portfolio(ledgers)
 
 
+def _case_evidence_request(
+    entry: Mapping, workbench: object = None
+) -> dict | None:
+    """R95 deterministic human evidence request for one entry.
+
+    Read-only projection of the unchanged R95 engine over the same R91
+    ledger and R77 workbench already exposed for the case. Returns ``None``
+    when the request is unavailable (fail closed): the case detail remains
+    readable and no request is fabricated.
+    """
+
+    ledger = _case_acquisition_ledger(entry)
+    if ledger is None:
+        return None
+    try:
+        return build_case_evidence_request(
+            entry.get("case"),
+            ledger,
+            workbench=workbench,
+            source_cve=_text(entry.get("result_cve")),
+        )
+    except EvidenceRequestError:
+        return None
+
+
 def get_case_workbench(case_id: object) -> dict | None:
-    """R77 workbench for one case (R77 remains the workbench authority)."""
+    """R77 workbench for one case (R77 remains the workbench authority).
+
+    The response also carries the R91 acquisition ledger projection and the
+    R95 deterministic evidence request (read-only; ``None`` when
+    unavailable). No submission is triggered and no evidence is fabricated.
+    """
 
     entry = get_case_entry(case_id)
     if entry is None:
@@ -363,6 +399,7 @@ def get_case_workbench(case_id: object) -> dict | None:
         "case_summary": _case_summary(entry),
         "workbench": workbench,
         "acquisition_ledger": _case_acquisition_ledger(entry),
+        "evidence_request": _case_evidence_request(entry, workbench),
         "advisory": True,
         "research_only": True,
         "confirmation_state": "NOT_CONFIRMED",

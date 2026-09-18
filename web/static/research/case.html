@@ -48,6 +48,9 @@
 
     <div id="workbench"></div>
 
+    <p class="section-label">Evidence request (R95 &mdash; requested, not evidence)</p>
+    <div id="evidence-request"></div>
+
     <p class="section-label">Human evidence submission</p>
     <section class="panel r82-panel">
       <div class="panel-head">
@@ -89,8 +92,10 @@
           </label>
           <label class="r82-control">
             <span class="r82-kv-label">Hypothesis ref</span>
-            <input class="r82-input" name="evidence-hypothesis" type="text" value="H1">
+            <input class="r82-input" name="evidence-hypothesis" type="text"
+                   value="H1" list="evidence-hypotheses">
           </label>
+          <datalist id="evidence-hypotheses"></datalist>
           <label class="r82-control r82-control-wide">
             <span class="r82-kv-label">Bounded observation (no raw bodies)</span>
             <textarea class="r82-input" name="evidence-fact" rows="2"
@@ -104,6 +109,7 @@
           <div class="r82-form-actions">
             <button class="btn-primary" type="submit">Submit human evidence</button>
           </div>
+          <p id="evidence-request-note" class="r82-kv-line"></p>
         </form>
 
         <div id="submission-result" class="r82-result-host" hidden></div>

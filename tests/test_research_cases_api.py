@@ -497,6 +497,184 @@ class TestRouteCompatibility(_ApiTestCase):
                 self.assertEqual(response.status_code, 401)
 
 
+class TestEvidenceRequestProjection(unittest.TestCase):
+    """R96: the case-detail surface exposes the R95 request (read-only)."""
+
+    DELL_CASE_ID = "case-dell-a1-component-mapping"
+
+    @classmethod
+    def setUpClass(cls):
+        from api import app
+
+        cls.client = TestClient(app)
+
+    def _provide_evidence_root(self, tmp: str) -> Path:
+        from ai.research_agent.case_bridge import (
+            activate_result,
+            case_artifact_path,
+        )
+        from ai.research_agent.case_evidence import complete_case_evidence
+        from tests.test_research_case_evidence import (
+            CASE_ID as DELL_CASE_ID,
+            loop_payload,
+            match_row,
+            plan_loader,
+        )
+
+        root = Path(tmp)
+        cases = root / "r95"
+        outcome = activate_result(
+            loop_payload(), plan_loader=plan_loader, cases_dir=cases
+        )
+        self.assertEqual(outcome["status"], "ACTIVATED")
+        path = case_artifact_path(DELL_CASE_ID, cases)
+        completed = complete_case_evidence(
+            path,
+            expected_case_id=DELL_CASE_ID,
+            match_loader=lambda _cve: [match_row(technology="WordPress")],
+            write=True,
+        )
+        self.assertEqual(completed["status"], "COMPLETED")
+        return root
+
+    def _detail(self, case_id: str):
+        return self.client.get(
+            f"/api/research/cases/{case_id}", params=_params()
+        )
+
+    def test_detail_includes_deterministic_evidence_request(self):
+        from backend import research_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._provide_evidence_root(tmp)
+            with mock.patch.object(
+                research_cases, "ARTIFACT_ROOT", root
+            ):
+                first = self._detail(self.DELL_CASE_ID)
+                second = self._detail(self.DELL_CASE_ID)
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        request = first.json()["evidence_request"]
+        self.assertEqual(request["rule_version"], "r95-1")
+        self.assertEqual(request["request_state"], "EVIDENCE_REQUESTED")
+        self.assertEqual(request["case_id"], self.DELL_CASE_ID)
+        self.assertEqual(request["next_action"], "PROVIDE_EVIDENCE")
+        kinds = sorted(
+            entry["requirement_kind"] for entry in request["requirements"]
+        )
+        self.assertEqual(
+            kinds,
+            ["COMPONENT_BINDING", "VERSION_IDENTITY", "WATCH_SIGNAL"],
+        )
+        for entry in request["requirements"]:
+            self.assertEqual(entry["acquisition_type"], "HUMAN_REVIEW")
+            self.assertTrue(entry["expected_output"])
+            self.assertTrue(entry["completion_condition"])
+        self.assertEqual(
+            first.json()["evidence_request"]["request_ref"],
+            second.json()["evidence_request"]["request_ref"],
+        )
+        text = json.dumps(request)
+        for forbidden in ("://", "sk-", "Bearer", '"_id"', "Traceback"):
+            self.assertNotIn(forbidden, text)
+
+    def test_non_provide_evidence_case_has_no_request(self):
+        response = self._detail(CASE_ID)
+        self.assertEqual(response.status_code, 200)
+        request = response.json()["evidence_request"]
+        self.assertEqual(request["request_state"], "NO_REQUEST")
+        self.assertIsNone(request["submission_envelope"])
+
+    def test_request_contains_no_fabricated_evidence(self):
+        from backend import research_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._provide_evidence_root(tmp)
+            with mock.patch.object(
+                research_cases, "ARTIFACT_ROOT", root
+            ):
+                response = self._detail(self.DELL_CASE_ID)
+        request = response.json()["evidence_request"]
+        envelope = request["submission_envelope"]
+        self.assertTrue(envelope["template"])
+        self.assertFalse(envelope["evidence_included"])
+        for item in envelope["items"]:
+            self.assertEqual(item["evidence_ref"], "")
+            self.assertEqual(item["observations"], [])
+        for entry in request["requirements"]:
+            item = entry["submission_item"]
+            self.assertEqual(item["evidence_ref"], "")
+            self.assertEqual(item["observations"], [])
+        self.assertNotIn('"fact"', json.dumps(request))
+
+    def test_request_handoff_through_r89_api(self):
+        from backend import research_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._provide_evidence_root(tmp)
+            with mock.patch.object(
+                research_cases, "ARTIFACT_ROOT", root
+            ):
+                detail = self._detail(self.DELL_CASE_ID).json()
+                request = detail["evidence_request"]
+                entry = next(
+                    item
+                    for item in request["requirements"]
+                    if item["requirement_kind"] == "COMPONENT_BINDING"
+                )
+                envelope = json.loads(
+                    json.dumps(entry["submission_envelope"])
+                )
+                item = envelope["items"][0]
+                item["hypothesis_ref"] = request["hypothesis_refs"][0]
+                ref = "response:nonreal-r96-handoff-1"
+                item["evidence_ref"] = ref
+                item["observations"] = [
+                    {
+                        "ref": ref,
+                        "fact": "NON-REAL/OFFLINE r96 handoff fixture",
+                    }
+                ]
+                posted = self.client.post(
+                    f"/api/research/cases/{self.DELL_CASE_ID}/human-evidence",
+                    params=_params(),
+                    json=envelope,
+                )
+                self.assertEqual(posted.status_code, 200)
+                self.assertEqual(
+                    posted.json()["submission_status"], "COMPLETED"
+                )
+                after = self._detail(self.DELL_CASE_ID).json()
+                self.assertNotEqual(
+                    after["evidence_request"]["request_state"],
+                    "EVIDENCE_REQUESTED",
+                )
+                statuses = {
+                    item["requirement_kind"]: item["status"]
+                    for item in after["acquisition_ledger"]["requirements"]
+                }
+                self.assertEqual(
+                    statuses["COMPONENT_BINDING"], "SATISFIED"
+                )
+                replay = self.client.post(
+                    f"/api/research/cases/{self.DELL_CASE_ID}/human-evidence",
+                    params=_params(),
+                    json=envelope,
+                )
+                self.assertEqual(replay.status_code, 200)
+                self.assertEqual(
+                    replay.json()["submission_status"], "REPLAYED"
+                )
+
+    def test_detail_evidence_request_auth_gate(self):
+        if not API_KEY:
+            self.skipTest("no API key configured")
+        response = self.client.get(
+            f"/api/research/cases/{self.DELL_CASE_ID}"
+        )
+        self.assertEqual(response.status_code, 401)
+
+
 class TestHermeticArtifactRoot(unittest.TestCase):
     def test_empty_artifact_root(self):
         from backend import research_cases
