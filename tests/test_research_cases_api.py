@@ -675,6 +675,112 @@ class TestEvidenceRequestProjection(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
 
 
+class TestEvidencePackageProjection(unittest.TestCase):
+    """R99: the case-detail surface exposes the evidence package."""
+
+    DELL_CASE_ID = "case-dell-a1-component-mapping"
+
+    @classmethod
+    def setUpClass(cls):
+        from api import app
+
+        cls.client = TestClient(app)
+
+    def _provide_evidence_root(self, tmp: str) -> Path:
+        from ai.research_agent.case_bridge import (
+            activate_result,
+            case_artifact_path,
+        )
+        from ai.research_agent.case_evidence import complete_case_evidence
+        from tests.test_research_case_evidence import (
+            CASE_ID as DELL_CASE_ID,
+            loop_payload,
+            match_row,
+            plan_loader,
+        )
+
+        root = Path(tmp)
+        cases = root / "r99"
+        outcome = activate_result(
+            loop_payload(), plan_loader=plan_loader, cases_dir=cases
+        )
+        self.assertEqual(outcome["status"], "ACTIVATED")
+        path = case_artifact_path(DELL_CASE_ID, cases)
+        completed = complete_case_evidence(
+            path,
+            expected_case_id=DELL_CASE_ID,
+            match_loader=lambda _cve: [match_row(technology="WordPress")],
+            write=True,
+        )
+        self.assertEqual(completed["status"], "COMPLETED")
+        return root
+
+    def _detail(self, case_id: str):
+        return self.client.get(
+            f"/api/research/cases/{case_id}", params=_params()
+        )
+
+    def test_detail_includes_evidence_package(self):
+        from backend import research_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._provide_evidence_root(tmp)
+            with mock.patch.object(
+                research_cases, "ARTIFACT_ROOT", root
+            ):
+                first = self._detail(self.DELL_CASE_ID)
+                second = self._detail(self.DELL_CASE_ID)
+        self.assertEqual(first.status_code, 200)
+        package = first.json()["evidence_package"]
+        self.assertEqual(package["rule_version"], "r99-1")
+        self.assertEqual(
+            package["package_type"], "RESEARCH_EVIDENCE_PACKAGE"
+        )
+        self.assertEqual(package["case"]["case_id"], self.DELL_CASE_ID)
+        self.assertEqual(package["confirmation_state"], "NOT_CONFIRMED")
+        self.assertFalse(package["safety"]["vulnerability_confirmed"])
+        self.assertTrue(package["hypotheses"])
+        self.assertEqual(
+            package["acquisition"]["next_action"], "PROVIDE_EVIDENCE"
+        )
+        self.assertTrue(package["limitations"])
+        self.assertTrue(package["non_claims"])
+        self.assertEqual(package, second.json()["evidence_package"])
+
+    def test_package_has_no_fabricated_evidence_or_secrets(self):
+        from backend import research_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._provide_evidence_root(tmp)
+            with mock.patch.object(
+                research_cases, "ARTIFACT_ROOT", root
+            ):
+                response = self._detail(self.DELL_CASE_ID)
+        serialized = json.dumps(response.json()["evidence_package"])
+        self.assertNotIn('"fact"', serialized)
+        for forbidden in ("://", "sk-", "Bearer", '"_id"', "Traceback"):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_package_projection_is_read_only(self):
+        from ai.research_agent.case_bridge import case_artifact_path
+        from backend import research_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._provide_evidence_root(tmp)
+            artifact = case_artifact_path(self.DELL_CASE_ID, root / "r99")
+            before = artifact.read_bytes()
+            with mock.patch.object(
+                research_cases, "ARTIFACT_ROOT", root
+            ):
+                self._detail(self.DELL_CASE_ID)
+            self.assertEqual(before, artifact.read_bytes())
+
+
+# ---------------------------------------------------------------------------
+# artifact discovery (hermetic)
+# ---------------------------------------------------------------------------
+
+
 class TestHermeticArtifactRoot(unittest.TestCase):
     def test_empty_artifact_root(self):
         from backend import research_cases

@@ -805,11 +805,119 @@
     if (result.state !== 'ok' || !result.body) return;
     var request = result.body.evidence_request || null;
     renderEvidenceRequest(request, result.body.case_summary || {});
+    renderEvidencePackage(result.body.evidence_package || null);
     fillEvidenceForm(
       snapshotFromWorkbench(result.body.workbench || {}),
       result.body.case_summary || {},
       request
     );
+  }
+
+  function refList(items) {
+    return (items || [])
+      .map(function (entry) {
+        var refs = (entry && entry.evidence_refs) || [];
+        return refs.join(', ');
+      })
+      .filter(function (text) { return !!text; });
+  }
+
+  function renderEvidencePackage(pkg) {
+    var host = document.getElementById('evidence-package');
+    if (!host) return;
+    clear(host);
+    var panel = el('section', 'panel r82-panel');
+    var head = el('div', 'panel-head');
+    head.appendChild(
+      el('h2', null, 'Research evidence package (human review — not a confirmed finding)')
+    );
+    panel.appendChild(head);
+    var body = el('div', 'panel-body');
+    if (!pkg) {
+      body.appendChild(el('p', 'r82-empty', 'No evidence package is available for this case (fail closed).'));
+      panel.appendChild(body);
+      host.appendChild(panel);
+      return;
+    }
+    var identity = pkg.case || {};
+    body.appendChild(el('p', 'r82-kv-line',
+      'Case: ' + (identity.case_id || '—') +
+      ' · status ' + (identity.status || '—') +
+      ' · gap ' + (identity.gap_id || '—') +
+      ' · cve ' + (identity.cve_id || '—')));
+    if (identity.stopping_reason) {
+      body.appendChild(el('p', 'r82-kv-line', 'Terminal reason: ' + identity.stopping_reason));
+    }
+    var decision = pkg.decision || {};
+    body.appendChild(el('p', 'r82-kv-line',
+      'Decision: ' + (decision.sufficiency_state || '—') + ' / ' +
+      (decision.decision_state || '—') +
+      ' · missing ' + String(decision.missing_count || 0) +
+      ' (decision-critical ' + String(decision.decision_missing_count || 0) + ')'));
+    (pkg.hypotheses || []).forEach(function (entry) {
+      var box = el('div', 'r82-requirement');
+      box.appendChild(el('p', 'r82-req-kind',
+        (entry.hypothesis_ref || '—') + ' · ' +
+        (entry.evidence_state || 'UNAVAILABLE') +
+        (entry.title ? ' — ' + entry.title : '')));
+      var selected = entry.selected_evidence_refs || [];
+      if (selected.length) {
+        box.appendChild(el('p', 'r82-kv-line', 'Selected evidence: ' + selected.join(', ')));
+      }
+      var supporting = refList(entry.supporting);
+      if (supporting.length) {
+        box.appendChild(el('p', 'r82-kv-line', 'Supporting: ' + supporting.join(' · ')));
+      }
+      var contradicting = refList(entry.contradicting);
+      if (contradicting.length) {
+        box.appendChild(el('p', 'r82-kv-line', 'Contradicting: ' + contradicting.join(' · ')));
+      }
+      var invalidated = refList(entry.invalidated);
+      if (invalidated.length) {
+        box.appendChild(el('p', 'r82-kv-line', 'Invalidated: ' + invalidated.join(' · ')));
+      }
+      var missing = entry.missing_evidence || [];
+      if (missing.length) {
+        box.appendChild(el('p', 'r82-kv-line', 'Missing: ' + missing.join(', ')));
+      }
+      body.appendChild(box);
+    });
+    var provenance = pkg.evidence_provenance;
+    if (provenance) {
+      body.appendChild(el('p', 'r82-kv-line',
+        'Provenance: records ' + String(provenance.record_count || 0) +
+        ' · partial ' + String(provenance.partial_provenance || 0) +
+        ' · missing ' + String(provenance.missing_provenance || 0) +
+        ' · invalid ' + String(provenance.invalid_provenance || 0) +
+        ' · conflicts ' + String(provenance.conflict_count || 0)));
+    }
+    (pkg.conflicts || []).forEach(function (conflict) {
+      body.appendChild(el('p', 'r82-kv-line',
+        'Conflict: ' + (conflict.requirement_kind || '—') +
+        ' · new ' + (conflict.new_evidence_refs || []).join(', ')));
+    });
+    var acquisition = pkg.acquisition;
+    if (acquisition) {
+      body.appendChild(el('p', 'r82-kv-line',
+        'Acquisition: ' + (acquisition.next_action || '—') +
+        ' · offline exhausted ' + boolText(acquisition.offline_sources_exhausted) +
+        ' · human action ' + boolText(acquisition.human_action_required)));
+    }
+    var review = pkg.human_review;
+    if (review) {
+      body.appendChild(el('p', 'r82-kv-line',
+        'Human review required: ' + boolText(review.required) +
+        (review.reasons && review.reasons.length ? ' · ' + review.reasons.join(', ') : '')));
+    }
+    (pkg.limitations || []).forEach(function (line) {
+      body.appendChild(el('p', 'r82-kv-line', 'Limitation: ' + line));
+    });
+    body.appendChild(el('p', 'r82-kv-label', 'Explicit non-claims'));
+    (pkg.non_claims || []).forEach(function (line) {
+      body.appendChild(el('p', 'r82-kv-line', '· ' + line));
+    });
+    panel.appendChild(body);
+    host.appendChild(panel);
   }
 
   function snapshotFromWorkbench(workbench) {
@@ -1000,6 +1108,7 @@
     var workbench = body.workbench || {};
     renderCaseHeader(body.case_summary || {}, body.program);
     renderWorkbench(workbench, body.case_summary || {});
+    renderEvidencePackage(body.evidence_package || null);
     renderEvidenceRequest(body.evidence_request || null, body.case_summary || {});
     var snapshot = snapshotFromWorkbench(workbench);
     fillEvidenceForm(snapshot, body.case_summary || {}, body.evidence_request || null);
@@ -1205,6 +1314,7 @@
     renderCaseList: renderListRows,
     renderWorkbench: renderWorkbench,
     renderEvidenceRequest: renderEvidenceRequest,
+    renderEvidencePackage: renderEvidencePackage,
     renderActivity: renderActivity,
     initCaseList: initCaseList,
     initActivity: initActivity,

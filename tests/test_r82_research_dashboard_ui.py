@@ -229,6 +229,28 @@ class TestEvidenceRequestUiContract(unittest.TestCase):
         self.assertIn("refreshEvidenceRequest(caseId)", source)
 
 
+class TestEvidencePackageUiContract(unittest.TestCase):
+    """R99: dashboard renders the evidence package as non-confirmed."""
+
+    def test_package_section_markers(self):
+        source = DASHBOARD_JS.read_text(encoding="utf-8")
+        for marker in (
+            "renderEvidencePackage",
+            "evidence_package",
+            "not a confirmed finding",
+            "non_claims",
+            "supporting",
+            "contradicting",
+        ):
+            self.assertIn(marker, source, marker)
+        html = CASE_HTML.read_text(encoding="utf-8")
+        self.assertIn('id="evidence-package"', html)
+
+    def test_package_refresh_after_submission(self):
+        source = DASHBOARD_JS.read_text(encoding="utf-8")
+        self.assertIn("renderEvidencePackage(result.body.evidence_package", source)
+
+
 class TestSidebarNavigation(unittest.TestCase):
     def test_sidebar_link_present(self):
         text = BASE_HTML.read_text(encoding="utf-8")

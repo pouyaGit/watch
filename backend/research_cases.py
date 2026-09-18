@@ -46,6 +46,10 @@ from ai.knowledge.research_case_workspace import (
 from ai.knowledge.research_evidence_provenance import (
     analyze_evidence_provenance,
 )
+from ai.knowledge.research_case_evidence_package import (
+    EvidencePackageError,
+    build_case_evidence_package,
+)
 from ai.knowledge.research_evidence_request import (
     EvidenceRequestError,
     build_case_evidence_request,
@@ -198,6 +202,11 @@ def _load_entry(path: Path) -> dict | None:
         "source": _text(payload.get("source")),
         "research_run_version": _text(payload.get("research_run_version")),
         "result_cve": _text(_block(payload.get("result")).get("cve_id")),
+        "limitations": [
+            _text(item)
+            for item in (payload.get("limitations") or ())
+            if _text(item)
+        ][:8],
         "case": dict(cases[0]),
         "hypotheses": list(
             _block(payload.get("research")).get("hypotheses") or ()
@@ -347,7 +356,7 @@ def acquisition_portfolio() -> dict:
 
 
 def _case_evidence_request(
-    entry: Mapping, workbench: object = None
+    entry: Mapping, workbench: object = None, ledger: object = None
 ) -> dict | None:
     """R95 deterministic human evidence request for one entry.
 
@@ -357,7 +366,8 @@ def _case_evidence_request(
     readable and no request is fabricated.
     """
 
-    ledger = _case_acquisition_ledger(entry)
+    if ledger is None:
+        ledger = _case_acquisition_ledger(entry)
     if ledger is None:
         return None
     try:
@@ -371,12 +381,38 @@ def _case_evidence_request(
         return None
 
 
+def _case_evidence_package(
+    entry: Mapping, workbench: Mapping, ledger: object = None
+) -> dict | None:
+    """R99 human-reviewable evidence package for one entry.
+
+    Read-only projection of the persisted R76 case, R70 outcomes, R75
+    provenance and R91 acquisition state. Returns ``None`` on any failure
+    (fail closed); nothing is fabricated and no confirmation is implied.
+    """
+
+    stages = _block(entry.get("stages"))
+    try:
+        return build_case_evidence_package(
+            entry.get("case"),
+            action_plan=stages.get("action_plan"),
+            evidence_provenance=stages.get("evidence_provenance"),
+            limitations=entry.get("limitations"),
+            acquisition_ledger=ledger,
+            human_review=_block(workbench).get("human_review"),
+            source_cve=entry.get("result_cve"),
+        )
+    except EvidencePackageError:
+        return None
+
+
 def get_case_workbench(case_id: object) -> dict | None:
     """R77 workbench for one case (R77 remains the workbench authority).
 
-    The response also carries the R91 acquisition ledger projection and the
-    R95 deterministic evidence request (read-only; ``None`` when
-    unavailable). No submission is triggered and no evidence is fabricated.
+    The response also carries the R91 acquisition ledger projection, the R95
+    deterministic evidence request and the R99 human-reviewable evidence
+    package (all read-only; ``None`` when unavailable). No submission is
+    triggered, no evidence is fabricated and no confirmation is implied.
     """
 
     entry = get_case_entry(case_id)
@@ -390,6 +426,7 @@ def get_case_workbench(case_id: object) -> dict | None:
         evidence_provenance=stages.get("evidence_provenance"),
         limit=MAX_HISTORY,
     )
+    ledger = _case_acquisition_ledger(entry)
     return {
         "rule_version": RULE_VERSION,
         "workbench_rule_version": _text(workbench.get("workbench_version")),
@@ -398,8 +435,9 @@ def get_case_workbench(case_id: object) -> dict | None:
         "artifact_path": _text(entry.get("artifact_path")),
         "case_summary": _case_summary(entry),
         "workbench": workbench,
-        "acquisition_ledger": _case_acquisition_ledger(entry),
-        "evidence_request": _case_evidence_request(entry, workbench),
+        "acquisition_ledger": ledger,
+        "evidence_request": _case_evidence_request(entry, workbench, ledger),
+        "evidence_package": _case_evidence_package(entry, workbench, ledger),
         "advisory": True,
         "research_only": True,
         "confirmation_state": "NOT_CONFIRMED",
