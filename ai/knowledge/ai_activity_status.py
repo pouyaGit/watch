@@ -202,6 +202,31 @@ def _bounded_failure(value: object) -> str:
     return text[:80]
 
 
+def _block(value: object) -> Mapping:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _top_reason(value: object) -> str:
+    """Most frequent closed reason code (deterministic tie-break by code)."""
+
+    counts = value if isinstance(value, Mapping) else {}
+    best_code = ""
+    best_count = 0
+    for code, count in counts.items():
+        try:
+            number = int(count)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        text = _text(code, 64)
+        if not text:
+            continue
+        if number > best_count or (
+            number == best_count and (not best_code or text < best_code)
+        ):
+            best_code, best_count = text, number
+    return best_code
+
+
 def _run_projection(record: Mapping, window_start: datetime, window_end: datetime) -> dict:
     started = to_tehran(record.get("started_at"))
     finished = to_tehran(record.get("completed_at"))
@@ -231,6 +256,9 @@ def _run_projection(record: Mapping, window_start: datetime, window_end: datetim
         plans_processed = 0
     single = results[0] if len(results) == 1 else {}
     activity_status = RUN_STATUS_TO_ACTIVITY.get(raw_status, STATUS_UNKNOWN)
+    case_context = _block(record.get("case_context"))
+    case_scheduling = _block(record.get("case_scheduling"))
+    case_summary = _block(case_scheduling.get("summary"))
     return {
         "run_id": _text(record.get("run_id"), 64),
         "status": activity_status,
@@ -248,6 +276,12 @@ def _run_projection(record: Mapping, window_start: datetime, window_end: datetim
         "evidence_count": evidence_total,
         "sources_count": sources_total,
         "failure_count": len(failures),
+        "case_aware_state": _text(record.get("case_aware_state"), 32),
+        "case_contexts": _safe_int(case_context.get("valid")),
+        "case_malformed_contexts": _safe_int(case_context.get("malformed")),
+        "case_eligible_plans": _safe_int(case_summary.get("plans_eligible")),
+        "case_top_reason": _top_reason(case_scheduling.get("reason_counts")),
+        "case_context_error": _text(case_context.get("error"), 48),
         "failures": [
             _bounded_failure(entry)
             for entry in failures[:4]

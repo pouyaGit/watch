@@ -36,12 +36,32 @@ __all__ = [
     "select_plans",
     "acquire_lock",
     "load_case_contexts",
+    "CASE_AWARE_DISABLED",
+    "CASE_AWARE_ENABLED",
+    "CASE_AWARE_ERROR",
+    "CASE_AWARE_STATES",
+    "CASE_CONTEXT_OK",
+    "CASE_CONTEXT_LOADER_FAILED",
+    "CASE_CONTEXT_DIRECTORY_MISSING",
+    "CASE_CONTEXT_ALL_MALFORMED",
 ]
 
 RUN_STATUS_COMPLETED = "RESEARCH_COMPLETED"
 RUN_STATUS_PARTIAL = "RESEARCH_PARTIAL"
 RUN_STATUS_BLOCKED = "RESEARCH_BLOCKED"
 RUN_STATUS_FAILED = "RESEARCH_FAILED"
+
+# Stage R93: explicit, inspectable case-aware runtime activation states.
+CASE_AWARE_DISABLED = "CASE_AWARE_DISABLED"
+CASE_AWARE_ENABLED = "CASE_AWARE_ENABLED"
+CASE_AWARE_ERROR = "CASE_AWARE_ERROR"
+CASE_AWARE_STATES = (CASE_AWARE_DISABLED, CASE_AWARE_ENABLED, CASE_AWARE_ERROR)
+
+# Stage R93: closed, bounded case-context load error codes (fail closed).
+CASE_CONTEXT_OK = ""
+CASE_CONTEXT_LOADER_FAILED = "context_loader_failed"
+CASE_CONTEXT_DIRECTORY_MISSING = "cases_directory_missing"
+CASE_CONTEXT_ALL_MALFORMED = "all_case_contexts_malformed"
 
 _PRIORITY_RANK = {
     "CRITICAL_RESEARCH": 0,
@@ -370,7 +390,7 @@ def load_case_contexts(cases_dir: str | Path) -> list[dict]:
     return contexts
 
 
-def _bounded_scheduling(selection: object) -> dict:
+def _bounded_scheduling(selection: object, cap: object = 0) -> dict:
     """Compact, serializable scheduling projection for status/run records."""
 
     block = selection if isinstance(selection, dict) else {}
@@ -380,12 +400,36 @@ def _bounded_scheduling(selection: object) -> dict:
             continue
         code = decision.get("reason_code") or "ELIGIBLE"
         reasons[code] = reasons.get(code, 0) + 1
+    try:
+        bounded_cap = max(int(cap), 0)
+    except (TypeError, ValueError):
+        bounded_cap = 0
     return {
         "rule_version": block.get("rule_version", ""),
         "summary": dict(block.get("summary") or {}),
         "case_attention": list(block.get("case_attention") or []),
         "eligible_plan_ids": list(block.get("eligible_plan_ids") or []),
         "reason_counts": {key: reasons[key] for key in sorted(reasons)},
+        "cap": bounded_cap,
+    }
+
+
+def _case_context_block(selection: object, error: str) -> dict:
+    """Bounded case-portfolio projection (counts and a closed error code)."""
+
+    block = selection if isinstance(selection, dict) else {}
+    summary = block.get("summary")
+    summary = summary if isinstance(summary, dict) else {}
+    try:
+        valid = max(int(summary.get("contexts") or 0), 0)
+        malformed = max(int(summary.get("malformed_contexts") or 0), 0)
+    except (TypeError, ValueError):
+        valid, malformed = 0, 0
+    return {
+        "artifacts": valid + malformed,
+        "valid": valid,
+        "malformed": malformed,
+        "error": str(error or ""),
     }
 
 
@@ -418,38 +462,86 @@ class ResearchScheduler:
             self.config.case_aware or case_context_loader is not None
         )
 
-    # -- R92 case awareness ------------------------------------------------
-    def _case_contexts(self) -> list[dict]:
-        """Read-only case scheduling contexts; fail closed on any failure."""
+    # -- R92/R93 case awareness --------------------------------------------
+    def _case_contexts_loaded(self) -> tuple[list[dict], str]:
+        """Read-only case scheduling contexts plus a closed error code.
+
+        R93: the loader never raises and never falls back to unfiltered
+        scheduling. An injected loader failure or a missing default cases
+        directory yields an explicit error code and zero contexts; the R92
+        selector then produces zero eligible plans (fail closed).
+        """
 
         loader = self.case_context_loader
-        if loader is None:
-            loader = lambda: load_case_contexts(  # noqa: E731
-                Path(self.config.research_dir) / "cases"
-            )
+        if loader is not None:
+            try:
+                contexts = loader()
+            except Exception:
+                return [], CASE_CONTEXT_LOADER_FAILED
+            if not isinstance(contexts, list):
+                return [], CASE_CONTEXT_LOADER_FAILED
+            return contexts, CASE_CONTEXT_OK
+        directory = Path(self.config.research_dir) / "cases"
+        if not directory.is_dir():
+            return [], CASE_CONTEXT_DIRECTORY_MISSING
         try:
-            contexts = loader() or []
+            contexts = load_case_contexts(directory)
         except Exception:
-            return []
-        return contexts if isinstance(contexts, list) else []
+            return [], CASE_CONTEXT_LOADER_FAILED
+        if not isinstance(contexts, list):
+            return [], CASE_CONTEXT_LOADER_FAILED
+        return contexts, CASE_CONTEXT_OK
 
-    def _case_selection(
+    def _case_state(
+        self,
+        selection: object,
+        context_error: str,
+        *,
+        active: bool | None = None,
+    ) -> tuple[str, str]:
+        """Derive the bounded activation state from a real R92 evaluation."""
+
+        is_active = self._case_aware if active is None else bool(active)
+        if not is_active:
+            return CASE_AWARE_DISABLED, CASE_CONTEXT_OK
+        block = selection if isinstance(selection, dict) else {}
+        summary = block.get("summary")
+        summary = summary if isinstance(summary, dict) else {}
+        try:
+            valid = max(int(summary.get("contexts") or 0), 0)
+            malformed = max(int(summary.get("malformed_contexts") or 0), 0)
+        except (TypeError, ValueError):
+            return CASE_AWARE_ERROR, CASE_CONTEXT_LOADER_FAILED
+        if context_error:
+            return CASE_AWARE_ERROR, str(context_error)
+        if valid == 0 and malformed > 0:
+            return CASE_AWARE_ERROR, CASE_CONTEXT_ALL_MALFORMED
+        return CASE_AWARE_ENABLED, CASE_CONTEXT_OK
+
+    def _case_evaluation(
         self, plans: list[dict], cap: int
-    ) -> tuple[list[dict], dict]:
-        """(scheduled plans, full selection) under R92 case awareness."""
+    ) -> tuple[list[dict], dict, str, dict]:
+        """(scheduled plans, full selection, state, case context) under R92."""
 
         from ai.research_agent.case_scheduling import (
             select_case_aware_plans,
         )
 
-        selection = select_case_aware_plans(plans, self._case_contexts())
+        contexts, context_error = self._case_contexts_loaded()
+        selection = select_case_aware_plans(plans, contexts)
         eligible_ids = set(selection.get("eligible_plan_ids") or [])
         eligible = [
             plan
             for plan in plans
             if isinstance(plan, dict) and plan.get("plan_id") in eligible_ids
         ]
-        return select_plans(eligible, cap), selection
+        state, context_error = self._case_state(selection, context_error)
+        return (
+            select_plans(eligible, cap),
+            selection,
+            state,
+            _case_context_block(selection, context_error),
+        )
 
     # -- time -------------------------------------------------------------
     def _now(self) -> datetime:
@@ -487,16 +579,17 @@ class ResearchScheduler:
     # -- read-only preview ------------------------------------------------
     def _read_only_selection(
         self, plans: list[dict], cap: int
-    ) -> tuple[list[dict], dict | None]:
+    ) -> tuple[list[dict], dict | None, str, dict | None]:
         if not self._case_aware:
-            return select_plans(plans, cap), None
-        return self._case_selection(plans, cap)
+            return select_plans(plans, cap), None, CASE_AWARE_DISABLED, None
+        selected, selection, state, context = self._case_evaluation(plans, cap)
+        return selected, selection, state, context
 
     def status(self, now: datetime | None = None) -> dict:
         moment = now or self._now()
         plans = self.plan_loader() or []
-        eligible, selection = self._read_only_selection(
-            plans, self.config.max_plans
+        eligible, selection, case_state, case_context = (
+            self._read_only_selection(plans, self.config.max_plans)
         )
         info = {
             "enabled": self.config.enabled,
@@ -518,10 +611,14 @@ class ResearchScheduler:
             "total_plans": len(plans),
             "next_run": self.next_run(moment),
             "now": moment.isoformat(),
+            "case_aware_state": case_state,
         }
         if selection is not None:
             info["case_aware"] = True
-            info["case_scheduling"] = _bounded_scheduling(selection)
+            info["case_scheduling"] = _bounded_scheduling(
+                selection, self.config.max_plans
+            )
+            info["case_context"] = case_context
         return info
 
     def preview(
@@ -536,7 +633,9 @@ class ResearchScheduler:
         if plan_id:
             plans = [p for p in plans if p.get("plan_id") == plan_id]
         cap = self.config.max_plans if limit is None else max(int(limit), 0)
-        selected, selection = self._read_only_selection(plans, cap)
+        selected, selection, case_state, case_context = (
+            self._read_only_selection(plans, cap)
+        )
         result = {
             "enabled": self.config.enabled,
             "in_window": in_window(
@@ -548,10 +647,12 @@ class ResearchScheduler:
             "discovery": self.config.discovery,
             "discovery_budget": self._discovery_budget(),
             "plans": selected,
+            "case_aware_state": case_state,
         }
         if selection is not None:
             result["case_aware"] = True
-            result["case_scheduling"] = _bounded_scheduling(selection)
+            result["case_scheduling"] = _bounded_scheduling(selection, cap)
+            result["case_context"] = case_context
         return result
 
     def schedule_preview(
@@ -576,7 +677,7 @@ class ResearchScheduler:
         plans = self.plan_loader() or []
         if plan_id:
             plans = [p for p in plans if p.get("plan_id") == plan_id]
-        contexts = self._case_contexts()
+        contexts, context_error = self._case_contexts_loaded()
         wanted = str(case_id or "").strip()
         case_known: bool | None = None
         if wanted:
@@ -589,6 +690,9 @@ class ResearchScheduler:
             case_known = bool(filtered)
             contexts = filtered
         selection = select_case_aware_plans(plans, contexts)
+        case_state, context_error = self._case_state(
+            selection, context_error, active=True
+        )
         eligible_ids = set(selection.get("eligible_plan_ids") or [])
         eligible = [
             plan
@@ -604,6 +708,8 @@ class ResearchScheduler:
             "llm": self.config.llm,
             "discovery": self.config.discovery,
             "case_aware": True,
+            "case_aware_state": case_state,
+            "case_context": _case_context_block(selection, context_error),
             "case_ref": wanted,
             "case_known": case_known,
             "plans": select_plans(eligible, cap),
@@ -611,6 +717,25 @@ class ResearchScheduler:
         }
 
     # -- execution --------------------------------------------------------
+    def _execution_gate(
+        self, record: dict, *, lock_acquired: bool, executed: bool = False
+    ) -> dict:
+        """Bounded projection of the existing execution gates (R93).
+
+        This is observability only: it reports the gates that already exist
+        (configuration, window, lock, agent, dry-run) and never changes them.
+        A case-aware SELECT decision never appears here as an authorization.
+        """
+
+        return {
+            "scheduler_enabled": bool(record.get("enabled")),
+            "in_window": bool(record.get("in_window")),
+            "lock_acquired": bool(lock_acquired),
+            "agent_configured": self.agent is not None,
+            "dry_run": bool(record.get("dry_run")),
+            "executed": bool(executed),
+        }
+
     def run_once(
         self,
         *,
@@ -644,21 +769,33 @@ class ResearchScheduler:
             "failures": [],
             "status": RUN_STATUS_BLOCKED,
             "skipped": None,
+            "case_aware_state": (
+                CASE_AWARE_ENABLED if self._case_aware else CASE_AWARE_DISABLED
+            ),
         }
 
         if not force:
             if not self.config.enabled:
                 record["skipped"] = "disabled"
+                record["execution_gate"] = self._execution_gate(
+                    record, lock_acquired=False
+                )
                 record["completed_at"] = (now or self._now()).isoformat()
                 return record
             if not in_window(moment, self.config.window_start, self.config.window_end):
                 record["skipped"] = "outside_window"
+                record["execution_gate"] = self._execution_gate(
+                    record, lock_acquired=False
+                )
                 record["completed_at"] = (now or self._now()).isoformat()
                 return record
 
         with acquire_lock(self.config.lock_path) as locked:
             if not locked:
                 record["skipped"] = "locked"
+                record["execution_gate"] = self._execution_gate(
+                    record, lock_acquired=False
+                )
                 record["completed_at"] = (now or self._now()).isoformat()
                 return record
 
@@ -668,9 +805,13 @@ class ResearchScheduler:
             cap = self.config.max_plans if limit is None else max(int(limit), 0)
             selection = None
             if self._case_aware:
-                selected, selection = self._case_selection(plans, cap)
+                selected, selection, case_state, case_context = (
+                    self._case_evaluation(plans, cap)
+                )
                 record["case_aware"] = True
-                record["case_scheduling"] = _bounded_scheduling(selection)
+                record["case_aware_state"] = case_state
+                record["case_context"] = case_context
+                record["case_scheduling"] = _bounded_scheduling(selection, cap)
             else:
                 selected = select_plans(plans, cap)
             record["plans_selected"] = len(selected)
@@ -688,12 +829,18 @@ class ResearchScheduler:
                     }
                     for p in selected
                 ]
+                record["execution_gate"] = self._execution_gate(
+                    record, lock_acquired=True
+                )
                 record["completed_at"] = (now or self._now()).isoformat()
                 # dry-run never writes (no results, no run record)
                 return record
 
             if not selected:
                 record["status"] = RUN_STATUS_BLOCKED
+                record["execution_gate"] = self._execution_gate(
+                    record, lock_acquired=True
+                )
                 record["completed_at"] = (now or self._now()).isoformat()
                 from ai.research_agent import storage
                 storage.store_run(record, base=self.config.agent_dir)
@@ -702,6 +849,9 @@ class ResearchScheduler:
             if self.agent is None:
                 record["status"] = RUN_STATUS_FAILED
                 record["failures"].append({"error": "no agent configured"})
+                record["execution_gate"] = self._execution_gate(
+                    record, lock_acquired=True
+                )
                 record["completed_at"] = (now or self._now()).isoformat()
                 from ai.research_agent import storage
                 storage.store_run(record, base=self.config.agent_dir)
@@ -725,6 +875,9 @@ class ResearchScheduler:
             except Exception as exc:  # never propagate; a run is fail-soft
                 record["status"] = RUN_STATUS_FAILED
                 record["failures"].append({"error": type(exc).__name__})
+                record["execution_gate"] = self._execution_gate(
+                    record, lock_acquired=True
+                )
                 record["completed_at"] = (now or self._now()).isoformat()
                 from ai.research_agent import storage
                 storage.store_run(record, base=self.config.agent_dir)
@@ -751,6 +904,9 @@ class ResearchScheduler:
                 record["status"] = RUN_STATUS_FAILED
             else:
                 record["status"] = RUN_STATUS_COMPLETED
+            record["execution_gate"] = self._execution_gate(
+                record, lock_acquired=True, executed=bool(results)
+            )
             record["completed_at"] = (now or self._now()).isoformat()
             from ai.research_agent import storage
             storage.store_run(record, base=self.config.agent_dir)

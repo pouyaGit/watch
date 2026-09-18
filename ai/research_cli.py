@@ -2778,6 +2778,24 @@ def run_agent_status(args: argparse.Namespace) -> int:
         )
     print(f"Next run: {info['next_run']}")
     print()
+    print(f"Case-aware: {info.get('case_aware_state', 'CASE_AWARE_DISABLED')}")
+    if info.get("case_context"):
+        contexts = info["case_context"]
+        print(
+            "  case contexts: "
+            f"valid={contexts.get('valid', 0)} "
+            f"malformed={contexts.get('malformed', 0)} "
+            f"error={contexts.get('error') or '-'}"
+        )
+        summary = (info.get("case_scheduling") or {}).get("summary") or {}
+        print(
+            "  case filter: "
+            f"plans={summary.get('plans', 0)} "
+            f"eligible={summary.get('plans_eligible', 0)} "
+            f"skipped={summary.get('skip_decisions', 0)} "
+            f"cap={info.get('max_plans', 0)}"
+        )
+    print()
     print(f"Eligible plans ({info['eligible_count']}):")
     for index, plan in enumerate(info["eligible_plans"], start=1):
         print(f"  #{index} {plan.get('cve_id')} -> {plan.get('program')}")
@@ -2806,6 +2824,15 @@ def run_agent_dry_run(args: argparse.Namespace) -> int:
     print(f"Network: {'enabled' if preview['network'] else 'disabled'}")
     print(f"LLM: {'enabled' if preview['llm'] else 'disabled'}")
     print(f"R24 discovery: {'enabled' if preview.get('discovery') else 'disabled'}")
+    print(f"Case-aware: {preview.get('case_aware_state', 'CASE_AWARE_DISABLED')}")
+    if preview.get("case_context"):
+        contexts = preview["case_context"]
+        print(
+            "  case contexts: "
+            f"valid={contexts.get('valid', 0)} "
+            f"malformed={contexts.get('malformed', 0)} "
+            f"error={contexts.get('error') or '-'}"
+        )
     print()
     print("Eligible plans:")
     if not preview["plans"]:
@@ -2836,7 +2863,11 @@ def _activate_cases(config) -> dict | None:
 
 
 def run_agent_run(args: argparse.Namespace) -> int:
-    from ai.research_agent.scheduler import ResearchScheduler, SchedulerConfig
+    from ai.research_agent.scheduler import (
+        CASE_AWARE_DISABLED,
+        ResearchScheduler,
+        SchedulerConfig,
+    )
 
     config = SchedulerConfig.from_env()
     network = None
@@ -2864,6 +2895,17 @@ def run_agent_run(args: argparse.Namespace) -> int:
         return 0
     print(f"RUN: {record['run_id']}")
     print(f"STATUS: {record['status']}")
+    case_state = record.get("case_aware_state", CASE_AWARE_DISABLED)
+    if case_state != CASE_AWARE_DISABLED:
+        print(f"CASE-AWARE: {case_state}")
+        contexts = record.get("case_context") or {}
+        if contexts:
+            print(
+                "  contexts: "
+                f"valid={contexts.get('valid', 0)} "
+                f"malformed={contexts.get('malformed', 0)} "
+                f"error={contexts.get('error') or '-'}"
+            )
     if record.get("skipped"):
         print(f"SKIPPED: {record['skipped']}")
     print(f"Plans selected: {record['plans_selected']}")
@@ -3299,13 +3341,24 @@ def run_agent_schedule(args: argparse.Namespace) -> int:
 
     scheduling = preview["case_scheduling"]
     summary = scheduling["summary"]
+    contexts = preview.get("case_context") or {}
     print("Research Agent - case-aware scheduling")
     print("======================================")
+    print(
+        "Runtime activation: "
+        f"{preview.get('case_aware_state', 'CASE_AWARE_DISABLED')}"
+    )
+    print(
+        f"Case contexts: valid={contexts.get('valid', 0)} "
+        f"malformed={contexts.get('malformed', 0)} "
+        f"error={contexts.get('error') or '-'}"
+    )
     print(
         f"Cases: {summary['contexts']} "
         f"(malformed contexts: {summary['malformed_contexts']}) | "
         f"Plans: {summary['plans']} | Eligible: "
-        f"{summary['plans_eligible']} | Unbound: {summary['plans_unbound']}"
+        f"{summary['plans_eligible']} | Unbound: {summary['plans_unbound']} | "
+        f"Cap: {scheduling.get('cap', 0)}"
     )
     print()
     print("Case attention:")
