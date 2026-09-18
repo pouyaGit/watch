@@ -3193,13 +3193,70 @@ def run_agent_human_evidence(args: argparse.Namespace) -> int:
     return 0 if outcome["status"] != "ERROR" else 1
 
 
+def _print_evidence_request(request: dict) -> int:
+    """Read-only rendering of one R95 human evidence request."""
+
+    print("Case evidence request")
+    print("=====================")
+    print(
+        f"{request['case_id']} | program={request['program'] or '-'} "
+        f"| cve={request['cve_id'] or '-'} | {request['case_status']} "
+        f"| request={request['request_ref']} | {request['request_state']}"
+    )
+    print(
+        f"next: {request['next_action']} | human action required: "
+        f"{str(request['human_action_required']).lower()} | offline "
+        f"exhausted: {str(request['offline_sources_exhausted']).lower()}"
+    )
+    if request["reason"]:
+        print(f"  reason: {request['reason']}")
+    for entry in request["requirements"]:
+        print(
+            f"  {entry['requirement_kind']} [{entry['requirement_class']}] "
+            f"{entry['status']} | acquisition: {entry['acquisition_type']} "
+            f"| offline_exhausted="
+            f"{str(entry['offline_exhausted']).lower()}"
+        )
+        print(f"      expected: {entry['expected_output']}")
+        print(f"      completion: {entry['completion_condition']}")
+        if entry["hypothesis_refs"]:
+            print(
+                "      hypotheses: " + ", ".join(entry["hypothesis_refs"])
+            )
+    if request["expected_result"]:
+        print(f"  expected result: {request['expected_result']}")
+    print(
+        f"  submit via: agent human-evidence --case {request['case_id']} "
+        "--file <envelope.json> [--apply]"
+    )
+    print(
+        f"  envelope template: agent acquisitions --case "
+        f"{request['case_id']} --request --json"
+    )
+    print(
+        "MODE: research-planning only (read-only; no evidence submitted, "
+        "no target interaction)"
+    )
+    return 0
+
+
 def run_agent_acquisitions(args: argparse.Namespace) -> int:
     """R91: read-only acquisition ledger for one case or the case portfolio
-    (what was attempted per requirement, with the bounded next action)."""
+    (what was attempted per requirement, with the bounded next action).
+
+    R95: with ``--request`` and a case id, additionally render the
+    deterministic human evidence request (R91 ledger + R77 workbench) and,
+    with ``--json``, the R80/R89 submission-envelope template. Read-only:
+    never executes, never submits and never fabricates evidence.
+    """
 
     from ai.knowledge.research_acquisition_ledger import (
         build_acquisition_portfolio,
         build_case_acquisition_ledger,
+    )
+    from ai.knowledge.research_evidence_request import (
+        EvidenceRequestError,
+        build_case_evidence_request,
     )
     from ai.research_agent.case_bridge import case_artifact_path
     from ai.research_agent.case_evidence import load_case_artifact
@@ -3212,11 +3269,16 @@ def run_agent_acquisitions(args: argparse.Namespace) -> int:
         else Path(config.research_dir) / "cases"
     )
     case_id = str(getattr(args, "case", "") or "").strip()
+    want_request = bool(getattr(args, "request", False))
 
-    def _ledger_for(path: Path):
+    def _artifact_for(path: Path):
         try:
-            artifact = load_case_artifact(path)
+            return load_case_artifact(path)
         except Exception:
+            return None
+
+    def _ledger_for(artifact):
+        if not isinstance(artifact, dict):
             return None
         workspace = artifact.get("research_case_workspace")
         cases = (
@@ -3237,23 +3299,48 @@ def run_agent_acquisitions(args: argparse.Namespace) -> int:
         except Exception:
             return None
 
+    def _request_for(artifact, ledger):
+        case = artifact["research_case_workspace"]["cases"][0]
+        result = artifact.get("result")
+        result = result if isinstance(result, dict) else {}
+        return build_case_evidence_request(
+            case,
+            ledger,
+            workbench=artifact.get("research_workbench"),
+            source_cve=result.get("cve_id") or "",
+        )
+
     if case_id:
         try:
             case_path = case_artifact_path(case_id, cases_dir)
         except Exception:
             print(f"agent acquisitions: invalid case id {case_id!r}")
             return 2
-        ledger = _ledger_for(case_path)
+        artifact = _artifact_for(case_path)
+        ledger = _ledger_for(artifact)
         if ledger is None:
             print(
                 f"agent acquisitions: no readable case artifact for {case_id}"
             )
             return 1
+        request = None
+        if want_request:
+            try:
+                request = _request_for(artifact, ledger)
+            except EvidenceRequestError as exc:
+                print(
+                    "agent acquisitions: evidence request unavailable "
+                    f"({exc.code})"
+                )
+                return 1
         if getattr(args, "json", False):
+            payload = request if request is not None else ledger
             print(
-                json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True)
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
             )
             return 0
+        if request is not None:
+            return _print_evidence_request(request)
         print("Case acquisition ledger")
         print("=======================")
         print(
@@ -3284,7 +3371,7 @@ def run_agent_acquisitions(args: argparse.Namespace) -> int:
         return 1
     ledgers = []
     for path in sorted(cases_dir.glob("*.json")):
-        ledger = _ledger_for(path)
+        ledger = _ledger_for(_artifact_for(path))
         if ledger is not None:
             ledgers.append(ledger)
     portfolio = build_acquisition_portfolio(ledgers)
@@ -4265,6 +4352,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_acquisitions.add_argument(
         "--cases-dir", default=None, help="override the cases directory"
+    )
+    agent_acquisitions.add_argument(
+        "--request",
+        action="store_true",
+        help="R95: render the deterministic human evidence request for the "
+        "case and (with --json) the R80/R89 envelope template (read-only)",
     )
     agent_acquisitions.add_argument(
         "--json", action="store_true", help="emit the ledger as JSON"
