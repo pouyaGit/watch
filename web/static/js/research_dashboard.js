@@ -806,11 +806,59 @@
     var request = result.body.evidence_request || null;
     renderEvidenceRequest(request, result.body.case_summary || {});
     renderEvidencePackage(result.body.evidence_package || null);
+    renderTriageDecision(result.body.triage_decision || null);
     fillEvidenceForm(
       snapshotFromWorkbench(result.body.workbench || {}),
       result.body.case_summary || {},
       request
     );
+  }
+
+  function renderTriageDecision(decision) {
+    var host = document.getElementById('triage-decision');
+    if (!host) return;
+    clear(host);
+    var panel = el('section', 'panel r82-panel');
+    var head = el('div', 'panel-head');
+    head.appendChild(
+      el('h2', null, 'Human triage decision (human authority — not a vulnerability confirmation)')
+    );
+    panel.appendChild(head);
+    var body = el('div', 'panel-body');
+    var status = decision ? decision.status : 'NOT_DECIDED';
+    if (status === 'NOT_DECIDED') {
+      body.appendChild(el('p', 'r82-empty', 'No human triage decision recorded for this case.'));
+    } else if (status === 'INVALID') {
+      body.appendChild(el('p', 'r82-empty',
+        'The recorded decision cannot be evaluated against the current evidence package (fail closed).'));
+    } else {
+      body.appendChild(el('p', 'r82-kv-line',
+        'Decision: ' + (decision.decision || '—') + ' · ' + status +
+        ' · by ' + (decision.decided_by || '—') +
+        (decision.decided_at ? ' at ' + decision.decided_at : '')));
+      body.appendChild(el('p', 'r82-kv-line',
+        'Reviewed package: ' + (decision.reviewed_package_fingerprint || '—') +
+        (status === 'STALE'
+          ? ' (earlier evidence package — decision is historical, not current authority)'
+          : '')));
+      if (decision.rationale_code) {
+        body.appendChild(el('p', 'r82-kv-line', 'Rationale: ' + decision.rationale_code));
+      }
+      if (decision.rationale_note) {
+        body.appendChild(el('p', 'r82-kv-line', 'Note: ' + decision.rationale_note));
+      }
+      if (decision.escalation_target) {
+        body.appendChild(el('p', 'r82-kv-line', 'Escalation target: ' + decision.escalation_target));
+      }
+      body.appendChild(el('p', 'r82-kv-line',
+        'Decision history: ' + String(decision.history_count || 0)));
+    }
+    body.appendChild(el('p', 'r82-kv-line',
+      'Recording is an explicit human action through the authenticated ' +
+      'operator command agent human-decision; no default confirmation and ' +
+      'no automatic submission.'));
+    panel.appendChild(body);
+    host.appendChild(panel);
   }
 
   function refList(items) {
@@ -1109,6 +1157,7 @@
     renderCaseHeader(body.case_summary || {}, body.program);
     renderWorkbench(workbench, body.case_summary || {});
     renderEvidencePackage(body.evidence_package || null);
+    renderTriageDecision(body.triage_decision || null);
     renderEvidenceRequest(body.evidence_request || null, body.case_summary || {});
     var snapshot = snapshotFromWorkbench(workbench);
     fillEvidenceForm(snapshot, body.case_summary || {}, body.evidence_request || null);
@@ -1315,6 +1364,7 @@
     renderWorkbench: renderWorkbench,
     renderEvidenceRequest: renderEvidenceRequest,
     renderEvidencePackage: renderEvidencePackage,
+    renderTriageDecision: renderTriageDecision,
     renderActivity: renderActivity,
     initCaseList: initCaseList,
     initActivity: initActivity,

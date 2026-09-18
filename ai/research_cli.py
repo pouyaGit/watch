@@ -3240,6 +3240,68 @@ def _print_evidence_request(request: dict) -> int:
     return 0
 
 
+def run_agent_triage_decision(args: argparse.Namespace) -> int:
+    """R100: record one explicit human triage decision for one case against
+    the current R99 evidence package (dry-run by default; --apply persists
+    one atomic decision record; no case state change, no execution)."""
+
+    from datetime import datetime, timezone
+
+    from ai.research_agent.case_bridge import case_artifact_path
+    from ai.research_agent.case_decision import record_case_triage_decision
+    from ai.research_agent.scheduler import SchedulerConfig
+
+    config = SchedulerConfig.from_env()
+    cases_dir = (
+        Path(args.cases_dir)
+        if getattr(args, "cases_dir", None)
+        else Path(config.research_dir) / "cases"
+    )
+    case_id = str(getattr(args, "case", "") or "").strip()
+    try:
+        case_path = case_artifact_path(case_id, cases_dir)
+    except Exception:
+        print(f"agent human-decision: invalid case id {case_id!r}")
+        return 2
+    decided_at = (
+        str(getattr(args, "decided_at", "") or "").strip()
+        or datetime.now(timezone.utc).isoformat()
+    )
+    outcome = record_case_triage_decision(
+        case_path,
+        decision=getattr(args, "decision", ""),
+        decided_by=getattr(args, "by", ""),
+        rationale_code=getattr(args, "rationale", ""),
+        rationale_note=getattr(args, "note", ""),
+        escalation_target=getattr(args, "escalation_target", ""),
+        decided_at=decided_at,
+        write=bool(getattr(args, "apply", False)),
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(outcome, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if outcome["status"] != "ERROR" else 1
+    print("Research case human triage decision")
+    print("===================================")
+    print(
+        f"{outcome['case_id'] or case_id} | "
+        f"{outcome['decision'] or '-'} | {outcome['status']} | "
+        f"{outcome['reason'] or 'validated'}"
+    )
+    print(f"  decision_ref: {outcome['decision_ref'] or '-'}")
+    print(
+        "  reviewed package fingerprint: "
+        f"{outcome['reviewed_package_fingerprint'] or '-'}"
+    )
+    print(
+        f"  written: {outcome['written']} | replayed: {outcome['replayed']}"
+    )
+    print(
+        "MODE: human authority record only (no execution, no confirmation, "
+        "no case state change)"
+    )
+    return 0 if outcome["status"] != "ERROR" else 1
+
+
 def run_agent_acquisitions(args: argparse.Namespace) -> int:
     """R91: read-only acquisition ledger for one case or the case portfolio
     (what was attempted per requirement, with the bounded next action).
@@ -3538,6 +3600,8 @@ def run_agent(args: argparse.Namespace) -> int:
         return run_agent_evidence(args)
     if command == "human-evidence":
         return run_agent_human_evidence(args)
+    if command == "human-decision":
+        return run_agent_triage_decision(args)
     if command == "acquisitions":
         return run_agent_acquisitions(args)
     if command == "schedule":
@@ -4340,6 +4404,56 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_human.add_argument(
         "--json", action="store_true", help="emit the submission outcome as JSON"
+    )
+
+    agent_triage_decision = agent_sub.add_parser(
+        "human-decision",
+        help="R100: record one explicit human triage decision for one "
+        "persisted research case against its current evidence package "
+        "(dry-run by default; --apply persists one atomic decision record)",
+    )
+    agent_triage_decision.add_argument(
+        "--case",
+        required=True,
+        help="persisted case id, e.g. case-dell-a1-component-mapping",
+    )
+    agent_triage_decision.add_argument(
+        "--decision",
+        required=True,
+        help="R56 decision vocabulary: APPROVE_RESEARCH, "
+        "REQUEST_MORE_EVIDENCE, DEFER, REJECT, ESCALATE, NEEDS_REVIEW",
+    )
+    agent_triage_decision.add_argument(
+        "--by",
+        required=True,
+        help="explicit human authority label (bounded, non-sensitive)",
+    )
+    agent_triage_decision.add_argument(
+        "--rationale", default="", help="optional R56 rationale code"
+    )
+    agent_triage_decision.add_argument(
+        "--note", default="", help="optional bounded rationale note"
+    )
+    agent_triage_decision.add_argument(
+        "--escalation-target",
+        default="",
+        help="R56 escalation target (ESCALATE only)",
+    )
+    agent_triage_decision.add_argument(
+        "--decided-at",
+        default="",
+        help="optional audit timestamp (defaults to now, UTC ISO-8601)",
+    )
+    agent_triage_decision.add_argument(
+        "--cases-dir", default=None, help="override the cases directory"
+    )
+    agent_triage_decision.add_argument(
+        "--apply",
+        action="store_true",
+        help="persist the decision record (default: dry-run, no write)",
+    )
+    agent_triage_decision.add_argument(
+        "--json", action="store_true", help="emit the decision outcome as JSON"
     )
 
     agent_acquisitions = agent_sub.add_parser(

@@ -251,6 +251,25 @@ class TestEvidencePackageUiContract(unittest.TestCase):
         self.assertIn("renderEvidencePackage(result.body.evidence_package", source)
 
 
+class TestHumanDecisionUiContract(unittest.TestCase):
+    """R100: dashboard shows the human decision as human authority only."""
+
+    def test_decision_section_markers(self):
+        source = DASHBOARD_JS.read_text(encoding="utf-8")
+        for marker in (
+            "renderTriageDecision",
+            "triage_decision",
+            "Human triage decision",
+            "NOT_DECIDED",
+            "STALE",
+            "agent human-decision",
+            "human authority",
+        ):
+            self.assertIn(marker, source, marker)
+        html = CASE_HTML.read_text(encoding="utf-8")
+        self.assertIn('id="triage-decision"', html)
+
+
 class TestSidebarNavigation(unittest.TestCase):
     def test_sidebar_link_present(self):
         text = BASE_HTML.read_text(encoding="utf-8")

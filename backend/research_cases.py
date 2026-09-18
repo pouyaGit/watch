@@ -50,6 +50,9 @@ from ai.knowledge.research_case_evidence_package import (
     EvidencePackageError,
     build_case_evidence_package,
 )
+from ai.knowledge.research_triage_decision import (
+    evaluate_case_triage_decision,
+)
 from ai.knowledge.research_evidence_request import (
     EvidenceRequestError,
     build_case_evidence_request,
@@ -207,6 +210,11 @@ def _load_entry(path: Path) -> dict | None:
             for item in (payload.get("limitations") or ())
             if _text(item)
         ][:8],
+        "triage_decisions": [
+            dict(item)
+            for item in (payload.get("triage_decisions") or ())
+            if isinstance(item, Mapping)
+        ][-8:],
         "case": dict(cases[0]),
         "hypotheses": list(
             _block(payload.get("research")).get("hypotheses") or ()
@@ -406,6 +414,47 @@ def _case_evidence_package(
         return None
 
 
+def _case_triage_decision(
+    entry: Mapping, package: object = None
+) -> dict:
+    """R100 read-only projection of recorded human triage decisions.
+
+    Evaluates the most recent decision against the current R99 package
+    fingerprint (CURRENT/STALE/INVALID). NEVER changes case state and never
+    implies confirmation.
+    """
+
+    raw = entry.get("triage_decisions")
+    records = (
+        [item for item in raw if isinstance(item, Mapping)]
+        if isinstance(raw, (list, tuple))
+        else []
+    )
+    if not records:
+        return {
+            "status": "NOT_DECIDED",
+            "decision": "",
+            "decision_ref": "",
+            "history_count": 0,
+            "history": [],
+        }
+    if not isinstance(package, Mapping):
+        return {
+            "status": "INVALID",
+            "decision": "",
+            "decision_ref": "",
+            "history_count": len(records),
+            "history": [],
+        }
+    current = evaluate_case_triage_decision(records[-1], package)
+    current["history_count"] = len(records)
+    current["history"] = [
+        evaluate_case_triage_decision(record, package)
+        for record in records[-4:]
+    ]
+    return current
+
+
 def get_case_workbench(case_id: object) -> dict | None:
     """R77 workbench for one case (R77 remains the workbench authority).
 
@@ -427,6 +476,7 @@ def get_case_workbench(case_id: object) -> dict | None:
         limit=MAX_HISTORY,
     )
     ledger = _case_acquisition_ledger(entry)
+    package = _case_evidence_package(entry, workbench, ledger)
     return {
         "rule_version": RULE_VERSION,
         "workbench_rule_version": _text(workbench.get("workbench_version")),
@@ -437,7 +487,8 @@ def get_case_workbench(case_id: object) -> dict | None:
         "workbench": workbench,
         "acquisition_ledger": ledger,
         "evidence_request": _case_evidence_request(entry, workbench, ledger),
-        "evidence_package": _case_evidence_package(entry, workbench, ledger),
+        "evidence_package": package,
+        "triage_decision": _case_triage_decision(entry, package),
         "advisory": True,
         "research_only": True,
         "confirmation_state": "NOT_CONFIRMED",

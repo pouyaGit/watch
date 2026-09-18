@@ -776,6 +776,151 @@ class TestEvidencePackageProjection(unittest.TestCase):
             self.assertEqual(before, artifact.read_bytes())
 
 
+class TestHumanDecisionProjection(unittest.TestCase):
+    """R100: the case-detail surface exposes recorded human decisions."""
+
+    DELL_CASE_ID = "case-dell-a1-component-mapping"
+
+    @classmethod
+    def setUpClass(cls):
+        from api import app
+
+        cls.client = TestClient(app)
+
+    def _provide_evidence_root(self, tmp: str) -> Path:
+        from ai.research_agent.case_bridge import (
+            activate_result,
+            case_artifact_path,
+        )
+        from ai.research_agent.case_evidence import complete_case_evidence
+        from tests.test_research_case_evidence import (
+            CASE_ID as DELL_CASE_ID,
+            loop_payload,
+            match_row,
+            plan_loader,
+        )
+
+        root = Path(tmp)
+        cases = root / "r100"
+        outcome = activate_result(
+            loop_payload(), plan_loader=plan_loader, cases_dir=cases
+        )
+        self.assertEqual(outcome["status"], "ACTIVATED")
+        path = case_artifact_path(DELL_CASE_ID, cases)
+        completed = complete_case_evidence(
+            path,
+            expected_case_id=DELL_CASE_ID,
+            match_loader=lambda _cve: [match_row(technology="WordPress")],
+            write=True,
+        )
+        self.assertEqual(completed["status"], "COMPLETED")
+        return root
+
+    def _detail(self, case_id: str):
+        return self.client.get(
+            f"/api/research/cases/{case_id}", params=_params()
+        )
+
+    def test_not_decided_by_default(self):
+        response = self._detail(CASE_ID)
+        self.assertEqual(response.status_code, 200)
+        human = response.json()["triage_decision"]
+        self.assertEqual(human["status"], "NOT_DECIDED")
+        self.assertEqual(human["decision"], "")
+        self.assertEqual(human["history_count"], 0)
+
+    def test_recorded_decision_is_current_then_stale(self):
+        from ai.research_agent.case_bridge import case_artifact_path
+        from ai.research_agent.case_decision import (
+            record_case_triage_decision,
+        )
+        from backend import research_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._provide_evidence_root(tmp)
+            path = case_artifact_path(self.DELL_CASE_ID, root / "r100")
+            with mock.patch.object(
+                research_cases, "ARTIFACT_ROOT", root
+            ):
+                self.assertEqual(
+                    self._detail(self.DELL_CASE_ID).json()[
+                        "triage_decision"
+                    ]["status"],
+                    "NOT_DECIDED",
+                )
+                outcome = record_case_triage_decision(
+                    path,
+                    decision="REQUEST_MORE_EVIDENCE",
+                    decided_by="operator-a",
+                    rationale_code="EVIDENCE_INCOMPLETE",
+                    decided_at="2026-09-18T12:00:00Z",
+                    write=True,
+                )
+                self.assertEqual(outcome["status"], "RECORDED")
+                current = self._detail(self.DELL_CASE_ID).json()[
+                    "triage_decision"
+                ]
+                self.assertEqual(current["status"], "CURRENT")
+                self.assertEqual(
+                    current["decision"], "REQUEST_MORE_EVIDENCE"
+                )
+                self.assertEqual(current["decided_by"], "operator-a")
+                self.assertEqual(
+                    current["confirmation_state"], "NOT_CONFIRMED"
+                )
+                # new evidence changes the reviewed package -> STALE
+                posted = self.client.post(
+                    f"/api/research/cases/{self.DELL_CASE_ID}/human-evidence",
+                    params=_params(),
+                    json={
+                        "submission_version": "r80-1",
+                        "case_ref": self.DELL_CASE_ID,
+                        "submitted_by": "operator-a",
+                        "items": [
+                            {
+                                "hypothesis_ref": "H1",
+                                "requirement_kind": "COMPONENT_BINDING",
+                                "effect": "PROVIDES",
+                                "source": "HUMAN_REVIEW",
+                                "evidence_ref": "response:nonreal-r100-api-1",
+                                "observations": [
+                                    {
+                                        "ref": "response:nonreal-r100-api-1",
+                                        "fact": "NON-REAL/OFFLINE r100 fixture",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                )
+                self.assertEqual(posted.status_code, 200)
+                stale = self._detail(self.DELL_CASE_ID).json()[
+                    "triage_decision"
+                ]
+                self.assertEqual(stale["status"], "STALE")
+                self.assertNotEqual(
+                    stale["reviewed_package_fingerprint"],
+                    stale["current_package_fingerprint"],
+                )
+                self.assertEqual(
+                    stale["confirmation_state"], "NOT_CONFIRMED"
+                )
+
+    def test_projection_is_read_only(self):
+        from ai.research_agent.case_bridge import case_artifact_path
+        from backend import research_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._provide_evidence_root(tmp)
+            artifact = case_artifact_path(self.DELL_CASE_ID, root / "r100")
+            before = artifact.read_bytes()
+            with mock.patch.object(
+                research_cases, "ARTIFACT_ROOT", root
+            ):
+                self._detail(self.DELL_CASE_ID)
+            self.assertEqual(before, artifact.read_bytes())
+
+
 # ---------------------------------------------------------------------------
 # artifact discovery (hermetic)
 # ---------------------------------------------------------------------------
