@@ -1,0 +1,56 @@
+[Unit]
+Description=Watch Dell Standing CVE Watchlist (read-only research sweep, bounded)
+Documentation=file:/opt/watch/agent-reports/REAL-OPERATION-DELL-WATCHLIST-AUDIT.md
+Documentation=file:/opt/watch/agent-reports/REAL-OPERATION-DELL-WATCHLIST-VM-VERIFICATION.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pouya_behnia
+WorkingDirectory=/opt/watch
+EnvironmentFile=/opt/watch/.env
+
+# Private runtime dir for the lock file (owned by the service user).
+RuntimeDirectory=watch-dell-watchlist
+RuntimeDirectoryMode=0750
+
+# Explicit PATH (no reliance on the systemd default PATH).
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
+
+# The application performs no locking of its own here; this outer flock
+# prevents two service instances from overlapping (different path from the
+# research lock, so the two jobs never interfere with each other).
+Environment="WATCH_DELL_WATCHLIST_LOCK=/run/watch-dell-watchlist/watchlist.lock"
+ExecStart=/usr/bin/flock -n /run/watch-dell-watchlist/service.lock \
+    /opt/watch/venv/bin/python3 -m ai.research_cli agent watchlist --program dell --apply --json
+
+# Hard upper bound: the verified per-CVE sweep takes ~3 minutes for the
+# current 5-CVE Dell queue (~35s per CVE); 30 minutes covers substantial
+# corpus growth without permitting a runaway. Sequential per-CVE matching
+# only; no unfiltered sweep, no parallelism, no retries.
+# Type=oneshot => bound the start phase (RuntimeMaxSec has no effect here).
+TimeoutStartSec=30min
+TimeoutStopSec=30s
+KillMode=control-group
+
+# Least privilege: no root, no production service control, no Docker socket,
+# no SSH keys, no credentials beyond the research provider config in .env.
+# Output goes to the journal (no StandardOutput/StandardError override,
+# matching the existing Watch units). Failures are recorded, never hidden.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/opt/watch/ai_data /opt/watch/logs /run/watch-dell-watchlist
+
+# Conservative resource bounds on a 4 vCPU / 12GB VM.
+MemoryMax=1G
+CPUQuota=150%
+
+[Install]
+WantedBy=timers.target

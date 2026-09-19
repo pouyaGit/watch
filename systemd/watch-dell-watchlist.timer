@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Watch Dell Standing CVE Watchlist every 6 hours
+Documentation=file:/opt/watch/agent-reports/REAL-OPERATION-DELL-WATCHLIST-AUDIT.md
+Documentation=file:/opt/watch/agent-reports/REAL-OPERATION-DELL-WATCHLIST-VM-VERIFICATION.md
+
+[Timer]
+Unit=watch-dell-watchlist.service
+OnCalendar=*-*-* 00,06,12,18:00:00
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
