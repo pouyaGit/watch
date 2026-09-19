@@ -3458,6 +3458,115 @@ def run_agent_acquisitions(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_agent_watchlist(args: argparse.Namespace) -> int:
+    """Standing CVE watchlist: one per-CVE matcher sweep over the existing
+    R18 queue candidates for one program, persisted as a deterministic
+    timestamped snapshot (dry-run by default; --apply writes one atomic
+    no-overwrite snapshot). No matcher/evidence semantics are changed and no
+    target interaction occurs."""
+
+    import signal
+
+    from ai.research_agent.scheduler import SchedulerConfig
+    from ai.research_agent.watchlist import (
+        REASON_NO_DISCOVERED_CVES,
+        STATUS_ERROR,
+        STATUS_NO_CVES,
+        run_watchlist,
+    )
+
+    config = SchedulerConfig.from_env()
+    snapshot_root = (
+        Path(getattr(args, "snapshot_root"))
+        if getattr(args, "snapshot_root", None)
+        else Path(config.research_dir) / "watchlist"
+    )
+    program = str(getattr(args, "program", "") or "dell").strip()
+    timeout_seconds = max(int(getattr(args, "timeout", 0) or 1800), 1)
+
+    class _WatchlistTimeout(Exception):
+        pass
+
+    def _on_timeout(signum, frame):
+        raise _WatchlistTimeout()
+
+    previous_handler = None
+    try:
+        previous_handler = signal.signal(signal.SIGALRM, _on_timeout)
+        signal.alarm(timeout_seconds)
+    except (AttributeError, OSError, ValueError):
+        previous_handler = None
+    try:
+        outcome = run_watchlist(
+            program,
+            snapshot_root=snapshot_root,
+            now=None,
+            write=bool(getattr(args, "apply", False)),
+            limit=int(getattr(args, "limit", 0) or 100),
+        )
+    except _WatchlistTimeout:
+        print(
+            f"agent watchlist: timed out after {timeout_seconds}s (no write "
+            "performed)"
+        )
+        return 1
+    finally:
+        if previous_handler is not None:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous_handler)
+
+    if getattr(args, "json", False):
+        print(json.dumps(outcome, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if outcome["status"] != STATUS_ERROR else 1
+
+    snapshot = outcome.get("snapshot") or {}
+    print("Dell standing CVE watchlist")
+    print("===========================")
+    print(
+        f"program={outcome['program']} | snapshot={outcome['snapshot_id']} "
+        f"| cves={outcome['cve_count']} | {outcome['status']}"
+        f"{' | reason=' + outcome['reason'] if outcome['reason'] else ''}"
+    )
+    if outcome["status"] == STATUS_NO_CVES:
+        print(f"  {REASON_NO_DISCOVERED_CVES}: no {program} CVEs discovered")
+        return 0
+    counts = outcome["delta_counts"]
+    print(
+        f"  delta: NEW={counts['NEW']} CHANGED={counts['CHANGED']} "
+        f"UNCHANGED={counts['UNCHANGED']} "
+        f"| states: "
+        + (", ".join(
+            f"{k}={v}" for k, v in outcome["match_state_counts"].items()
+        ) or "-")
+    )
+    if outcome["previous_snapshot_id"]:
+        print(f"  previous: {outcome['previous_snapshot_id']}")
+    for entry in snapshot.get("entries") or []:
+        association = entry.get("version_association_state") or "-"
+        print(
+            f"  {entry['delta']:9s} {entry['cve_id']} "
+            f"| {entry['match_state']}/{entry['confidence']} "
+            f"| rows={entry['match_row_count']} "
+            f"| version={entry['matched_version'] or '-'} "
+            f"| association={association}"
+        )
+        if entry.get("remaining_blockers"):
+            print(
+                "      blockers: "
+                + ", ".join(entry["remaining_blockers"])
+            )
+    total_ms = outcome["timings"]["total_ms"]
+    print(
+        f"  runtime: {total_ms} ms total "
+        f"({len(outcome['timings']['per_cve_ms'])} CVE(s))"
+    )
+    if outcome["written"]:
+        print(f"  snapshot written: {outcome['snapshot_path']}")
+    else:
+        print("  snapshot written: no (dry-run or replayed)")
+    return 0
+
+
 def run_agent_schedule(args: argparse.Namespace) -> int:
     """R92: read-only case-aware scheduling preview (no execution, no writes)."""
 
@@ -3604,6 +3713,8 @@ def run_agent(args: argparse.Namespace) -> int:
         return run_agent_triage_decision(args)
     if command == "acquisitions":
         return run_agent_acquisitions(args)
+    if command == "watchlist":
+        return run_agent_watchlist(args)
     if command == "schedule":
         return run_agent_schedule(args)
     return 2
@@ -4475,6 +4586,43 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_acquisitions.add_argument(
         "--json", action="store_true", help="emit the ledger as JSON"
+    )
+
+    agent_watchlist = agent_sub.add_parser(
+        "watchlist",
+        help="standing CVE watchlist: one per-CVE matcher sweep over the "
+        "existing R18 queue candidates for one program, persisted as a "
+        "deterministic timestamped snapshot (dry-run by default; --apply "
+        "writes one atomic no-overwrite snapshot)",
+    )
+    agent_watchlist.add_argument(
+        "--program", default="dell", help="program to watch (default: dell)"
+    )
+    agent_watchlist.add_argument(
+        "--snapshot-root",
+        default=None,
+        help="override the watchlist snapshot root "
+        "(default: <research_dir>/watchlist)",
+    )
+    agent_watchlist.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="process at most this many discovered CVEs",
+    )
+    agent_watchlist.add_argument(
+        "--timeout",
+        type=int,
+        default=1800,
+        help="bounded runtime in seconds (default: 1800)",
+    )
+    agent_watchlist.add_argument(
+        "--apply",
+        action="store_true",
+        help="persist the snapshot (default: dry-run, no write)",
+    )
+    agent_watchlist.add_argument(
+        "--json", action="store_true", help="emit the watchlist run as JSON"
     )
 
     agent_schedule = agent_sub.add_parser(
