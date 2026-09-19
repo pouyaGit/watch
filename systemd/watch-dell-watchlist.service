@@ -48,8 +48,11 @@ RestrictSUIDSGID=true
 LockPersonality=true
 ReadWritePaths=/opt/watch/ai_data /opt/watch/logs /run/watch-dell-watchlist
 
-# Conservative resource bounds on a 4 vCPU / 12GB VM.
-MemoryMax=1G
+# Bounded resource limits on a 4 vCPU / ~11 Gi host. 2026-09-19 cgroup OOM
+# (CONSTRAINT_MEMCG) killed a run at ~1021 MiB anon RSS under the old 1G
+# cap; 2G is ~2x observed need (~18% of host) while the cap is retained
+# so a runaway still cannot exhaust the host.
+MemoryMax=2G
 CPUQuota=150%
 
 [Install]
