@@ -3840,6 +3840,143 @@ def run_agent_evidence_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_agent_evidence_acquire(
+    args: argparse.Namespace, send=None, resolver=None
+) -> int:
+    """Controlled watchlist evidence acquisition (one explicit request).
+
+    Executes exactly one bounded, explicitly scoped HTTP metadata
+    acquisition selected by the caller. Never discovers targets, never
+    enumerates, never crawls, never follows the acquisition plan
+    automatically, never touches MongoDB and never writes to production
+    paths. With ``--apply`` one ACQUIRED evidence result is persisted
+    atomically under the local watchlist data directory (no overwrite).
+    ``send`` / ``resolver`` are the offline test seams.
+    """
+
+    from ai.research_agent.watchlist_evidence_acquire import (
+        AcquisitionRequest,
+        acquire_evidence,
+        reevaluate_candidate_with_evidence,
+        store_evidence_result,
+    )
+
+    request = AcquisitionRequest(
+        program=str(getattr(args, "program", "") or ""),
+        target=str(getattr(args, "target", "") or ""),
+        evidence_type=str(getattr(args, "evidence_type", "") or ""),
+        method=str(getattr(args, "method", "") or ""),
+        scope_allowed_hosts=tuple(getattr(args, "scope_host", None) or ()),
+        scope_id=str(getattr(args, "scope_id", "") or ""),
+        timeout=float(getattr(args, "timeout", 10.0) or 10.0),
+        max_bytes=int(getattr(args, "max_bytes", 65536) or 65536),
+        max_requests=int(getattr(args, "max_requests", 1) or 1),
+        redirect_policy=str(getattr(args, "redirect_policy", "NONE") or "NONE"),
+    )
+    result = acquire_evidence(request, send=send, resolver=resolver)
+
+    reevaluation = None
+    candidate_cve = str(getattr(args, "candidate_cve", "") or "").strip().upper()
+    if candidate_cve:
+        snapshot, _program = _local_watchlist_snapshot(args)
+        if snapshot is not None:
+            candidate = next(
+                (
+                    entry
+                    for entry in (snapshot.get("entries") or [])
+                    if str(entry.get("cve_id") or "").strip().upper()
+                    == candidate_cve
+                ),
+                None,
+            )
+            if candidate is not None:
+                reevaluation = reevaluate_candidate_with_evidence(
+                    candidate, result
+                )
+
+    written = False
+    stored_path = ""
+    if bool(getattr(args, "apply", False)):
+        from ai.research_agent.scheduler import SchedulerConfig
+
+        config = SchedulerConfig.from_env()
+        snapshot_root = (
+            Path(getattr(args, "snapshot_root"))
+            if getattr(args, "snapshot_root", None)
+            else Path(config.research_dir) / "watchlist"
+        )
+        try:
+            dest, written = store_evidence_result(
+                result, snapshot_root, str(getattr(args, "program", ""))
+            )
+        except (OSError, ValueError) as exc:
+            print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        if dest is not None:
+            stored_path = str(dest)
+
+    if getattr(args, "json", False):
+        envelope = dict(result)
+        if reevaluation is not None:
+            envelope["reevaluation"] = reevaluation
+        if bool(getattr(args, "apply", False)):
+            envelope["stored_path"] = stored_path
+            envelope["written"] = written
+        print(json.dumps(envelope, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if result["state"] not in ("BLOCKED", "OUT_OF_SCOPE") else 1
+
+    print("Controlled evidence acquisition")
+    print("===============================")
+    print(
+        f"program={result['program'] or '-'} | state={result['state']} "
+        f"| type={result['evidence_type'] or '-'} "
+        f"| method={result['method'] or '-'}"
+    )
+    print(f"  target: {result['target'] or '-'}")
+    print(
+        f"  scope: {', '.join(result['scope_allowed_hosts']) or '-'}"
+    )
+    if result["errors"]:
+        for error in result["errors"]:
+            print(f"  error: {error['field']} [{error['code']}] {error['message']}")
+    if result["blocked_reason"]:
+        print(f"  blocked: {result['blocked_reason']}")
+    if result["response_metadata"]:
+        meta = result["response_metadata"]
+        print(
+            f"  response: status={meta['status']} "
+            f"bytes={meta['body_bytes']} "
+            f"sha256={(meta['body_sha256'] or '-')[:16]} "
+            f"truncated={str(meta['body_truncated']).lower()}"
+        )
+    for record in result["evidence"]:
+        print(f"  evidence: {record['evidence_id']} ({record['evidence_type']})")
+        print(
+            "    provenance: "
+            f"program={record['provenance']['program']} "
+            f"method={record['provenance']['method']} "
+            f"collected_at={record['provenance']['collected_at']}"
+        )
+        for observation in record["observations"]:
+            print(f"    {observation['observation']}: {observation['value']}")
+    if reevaluation is not None:
+        print(
+            f"  reevaluation: {reevaluation['base_finding_readiness']} -> "
+            f"{reevaluation['updated_finding_readiness']} "
+            f"(changed={str(reevaluation['changed']).lower()})"
+        )
+    if bool(getattr(args, "apply", False)):
+        print(
+            "  stored: "
+            + (stored_path if written else "no (dry-run state/no replay)")
+        )
+    print(
+        "MODE: controlled single acquisition (no discovery, no crawling, "
+        "no plan auto-follow-up, no Mongo)"
+    )
+    return 0 if result["state"] not in ("BLOCKED", "OUT_OF_SCOPE") else 1
+
+
 def run_agent_schedule(args: argparse.Namespace) -> int:
     """R92: read-only case-aware scheduling preview (no execution, no writes)."""
 
@@ -3994,6 +4131,8 @@ def run_agent(args: argparse.Namespace) -> int:
         return run_agent_evidence_gaps(args)
     if command == "evidence-plan":
         return run_agent_evidence_plan(args)
+    if command == "evidence-acquire":
+        return run_agent_evidence_acquire(args)
     if command == "schedule":
         return run_agent_schedule(args)
     return 2
@@ -4987,6 +5126,82 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_evidence_plan.add_argument(
         "--json", action="store_true", help="emit the acquisition plan as JSON"
+    )
+
+    from ai.research_agent.watchlist_evidence_acquire import (
+        ACQUISITION_METHODS as _ACQUISITION_METHODS,
+        EVIDENCE_TYPES as _EVIDENCE_TYPES,
+        REDIRECT_POLICIES as _REDIRECT_POLICIES,
+    )
+
+    agent_evidence_acquire = agent_sub.add_parser(
+        "evidence-acquire",
+        help="controlled watchlist evidence acquisition: one explicit, "
+        "scoped HTTP metadata acquisition (no discovery, no crawling, no "
+        "plan auto-follow-up, no MongoDB; requires explicit program, "
+        "target, evidence type, method and allowed host scope)",
+    )
+    agent_evidence_acquire.add_argument(
+        "--program", required=True, help="program the target belongs to"
+    )
+    agent_evidence_acquire.add_argument(
+        "--target", required=True, help="explicit target URL (no discovery)"
+    )
+    agent_evidence_acquire.add_argument(
+        "--evidence-type",
+        required=True,
+        choices=list(_EVIDENCE_TYPES),
+        help="requested evidence type",
+    )
+    agent_evidence_acquire.add_argument(
+        "--method",
+        required=True,
+        choices=list(_ACQUISITION_METHODS),
+        help="acquisition method (HEAD preferred, GET only when required)",
+    )
+    agent_evidence_acquire.add_argument(
+        "--scope-host",
+        dest="scope_host",
+        action="append",
+        required=True,
+        default=None,
+        help="explicit allowed host scope (repeatable; no wildcards)",
+    )
+    agent_evidence_acquire.add_argument(
+        "--scope-id", default="", help="optional explicit scope identifier"
+    )
+    agent_evidence_acquire.add_argument(
+        "--timeout", type=float, default=10.0, help="request timeout seconds"
+    )
+    agent_evidence_acquire.add_argument(
+        "--max-bytes", type=int, default=65536, help="response body byte cap"
+    )
+    agent_evidence_acquire.add_argument(
+        "--max-requests", type=int, default=1, help="request budget (1-5)"
+    )
+    agent_evidence_acquire.add_argument(
+        "--redirect-policy",
+        default="NONE",
+        choices=list(_REDIRECT_POLICIES),
+        help="redirect policy (default: never follow)",
+    )
+    agent_evidence_acquire.add_argument(
+        "--candidate-cve",
+        default="",
+        help="optional local watchlist CVE for additive gap re-evaluation",
+    )
+    agent_evidence_acquire.add_argument(
+        "--snapshot-root",
+        default=None,
+        help="override the local watchlist root (persistence + re-evaluation)",
+    )
+    agent_evidence_acquire.add_argument(
+        "--apply",
+        action="store_true",
+        help="persist one ACQUIRED evidence result locally (default: no write)",
+    )
+    agent_evidence_acquire.add_argument(
+        "--json", action="store_true", help="emit the evidence result as JSON"
     )
 
     agent_schedule = agent_sub.add_parser(
