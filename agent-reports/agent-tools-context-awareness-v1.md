@@ -185,12 +185,12 @@ destructive behavior in unrecognised checkouts.
 
 ## COMMIT STATUS
 
-Committed on `agent/daily-development`.
+COMMIT STATUS: committed on `agent/daily-development`.
 
 ## PUSH STATUS
 
-Not pushed. Push is always manual.
+PUSH STATUS: not pushed. Push is always manual.
 
 ## READY TO PUSH
 
-YES
+READY TO PUSH: YES
