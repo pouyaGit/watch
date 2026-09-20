@@ -3977,6 +3977,133 @@ def run_agent_evidence_acquire(
     return 0 if result["state"] not in ("BLOCKED", "OUT_OF_SCOPE") else 1
 
 
+MAX_BINDING_EVIDENCE_RECORDS = 256
+
+
+def run_agent_component_binding(args: argparse.Namespace) -> int:
+    """Deterministic component binding evidence (read-only evaluation).
+
+    Evaluates whether supplied structured evidence binds a component to the
+    target asset for every local watchlist candidate. Evidence comes from the
+    local snapshot's match rows (projections only) plus an optional local
+    ``--evidence-file`` JSON list of records shaped like the existing R30.1
+    asset/component match and R31.5 component provenance contracts. No
+    network, no MongoDB, no writes, no acquisition, no target discovery.
+    """
+
+    from ai.research_agent.watchlist_component_binding import (
+        evaluate_component_binding,
+        reevaluate_with_binding,
+    )
+
+    snapshot, program = _local_watchlist_snapshot(args)
+    if snapshot is None:
+        return 1
+
+    extra_records: list[dict] = []
+    evidence_file = str(getattr(args, "evidence_file", "") or "").strip()
+    if evidence_file:
+        try:
+            raw = json.loads(Path(evidence_file).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        if not isinstance(raw, list):
+            print("ERROR: ValueError: evidence file must be a JSON list", file=sys.stderr)
+            return 1
+        for item in raw[:MAX_BINDING_EVIDENCE_RECORDS]:
+            if isinstance(item, dict):
+                extra_records.append(dict(item))
+
+    asset = {
+        "asset_identifier": str(getattr(args, "asset_id", "") or "").strip(),
+        "scope_paths": list(getattr(args, "asset_scope", None) or []),
+    }
+    cve_filter = str(getattr(args, "cve", "") or "").strip().upper()
+
+    candidates: list[dict] = []
+    for entry in snapshot.get("entries") or []:
+        if not isinstance(entry, dict):
+            continue
+        cve_id = str(entry.get("cve_id") or "").strip().upper()
+        if cve_filter and cve_id != cve_filter:
+            continue
+        rows = entry.get("match_rows")
+        records: list[dict] = []
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict):
+                    records.append({"kind": "ASSET_MATCH", **row})
+        records.extend(dict(item) for item in extra_records)
+        binding = evaluate_component_binding(
+            cve_id=cve_id,
+            program=str(snapshot.get("program") or program),
+            asset=asset,
+            evidence=records,
+        )
+        reevaluation = reevaluate_with_binding(entry, binding)
+        candidates.append(
+            {"cve_id": cve_id, "binding": binding, "reevaluation": reevaluation}
+        )
+
+    payload = {
+        "snapshot_id": str(snapshot.get("snapshot_id") or ""),
+        "program": str(snapshot.get("program") or program),
+        "asset": asset,
+        "cve_count": len(candidates),
+        "candidates": candidates,
+        "rule_version": (
+            candidates[0]["binding"]["rule_version"] if candidates else ""
+        ),
+        "advisory": True,
+        "research_only": True,
+        "confirmation_state": "NOT_CONFIRMED",
+    }
+
+    if getattr(args, "json", False):
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    print("Component binding evidence")
+    print("==========================")
+    print(
+        f"program={payload['program'] or '-'} | "
+        f"snapshot={payload['snapshot_id'] or '-'} | "
+        f"cves={payload['cve_count']} | "
+        f"asset={asset['asset_identifier'] or '-'} "
+        f"scope={', '.join(asset['scope_paths']) or '-'}"
+    )
+    for item in candidates:
+        binding = item["binding"]
+        print(
+            f"  {item['cve_id']:18s} {binding['state']} "
+            f"| component={binding['component'] or '-'} "
+            f"| rule={binding['rule_id'] or '-'} "
+            f"| refs={binding['evidence_ref_count']}"
+        )
+        for rejected in binding["rejected"]:
+            print(
+                f"      rejected: {rejected['evidence_ref']} "
+                f"[{rejected['reason']}]"
+            )
+        for candidate in binding["candidate_components"]:
+            print(
+                f"      candidate: {candidate['component']} "
+                f"({candidate['component_category']})"
+            )
+        reevaluation = item["reevaluation"]
+        print(
+            f"      readiness: {reevaluation['base_finding_readiness']} -> "
+            f"{reevaluation['updated_finding_readiness']} "
+            f"(changed={str(reevaluation['changed']).lower()})"
+        )
+    print(
+        "MODE: read-only evaluation (no network, no Mongo, no writes, "
+        "no acquisition, no component guessing)"
+    )
+    return 0
+
+
 def run_agent_schedule(args: argparse.Namespace) -> int:
     """R92: read-only case-aware scheduling preview (no execution, no writes)."""
 
@@ -4133,6 +4260,8 @@ def run_agent(args: argparse.Namespace) -> int:
         return run_agent_evidence_plan(args)
     if command == "evidence-acquire":
         return run_agent_evidence_acquire(args)
+    if command == "component-binding":
+        return run_agent_component_binding(args)
     if command == "schedule":
         return run_agent_schedule(args)
     return 2
@@ -5202,6 +5331,53 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_evidence_acquire.add_argument(
         "--json", action="store_true", help="emit the evidence result as JSON"
+    )
+
+    agent_component_binding = agent_sub.add_parser(
+        "component-binding",
+        help="deterministic component binding evidence: evaluate whether "
+        "supplied local evidence binds a component to the target asset "
+        "(read-only evaluation; never discovers, guesses or acquires; no "
+        "network, no MongoDB, no writes)",
+    )
+    agent_component_binding.add_argument(
+        "--program", default="dell", help="program to evaluate (default: dell)"
+    )
+    agent_component_binding.add_argument(
+        "--cve",
+        default="",
+        help="limit evaluation to one CVE, e.g. CVE-2026-1557",
+    )
+    agent_component_binding.add_argument(
+        "--snapshot-root",
+        default=None,
+        help="override the watchlist snapshot root "
+        "(default: <research_dir>/watchlist)",
+    )
+    agent_component_binding.add_argument(
+        "--snapshot-id",
+        default="",
+        help="evaluate a specific local snapshot id (default: most recent)",
+    )
+    agent_component_binding.add_argument(
+        "--asset-id",
+        default="",
+        help="explicit privacy-preserving asset identity, e.g. asset-0123...",
+    )
+    agent_component_binding.add_argument(
+        "--asset-scope",
+        dest="asset_scope",
+        action="append",
+        default=None,
+        help="explicit target asset path scope (repeatable, path-only)",
+    )
+    agent_component_binding.add_argument(
+        "--evidence-file",
+        default="",
+        help="optional local JSON list of structured binding evidence records",
+    )
+    agent_component_binding.add_argument(
+        "--json", action="store_true", help="emit the binding result as JSON"
     )
 
     agent_schedule = agent_sub.add_parser(
