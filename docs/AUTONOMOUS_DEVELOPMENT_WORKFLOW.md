@@ -34,6 +34,60 @@ files are never touched** by agent operations.
 - The worktree directory (`.worktrees/`) is ignored by Git so it never
   appears as an untracked project change.
 
+### Production vs Agent Workspace
+
+The helper commands are **context aware**. Every helper detects where it is
+running and adapts:
+
+| Where you run it | Detected mode | Path |
+|------------------|---------------|------|
+| Production checkout | `MODE: PRODUCTION` | `/opt/watch` |
+| Autonomous worktree | `MODE: AGENT` | `/opt/watch/.worktrees/watch-agent` |
+
+- `/opt/watch` = **production**. It runs production services, jobs, systemd
+  units and the live database connections. A helper run here shows
+  production state and points you at the agent workspace; it does **not**
+  emit agent-only warnings such as `expected agent branch ...`.
+- `/opt/watch/.worktrees/watch-agent` = **autonomous development**. A helper
+  run here shows the agent branch, `HEAD`, commits, reports and the
+  `READY TO PUSH` assessment.
+
+The single question "am I in production or in the agent workspace?" is
+therefore answered for you: whichever copy of the helper you run, its
+`MODE:` line tells you where you are, and when you are in production it
+prints the exact command to move to the agent workspace.
+
+Detection is path based. The helper resolves its own checkout root and
+compares it with the production checkout (`WATCH_PROD_DIR`, default
+`/opt/watch`) and the agent worktree (`WATCH_AGENT_DIR`, default
+`<production>/.worktrees/watch-agent`). The shared logic lives in
+`scripts/watch-agent/_context.sh`, which is sourced by all four helpers.
+If a checkout matches neither path but is on `agent/daily-development`, it
+is treated as `MODE: AGENT`; otherwise the mode is `UNKNOWN` and the helper
+behaves like an agent workspace without production guidance.
+
+Example — running `status.sh` from production:
+
+```text
+== Context ==
+  MODE: PRODUCTION
+  ...
+
+  Production checkout detected.
+  Agent workspace:
+    /opt/watch/.worktrees/watch-agent
+  Suggested command:
+    cd /opt/watch/.worktrees/watch-agent
+```
+
+Example — running `status.sh` from the agent worktree:
+
+```text
+== Context ==
+  MODE: AGENT
+  ...
+```
+
 ---
 
 ## 2. Directory layout
@@ -45,6 +99,11 @@ files are never touched** by agent operations.
 ├── .worktrees/
 │   └── watch-agent/              # development worktree (agent/daily-development)
 │       ├── scripts/watch-agent/  # operational helper commands
+│       │   ├── _context.sh       # shared production/agent context detection
+│       │   ├── start.sh
+│       │   ├── status.sh
+│       │   ├── review.sh
+│       │   └── sync.sh
 │       ├── docs/                 # this document and other docs
 │       ├── agent-reports/        # task reports (permanent project artifacts)
 │       └── ...                   # source, tests, templates, ai/
@@ -120,21 +179,24 @@ already exists.
 ## 5. Helper commands
 
 All helpers live in `scripts/watch-agent/`. They are **read-only visibility
-and preparation tools**. They never push, merge, rebase, reset, clean,
-delete files, or touch production.
+and preparation tools** and they are **context aware** (see
+"Production vs Agent Workspace" above). They never push, merge, rebase,
+reset, clean, delete files, or touch production.
 
 | Command | Purpose |
 |---------|---------|
-| `scripts/watch-agent/start.sh [--attach]` | Show the environment, branch, HEAD, clean/dirty status and tmux guidance. |
-| `scripts/watch-agent/status.sh` | One-command overview: branch, commit, remote tracking, changed files, latest commits, pending agent reports. |
-| `scripts/watch-agent/review.sh` | Pre-merge/pre-push review: commits and files since the base, tests/report availability, latest report READY TO PUSH, and an overall assessment. |
-| `scripts/watch-agent/sync.sh` | Fetch `origin` and show branch relationships. No merge, no reset, no rebase, no push. |
+| `scripts/watch-agent/start.sh [--attach]` | Show the detected mode, environment, branch, HEAD, clean/dirty status and tmux guidance. In production it points at the agent workspace; in the agent worktree it shows the agent branch and next commands. |
+| `scripts/watch-agent/status.sh` | One-command overview. In production: `MODE: PRODUCTION`, production state and a `cd` hint. In the agent worktree: `MODE: AGENT`, branch, commit, remote tracking, changed files, latest commits, pending agent reports. |
+| `scripts/watch-agent/review.sh` | Pre-merge/pre-push review: commits and files since the base, tests/report availability, latest report READY TO PUSH, and an overall assessment. Run from production it explains that review normally runs from the agent workspace and performs no agent review. |
+| `scripts/watch-agent/sync.sh` | Fetch `origin` and show branch relationships (production sync status or agent branch sync status). No merge, no reset, no rebase, no push. |
+| `scripts/watch-agent/_context.sh` | Shared context detection sourced by the helpers. Not run directly. |
 
 Environment overrides (all optional):
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `WATCH_PROD_DIR` | `/opt/watch` | Production checkout path. |
+| `WATCH_AGENT_DIR` | `<production>/.worktrees/watch-agent` | Agent worktree path. |
 | `WATCH_AGENT_BRANCH` | `agent/daily-development` | Expected agent branch. |
 | `WATCH_MAIN_BRANCH` | `main` | Integration branch. |
 | `WATCH_BASE_BRANCH` | `origin/main` | Review base override. |
@@ -252,6 +314,10 @@ The helper scripts are intentionally incapable of destructive actions:
 - no merge / rebase / stash manipulation
 - no modification of the production checkout
 - no service restarts
+
+Context detection (via `scripts/watch-agent/_context.sh`) is itself
+read-only: it resolves paths, reads the current branch and prints guidance.
+It never writes, checks out, or changes any ref.
 
 They only read Git state, `git fetch` remote refs (safe), and print
 guidance. Any destructive or production action remains an explicit human
