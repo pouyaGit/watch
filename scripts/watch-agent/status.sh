@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 #
-# status.sh — one-command operational overview for the agent worktree.
+# status.sh — one-command operational overview, context aware.
+#
+# Detects whether it is running from the production checkout or from the
+# agent worktree and reports the matching state. When run from production it
+# shows production status and points at the agent workspace instead of issuing
+# agent-only warnings.
 #
 # Read-only. This script NEVER pushes, merges, rebases, resets, cleans,
 # deletes files, or touches the production checkout.
@@ -10,6 +15,7 @@
 #
 # Environment overrides:
 #   WATCH_PROD_DIR       production checkout   (default: /opt/watch)
+#   WATCH_AGENT_DIR      agent worktree        (default: <prod>/.worktrees/watch-agent)
 #   WATCH_AGENT_BRANCH   agent branch          (default: agent/daily-development)
 #   WATCH_MAIN_BRANCH    integration branch    (default: main)
 #
@@ -17,8 +23,11 @@
 set -u
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-WORKTREE_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
-PRODUCTION_DIR="${WATCH_PROD_DIR:-/opt/watch}"
+# shellcheck source=scripts/watch-agent/_context.sh
+. "$SCRIPT_DIR/_context.sh"
+
+WORKTREE_ROOT="$WATCH_WORKTREE_ROOT"
+PRODUCTION_DIR="$WATCH_PRODUCTION_DIR"
 AGENT_BRANCH="${WATCH_AGENT_BRANCH:-agent/daily-development}"
 MAIN_BRANCH="${WATCH_MAIN_BRANCH:-main}"
 REPORT_DIR="$WORKTREE_ROOT/agent-reports"
@@ -61,10 +70,33 @@ head_sha="$(git_ rev-parse --short HEAD 2>/dev/null || true)"
 head_subject="$(git_ log -1 --pretty=%s 2>/dev/null || true)"
 upstream="$(git_ rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
 
-section "Branch"
-item "worktree" "${WORKTREE_ROOT}  ${DIM}(production: ${PRODUCTION_DIR})${RESET}"
-item "branch"   "${branch:-<detached HEAD>}"
-item "commit"   "${head_sha:-?}  ${head_subject}"
+section "Context"
+printf '  MODE: %s\n' "$WATCH_MODE"
+item "checkout"     "$WORKTREE_ROOT"
+item "invoked from" "$WATCH_INVOKED_FROM"
+item "branch"       "${branch:-<detached HEAD>}"
+item "commit"       "${head_sha:-?}  ${head_subject}"
+
+if watch_mode_is_production; then
+  printf '\n'
+  watch_print_production_hint
+
+  section "Production working tree"
+  if [ -z "$(git_ status --porcelain)" ]; then
+    ok "clean"
+  else
+    warn "uncommitted changes:"
+    git_ status --short | sed 's/^/        /'
+  fi
+
+  section "Latest production commits"
+  git_ log --oneline -10 2>/dev/null | sed 's/^/  /'
+
+  printf '\n  %sProduction checkout: agent review does not run here.%s\n' "$DIM" "$RESET"
+  printf '  %sRun status/review/sync from the agent workspace above.%s\n' "$DIM" "$RESET"
+  exit 0
+fi
+
 if [ -n "$branch" ] && [ "$branch" != "$AGENT_BRANCH" ]; then
   warn "expected agent branch '$AGENT_BRANCH'"
 fi

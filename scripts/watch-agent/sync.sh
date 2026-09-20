@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 #
-# sync.sh — safe synchronization helper for the agent worktree.
+# sync.sh — safe synchronization helper, context aware.
+#
+# Detects whether it is running from the production checkout or from the
+# agent worktree and reports the matching branch relationships (production
+# sync status vs agent branch sync status).
 #
 # It only fetches and reports branch relationships. This script NEVER
 # merges, rebases, resets, cleans, deletes files, pushes, or touches the
@@ -10,15 +14,20 @@
 #   scripts/watch-agent/sync.sh
 #
 # Environment overrides:
-#   WATCH_MAIN_BRANCH    integration branch (default: main)
-#   WATCH_AGENT_BRANCH   agent branch       (default: agent/daily-development)
-#   WATCH_REMOTE         git remote         (default: origin)
+#   WATCH_PROD_DIR       production checkout (default: /opt/watch)
+#   WATCH_AGENT_DIR      agent worktree      (default: <prod>/.worktrees/watch-agent)
+#   WATCH_MAIN_BRANCH    integration branch  (default: main)
+#   WATCH_AGENT_BRANCH   agent branch        (default: agent/daily-development)
+#   WATCH_REMOTE         git remote          (default: origin)
 #
 # See docs/AUTONOMOUS_DEVELOPMENT_WORKFLOW.md for the full workflow.
 set -u
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-WORKTREE_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+# shellcheck source=scripts/watch-agent/_context.sh
+. "$SCRIPT_DIR/_context.sh"
+
+WORKTREE_ROOT="$WATCH_WORKTREE_ROOT"
 MAIN_BRANCH="${WATCH_MAIN_BRANCH:-main}"
 AGENT_BRANCH="${WATCH_AGENT_BRANCH:-agent/daily-development}"
 REMOTE="${WATCH_REMOTE:-origin}"
@@ -56,6 +65,11 @@ if [ ! -e "$WORKTREE_ROOT/.git" ]; then
   exit 1
 fi
 
+section "Context"
+printf '  MODE: %s\n' "$WATCH_MODE"
+item "checkout"     "$WORKTREE_ROOT"
+item "invoked from" "$WATCH_INVOKED_FROM"
+
 section "Fetch $REMOTE"
 if ! command -v git >/dev/null 2>&1; then
   err "git is not installed"
@@ -71,28 +85,57 @@ else
   warn "remote '$REMOTE' is not configured"
 fi
 
-section "Branch relationships"
 branch="$(git_ branch --show-current 2>/dev/null || true)"
 head_sha="$(git_ rev-parse --short HEAD 2>/dev/null || true)"
-item "branch" "${branch:-<detached HEAD>}"
-item "commit" "${head_sha:-?}"
 
-for ref in "origin/$MAIN_BRANCH" "$MAIN_BRANCH" "$AGENT_BRANCH"; do
-  rel="$(ahead_behind "$ref")"
-  if [ -n "$rel" ]; then
-    item "vs $ref" "$rel"
-  else
-    warn "unknown ref: $ref"
+if watch_mode_is_production; then
+  section "Production sync status"
+  item "branch" "${branch:-<detached HEAD>}"
+  item "commit" "${head_sha:-?}"
+
+  for ref in "origin/$MAIN_BRANCH" "$MAIN_BRANCH"; do
+    rel="$(ahead_behind "$ref")"
+    if [ -n "$rel" ]; then
+      item "vs $ref" "$rel"
+    else
+      warn "unknown ref: $ref"
+    fi
+  done
+
+  if git_ rev-parse --verify --quiet "origin/$MAIN_BRANCH" >/dev/null 2>&1; then
+    section "Unpushed commits on ${branch:-HEAD} (vs origin/$MAIN_BRANCH)"
+    graph="$(git_ log --oneline --left-right "origin/$MAIN_BRANCH...HEAD" 2>/dev/null | head -20 || true)"
+    if [ -n "$graph" ]; then
+      printf '%s\n' "$graph" | sed 's/^/  /'
+    else
+      ok "nothing to push"
+    fi
   fi
-done
 
-if git_ rev-parse --verify --quiet "origin/$MAIN_BRANCH" >/dev/null 2>&1; then
-  section "Unpushed commits on $branch (vs origin/$MAIN_BRANCH)"
-  graph="$(git_ log --oneline --left-right "origin/$MAIN_BRANCH...HEAD" 2>/dev/null | head -20 || true)"
-  if [ -n "$graph" ]; then
-    printf '%s\n' "$graph" | sed 's/^/  /'
-  else
-    ok "nothing to push"
+  printf '\n  %sProduction checkout; agent branch checks are skipped here.%s\n' "$DIM" "$RESET"
+  printf '  %sRun sync.sh from the agent workspace for agent branch sync status.%s\n' "$DIM" "$RESET"
+else
+  section "Agent branch sync status"
+  item "branch" "${branch:-<detached HEAD>}"
+  item "commit" "${head_sha:-?}"
+
+  for ref in "origin/$MAIN_BRANCH" "$MAIN_BRANCH" "$AGENT_BRANCH"; do
+    rel="$(ahead_behind "$ref")"
+    if [ -n "$rel" ]; then
+      item "vs $ref" "$rel"
+    else
+      warn "unknown ref: $ref"
+    fi
+  done
+
+  if git_ rev-parse --verify --quiet "origin/$MAIN_BRANCH" >/dev/null 2>&1; then
+    section "Unpushed commits on $branch (vs origin/$MAIN_BRANCH)"
+    graph="$(git_ log --oneline --left-right "origin/$MAIN_BRANCH...HEAD" 2>/dev/null | head -20 || true)"
+    if [ -n "$graph" ]; then
+      printf '%s\n' "$graph" | sed 's/^/  /'
+    else
+      ok "nothing to push"
+    fi
   fi
 fi
 

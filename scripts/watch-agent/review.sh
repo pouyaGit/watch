@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 #
-# review.sh — pre-merge / pre-push review helper for the agent worktree.
+# review.sh — pre-merge / pre-push review helper, context aware.
+#
+# Detects whether it is running from the production checkout or from the
+# agent worktree. From production it explains that review normally runs from
+# the agent workspace and shows the current production state without running
+# an agent review. From the agent workspace it keeps the full pre-push review.
 #
 # Read-only. This script NEVER pushes, merges, rebases, resets, cleans,
 # deletes files, or touches the production checkout. It only reports.
@@ -9,15 +14,20 @@
 #   scripts/watch-agent/review.sh
 #
 # Environment overrides:
-#   WATCH_BASE_BRANCH    review base        (default: origin/main, else main)
-#   WATCH_MAIN_BRANCH    integration branch (default: main)
-#   WATCH_AGENT_BRANCH   agent branch       (default: agent/daily-development)
+#   WATCH_PROD_DIR       production checkout (default: /opt/watch)
+#   WATCH_AGENT_DIR      agent worktree      (default: <prod>/.worktrees/watch-agent)
+#   WATCH_BASE_BRANCH    review base         (default: origin/main, else main)
+#   WATCH_MAIN_BRANCH    integration branch  (default: main)
+#   WATCH_AGENT_BRANCH   agent branch        (default: agent/daily-development)
 #
 # See docs/AUTONOMOUS_DEVELOPMENT_WORKFLOW.md for the full workflow.
 set -u
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-WORKTREE_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+# shellcheck source=scripts/watch-agent/_context.sh
+. "$SCRIPT_DIR/_context.sh"
+
+WORKTREE_ROOT="$WATCH_WORKTREE_ROOT"
 MAIN_BRANCH="${WATCH_MAIN_BRANCH:-main}"
 AGENT_BRANCH="${WATCH_AGENT_BRANCH:-agent/daily-development}"
 REPORT_DIR="$WORKTREE_ROOT/agent-reports"
@@ -82,12 +92,47 @@ fi
 
 branch="$(git_ branch --show-current 2>/dev/null || true)"
 head_sha="$(git_ rev-parse --short HEAD 2>/dev/null || true)"
+
+section "Context"
+printf '  MODE: %s\n' "$WATCH_MODE"
+item "worktree" "${WATCH_WORKTREE_ROOT}"
+item "invoked from" "$WATCH_INVOKED_FROM"
+item "branch"   "${branch:-<detached HEAD>}"
+item "commit"   "${head_sha:-?}"
+
+if watch_mode_is_production; then
+  printf '\n  %sReview should normally run from the agent workspace.%s\n' "$DIM" "$RESET"
+
+  section "Current production state"
+  item "branch" "${branch:-<detached HEAD>}"
+  item "commit" "${head_sha:-?}"
+  if [ -z "$(git_ status --porcelain)" ]; then
+    ok "working tree clean"
+  else
+    warn "working tree has uncommitted changes:"
+    git_ status --short | sed 's/^/        /'
+  fi
+  upstream="$(git_ rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  if [ -n "$upstream" ]; then
+    counts="$(git_ rev-list --left-right --count "$upstream...HEAD" 2>/dev/null || true)"
+    if [ -n "$counts" ]; then
+      behind="${counts%%[[:space:]]*}"; ahead="${counts##*[[:space:]]}"
+      item "vs $upstream" "behind $behind, ahead $ahead"
+    fi
+  fi
+
+  section "Agent workspace"
+  watch_print_production_hint
+
+  printf '\n  %sNo agent review was performed (running from the production checkout).%s\n' "$DIM" "$RESET"
+  printf '  %sRe-run review.sh from the agent workspace to review agent commits.%s\n' "$DIM" "$RESET"
+  exit 0
+fi
+
 base="$(resolve_base || true)"
 
 section "Review context"
-item "worktree" "$WORKTREE_ROOT"
 item "branch"   "${branch:-<detached HEAD>}"
-item "commit"   "${head_sha:-?}"
 if [ -n "$base" ]; then
   item "base" "$base"
 else
