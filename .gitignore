@@ -54,12 +54,16 @@ resolvers.txt
 temp/
 programs/*
 !programs/test_program.json
-!programs/watch_sync_programs.pyai_data/raw/
+!programs/watch_sync_programs.py
+ai_data/raw/
 ai_data/research/
 ai_data/cve/
 
 # Local tooling
 .commandcode/
+
+# Development worktrees (agent workspace; never part of the project)
+.worktrees/
 
 # Runtime crawler output
 crawl/output/
