@@ -13,6 +13,13 @@ Data sources (all read-only, all fail-soft):
 - ``backend.watchlist_data``       -- local watchlist snapshots + existing
   deterministic evidence-gap projection (the R30.1/R30.2/R31 evidence
   vocabulary is surfaced verbatim, never upgraded).
+- ``backend.command_intelligence`` -- read-only aggregations over the
+  existing candidate views: research operations counters and the
+  Discovery -> Metadata -> Evidence -> Verification -> Review research
+  pipeline (progress only; never a vulnerability verdict).
+- ``backend.agent_operations``     -- the autonomous development workspace
+  facts (mode, workspace, branch, agent reports, tmux socket probe), read
+  from filesystem + Git metadata only.
 - ``backend.research_activity``    -- the existing R83 bounded AI runtime
   status contract (agent runs, scheduler lock, window policy).
 - ``backend.dashboard.latest_runs`` -- the existing recon operation status.
@@ -31,6 +38,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
+from backend import agent_operations as adata
+from backend import command_intelligence as cintel
 from backend import watchlist_data as wdata
 from backend.deps import API_KEY, build_url, verify_api_key
 from backend.templating import templates
@@ -193,11 +202,12 @@ def _activity_from_research(activity: dict | None) -> list:
 
 
 def _timeline(activity: dict | None, runs: list, watchlist_items: list,
-              limit: int = ACTIVITY_LIMIT) -> list:
+              report_items: list, limit: int = ACTIVITY_LIMIT) -> list:
     items = (
         _activity_from_watchlist(watchlist_items)
         + _activity_from_runs(runs)
         + _activity_from_research(activity)
+        + list(report_items or [])
     )
     items = [item for item in items if item.get("at") is not None]
     items.sort(key=lambda item: item["at"], reverse=True)
@@ -218,19 +228,42 @@ def _attach_research_links(watchlist: dict) -> None:
                 candidate["research_url"] = build_url(f"/ui/research/{cve}")
 
 
+def _attach_lifecycle_links(lifecycle: dict) -> None:
+    """Add api-key-propagating research links to lifecycle candidates (in place)."""
+
+    for candidate in lifecycle.get("candidates") or []:
+        cve = candidate.get("cve_id")
+        if cve:
+            candidate["research_url"] = build_url(f"/ui/research/{cve}")
+
+
 def _command_payload(program: Optional[str] = None,
                      *, with_links: bool = False) -> dict:
-    """Compose the bounded Command Center projection (no secrets, no paths)."""
+    """Compose the bounded Command Center projection.
+
+    No secrets and no credential-bearing URLs. The Agent Operations panel
+    intentionally carries the local agent workspace path (operational context,
+    not a secret); report entries carry names only, never filesystem paths.
+    """
 
     watchlist = wdata.overview(program=program)
-    if with_links:
-        _attach_research_links(watchlist)
     activity = _collect_activity()
     runs = _operation_runs()
     watchlist_items = wdata.recent_activity(limit=ACTIVITY_LIMIT)
+    report_items = adata.recent_report_activity()
+    research_ops = cintel.research_operations(watchlist)
+    lifecycle = cintel.lifecycle_view(
+        watchlist, report_cves=cintel.report_cves_for(watchlist)
+    )
+    if with_links:
+        _attach_research_links(watchlist)
+        _attach_lifecycle_links(lifecycle)
     return {
         "watchlist": watchlist,
         "activity": activity,
+        "agent": adata.agent_operations(),
+        "research_ops": research_ops,
+        "lifecycle": lifecycle,
         "runs": [
             {
                 "task_id": run.get("task_id"),
@@ -241,7 +274,7 @@ def _command_payload(program: Optional[str] = None,
             for run in runs
         ],
         "last_successful_run": _last_successful_run(runs),
-        "timeline": _timeline(activity, runs, watchlist_items),
+        "timeline": _timeline(activity, runs, watchlist_items, report_items),
     }
 
 

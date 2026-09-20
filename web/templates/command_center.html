@@ -37,6 +37,83 @@
   <a class="quick-action" href="{{ changes_url }}"><span class="qa-icon">±</span> Recent Changes</a>
 </div>
 
+{# ======================= A0. AGENT OPERATIONS ======================= #}
+<div class="section-label">Agent Operations
+  <span class="rl-note">autonomous development context · read-only filesystem + git metadata</span>
+</div>
+
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Agent status</h2>
+    <span class="badge-sm">
+      {% if agent.mode == 'AGENT' %}agent workspace{% elif agent.mode == 'PRODUCTION' %}production checkout{% else %}unknown workspace{% endif %}
+    </span>
+  </div>
+  <div class="panel-body">
+    <div class="kpi-grid kpi-4 kpi-research mb-4">
+      <div class="stat-card">
+        <div class="stat-label">Mode</div>
+        <div class="stat-value {{ 'ok' if agent.mode == 'AGENT' else '' }}">{{ agent.mode }}</div>
+        <div class="stat-sub">{% if agent.mode == 'AGENT' %}autonomous agent worktree{% elif agent.mode == 'PRODUCTION' %}production checkout{% else %}unrecognised checkout{% endif %}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Branch</div>
+        <div class="stat-value mono text-sm">{{ agent.branch or '—' }}</div>
+        <div class="stat-sub">expected {{ agent.expected_branch }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Agent reports</div>
+        <div class="stat-value">{{ agent.report_count | fmtnum }}</div>
+        <div class="stat-sub">{% if agent.latest_report %}{{ agent.latest_report.modified_at | ago }}{% else %}none observed{% endif %}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">tmux</div>
+        <div class="stat-value {{ 'ok' if agent.tmux.server_present else '' }}">{{ agent.tmux.state }}</div>
+        <div class="stat-sub">{{ agent.tmux.session }} · socket probe only</div>
+      </div>
+    </div>
+
+    <div class="cc-kv"><span class="cc-kv-key">workspace</span><span class="cc-kv-val mono">{{ agent.workspace }}</span></div>
+    <div class="cc-kv"><span class="cc-kv-key">production</span><span class="cc-kv-val mono">{{ agent.production_root }}</span></div>
+
+    {% if agent.latest_report %}
+    <div class="cc-report mt-4">
+      <div class="cc-report-head">
+        <span class="cc-report-title">{{ agent.latest_report.title }}</span>
+        {% if agent.latest_report.ready_to_push | upper == 'YES' %}
+        <span class="badge badge-ok">READY TO PUSH: YES</span>
+        {% elif agent.latest_report.ready_to_push %}
+        <span class="badge badge-warn">READY TO PUSH: {{ agent.latest_report.ready_to_push | upper }}</span>
+        {% else %}
+        <span class="badge badge-idle">READY TO PUSH: —</span>
+        {% endif %}
+      </div>
+      <div class="cc-report-meta">
+        {{ agent.latest_report.name }} ·
+        <span title="{{ agent.latest_report.modified_at | tehran }}">{{ agent.latest_report.modified_at | ago }}</span>
+        · {{ agent.latest_report.size_bytes | fmtnum }} B
+      </div>
+      {% if agent.latest_report.task %}<div class="cc-report-task">{{ agent.latest_report.task }}</div>{% endif %}
+      <div class="cc-report-fields">
+        {% if agent.latest_report.commit_status %}<span class="cc-chip">commit: {{ agent.latest_report.commit_status }}</span>{% endif %}
+        {% if agent.latest_report.push_status %}<span class="cc-chip">push: {{ agent.latest_report.push_status }}</span>{% endif %}
+      </div>
+    </div>
+    {% else %}
+      {{ empty_state("No agent reports observed", "No persisted report was found under agent-reports/. Nothing is fabricated.", compact=True) }}
+    {% endif %}
+
+    {% if agent.recent_reports | length > 1 %}
+    <div class="cc-reports-mini">
+      <span class="cc-label">Recent reports</span>
+      {% for rep in agent.recent_reports %}
+      <span class="cc-chip" title="{{ rep.modified_at | tehran }}">{{ rep.name }} · {{ rep.modified_at | ago }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</section>
+
 {# ============================ A. RUNTIME STATUS ============================ #}
 <div class="section-label">System / Runtime Status
   <span class="rl-note">read-only runtime facts — never a health score</span>
@@ -188,6 +265,109 @@
 </div>
 {% endif %}
 
+{# ===================== B2. RESEARCH OPERATIONS ===================== #}
+<div class="section-label">Research Operations
+  <span class="rl-note">aggregated from the latest persisted watchlist snapshots · research only</span>
+</div>
+
+{% if research_ops.available %}
+<div class="kpi-grid kpi-4 kpi-research mb-6">
+  <div class="stat-card">
+    <div class="stat-label">Candidates</div>
+    <div class="stat-value">{{ research_ops.candidate_count | fmtnum }}</div>
+    <div class="stat-sub">across {{ research_ops.snapshots | length }} program snapshot(s)</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Confidence levels</div>
+    <div class="stat-value text-sm">
+      {% for k, v in research_ops.confidence.items() %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% else %}—{% endfor %}
+    </div>
+    <div class="stat-sub">strongest observed asset-match confidence</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Evidence readiness</div>
+    <div class="stat-value">{{ research_ops.readiness.get('INSUFFICIENT_EVIDENCE', 0) | fmtnum }} insufficient</div>
+    <div class="stat-sub">{{ research_ops.readiness.get('EVIDENCE_PARTIAL', 0) | fmtnum }} partial · {{ research_ops.readiness.get('EVIDENCE_READY', 0) | fmtnum }} ready</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Blockers</div>
+    <div class="stat-value accent2">{{ research_ops.blockers | length | fmtnum }}</div>
+    <div class="stat-sub">distinct remaining blockers</div>
+  </div>
+</div>
+
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Evidence gaps &amp; blockers</h2>
+    <span class="badge-sm">existing deterministic vocabulary</span>
+  </div>
+  <div class="panel-body">
+    <div class="cc-chiprow">
+      <span class="cc-label">Missing</span>
+      {% for item in research_ops.missing_dimensions %}
+      <span class="cc-chip cc-missing">{{ item.dimension }} {{ item.count | fmtnum }}</span>
+      {% else %}<span class="text-muted text-xs">—</span>{% endfor %}
+    </div>
+    <div class="cc-chiprow">
+      <span class="cc-label">Partial</span>
+      {% for item in research_ops.partial_dimensions %}
+      <span class="cc-chip cc-partial-chip">{{ item.dimension }} {{ item.count | fmtnum }}</span>
+      {% else %}<span class="text-muted text-xs">—</span>{% endfor %}
+    </div>
+    <div class="cc-chiprow">
+      <span class="cc-label">Blockers</span>
+      {% for item in research_ops.blockers %}
+      <span class="cc-chip">{{ item.blocker }} {{ item.count | fmtnum }}</span>
+      {% else %}<span class="text-muted text-xs">none</span>{% endfor %}
+    </div>
+    <div class="cc-chiprow">
+      <span class="cc-label">Asset match</span>
+      {% for state, count in research_ops.match_states.items() %}
+      <span class="cc-chip">{{ state }} {{ count | fmtnum }}</span>
+      {% else %}<span class="text-muted text-xs">no candidates</span>{% endfor %}
+    </div>
+    <div class="cc-chiprow">
+      <span class="cc-label">Research status</span>
+      {% for state, count in research_ops.research_status.items() %}
+      <span class="cc-chip">{{ state }} {{ count | fmtnum }}</span>
+      {% else %}<span class="text-muted text-xs">no candidates</span>{% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Latest snapshots</h2>
+    <span class="badge-sm">{{ research_ops.snapshots | length }} program(s)</span>
+  </div>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr><th>Program</th><th>Snapshot</th><th class="num">CVEs</th><th>Delta</th><th>Readiness</th><th>Captured</th></tr>
+      </thead>
+      <tbody>
+        {% for snap in research_ops.snapshots %}
+        <tr>
+          <td class="text-xs">{{ snap.program }}</td>
+          <td class="mono text-xs">{{ snap.snapshot_id }}{% if snap.snapshot_count > 1 %}<span class="text-muted"> · {{ snap.snapshot_count }} snapshots</span>{% endif %}</td>
+          <td class="num text-xs">{{ snap.cve_count | fmtnum }}</td>
+          <td class="text-xs">NEW {{ snap.delta_counts.get('NEW', 0) }} · CHANGED {{ snap.delta_counts.get('CHANGED', 0) }} · UNCHANGED {{ snap.delta_counts.get('UNCHANGED', 0) }}</td>
+          <td class="text-xs">ready {{ snap.readiness_counts.get('EVIDENCE_READY', 0) }} · partial {{ snap.readiness_counts.get('EVIDENCE_PARTIAL', 0) }} · insufficient {{ snap.readiness_counts.get('INSUFFICIENT_EVIDENCE', 0) }}</td>
+          <td class="text-xs" title="{{ snap.created_utc | tehran }}">{% if snap.created_utc %}{{ snap.created_utc | ago }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+<div class="panel mb-6">
+  <div class="panel-body">
+    {{ empty_state("No research operations to show", "No persisted watchlist snapshots are available; nothing is aggregated or invented.", compact=True) }}
+  </div>
+</div>
+{% endif %}
+
 {# ============================ C. CANDIDATES ============================ #}
 <div class="section-label">Candidates
   <span class="rl-note">deterministic matcher output — not confirmed vulnerabilities</span>
@@ -288,6 +468,73 @@
 <div class="panel mb-6">
   <div class="panel-body">
     {{ empty_state("No candidates to show", "Candidates appear once a watchlist sweep has persisted a snapshot.", compact=True) }}
+  </div>
+</div>
+{% endif %}
+
+{# ====================== C2. FINDINGS LIFECYCLE ====================== #}
+<div class="section-label">Findings Lifecycle
+  <span class="rl-note">research pipeline progress only · never a vulnerability verdict</span>
+</div>
+
+{% if lifecycle.available %}
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Pipeline</h2>
+    <span class="badge-sm">Discovery → Metadata → Evidence → Verification → Review</span>
+  </div>
+  <div class="panel-body">
+    <div class="cc-pipe-summary">
+      {% for stage in lifecycle.summary %}
+      <div class="cc-pipe-stage">
+        <div class="cc-pipe-stage-name">{{ stage.stage }}</div>
+        <div class="cc-pipe-stage-counts">
+          <span class="cc-stage cc-stage-complete">{{ stage.complete }} complete</span>
+          {% if stage.in_progress %}<span class="cc-stage cc-stage-in_progress">{{ stage.in_progress }} in progress</span>{% endif %}
+          {% if stage.pending %}<span class="cc-stage cc-stage-pending">{{ stage.pending }} pending</span>{% endif %}
+          {% if stage.blocked %}<span class="cc-stage cc-stage-blocked">{{ stage.blocked }} blocked</span>{% endif %}
+          {% if stage.not_started %}<span class="cc-stage cc-stage-not_started">{{ stage.not_started }} not started</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Candidate pipelines</h2>
+    <span class="badge-sm">{{ lifecycle.candidate_count | fmtnum }} candidate(s){% if lifecycle.candidate_count > (lifecycle.candidates | length) %} · showing {{ lifecycle.candidates | length }}{% endif %}</span>
+  </div>
+  <div class="table-wrap">
+    <table class="tbl cc-tbl">
+      <thead>
+        <tr>
+          <th>CVE</th>
+          <th>Program</th>
+          {% for stage in lifecycle.stages %}<th>{{ stage }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for life in lifecycle.candidates %}
+        <tr>
+          <td><a class="cve-link" href="{{ life.research_url }}">{{ life.cve_id }}</a></td>
+          <td class="text-xs">{{ life.program }}</td>
+          {% for stage in life.stages %}
+          <td>
+            <span class="cc-stage cc-stage-{{ stage.state | lower }}" title="{{ stage.detail }}">{{ stage.state }}</span>
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+<div class="panel mb-6">
+  <div class="panel-body">
+    {{ empty_state("No lifecycle data", "No watchlist candidates are available to map onto the research pipeline.", compact=True) }}
   </div>
 </div>
 {% endif %}
