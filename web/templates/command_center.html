@@ -35,6 +35,7 @@
   <a class="quick-action" href="{{ runs_url }}"><span class="qa-icon">↻</span> Runs</a>
   <a class="quick-action" href="{{ agent_url }}"><span class="qa-icon">⚙</span> Research Agent</a>
   <a class="quick-action" href="{{ changes_url }}"><span class="qa-icon">±</span> Recent Changes</a>
+  <a class="quick-action" href="{{ attack_surface_url }}"><span class="qa-icon">⌖</span> Attack Surface</a>
 </div>
 
 {# ======================= A0. AGENT OPERATIONS ======================= #}
@@ -446,7 +447,7 @@
 {% endif %}
 
 {# =============== B1. ATTACK SURFACE INTELLIGENCE =============== #}
-<div class="section-label">Attack Surface Intelligence
+<div class="section-label section-anchor" id="attack-surface">Attack Surface Intelligence
   <span class="rl-note">deterministic research candidates from existing recon data · never confirmed vulnerabilities</span>
 </div>
 

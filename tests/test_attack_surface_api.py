@@ -8,6 +8,7 @@ Command Center section rendering and the no-write guarantee.
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from unittest import mock
 
@@ -159,6 +160,70 @@ class TestAttackSurfaceApi(unittest.TestCase):
             ).lower()
         for token in ("http://", "https://", "vulnerable", "exploitable"):
             self.assertNotIn(token, blob)
+
+
+class TestAttackSurfaceNavigation(unittest.TestCase):
+    """The Attack Surface Intelligence section must be reachable from the UI."""
+
+    @classmethod
+    def setUpClass(cls):
+        from api import app
+
+        cls.client = TestClient(app)
+
+    def _get(self, path, **params):
+        if API_KEY:
+            params["api_key"] = API_KEY
+        return self.client.get(path, params=params)
+
+    def _dashboard_mocks(self):
+        counts = {"programs": 0, "subdomains": 0, "live": 0, "http": 0,
+                  "urls": 0, "endpoints": 0, "params": 0,
+                  "fresh_http_24h": 0}
+        return (
+            mock.patch("backend.dashboard.global_counts", return_value=counts),
+            mock.patch("backend.dashboard.program_rows", return_value=[]),
+            mock.patch("backend.dashboard.latest_runs", return_value=[]),
+            mock.patch("backend.dashboard.recent_changes", return_value=[]),
+            mock.patch("backend.dashboard.activity_summary",
+                       return_value={"total": 0}),
+        )
+
+    def test_sidebar_link_present_on_command_center(self):
+        with _patch_loader(_fixture_snapshot()), \
+             mock.patch("backend.dashboard.latest_runs", return_value=[]):
+            response = self._get("/ui/command")
+        self.assertEqual(response.status_code, 200)
+        link = re.search(
+            r'<a class="side-link side-sub[^"]*" href="([^"]*)"[^>]*>\s*'
+            r'<span class="side-ico">[^<]*</span>Attack Surface</a>',
+            response.text,
+        )
+        self.assertIsNotNone(link, "missing Attack Surface sidebar link")
+        self.assertEqual(link.group(1).split("?")[0].split("#")[0],
+                         "/ui/command")
+        self.assertIn("#attack-surface", link.group(1))
+        # the section anchor the link targets
+        self.assertIn('id="attack-surface"', response.text)
+
+    def test_quick_action_present(self):
+        with _patch_loader(_fixture_snapshot()), \
+             mock.patch("backend.dashboard.latest_runs", return_value=[]):
+            response = self._get("/ui/command")
+        quick = re.search(
+            r'<a class="quick-action" href="([^"]*)"[^>]*>\s*'
+            r'<span class="qa-icon">[^<]*</span>\s*Attack Surface</a>',
+            response.text,
+        )
+        self.assertIsNotNone(quick, "missing Attack Surface quick action")
+
+    def test_sidebar_link_present_on_other_pages(self):
+        patches = self._dashboard_mocks()
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            response = self._get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Attack Surface</a>", response.text)
+        self.assertIn("#attack-surface", response.text)
 
 
 class TestAttackSurfaceUi(unittest.TestCase):

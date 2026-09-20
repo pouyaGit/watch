@@ -40,6 +40,7 @@ def _ctx(request: Request, **extra):
         "root_url": build_url("/"),
         "home_url": build_url("/"),
         "command_url": build_url("/ui/command"),
+        "attack_surface_url": build_url("/ui/command") + "#attack-surface",
         "tasks_url": build_url("/ui/tasks"),
         "runs_url": build_url("/ui/runs"),
         "changes_url": build_url("/ui/changes"),
