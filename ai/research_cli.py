@@ -3567,6 +3567,97 @@ def run_agent_watchlist(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_agent_watchlist_delta(args: argparse.Namespace) -> int:
+    """Local watchlist delta intelligence (read-only by default).
+
+    Reads the two most recent local watchlist snapshots for one program,
+    compares them with ``ai.research_agent.watchlist_delta.compare_snapshots``
+    and prints the deterministic delta as JSON (``--json``) or a compact
+    human summary. Never invokes the real watchlist, never touches MongoDB,
+    never uses the network. With ``--apply``, additionally persists one
+    atomic no-overwrite delta artifact under the existing local watchlist
+    data directory; without ``--apply`` nothing is written.
+    """
+
+    from ai.research_agent.scheduler import SchedulerConfig
+    from ai.research_agent.watchlist_delta import (
+        build_delta_payload,
+        compare_snapshots,
+        two_most_recent_snapshots,
+        write_delta_snapshot,
+    )
+
+    config = SchedulerConfig.from_env()
+    snapshot_root = (
+        Path(getattr(args, "snapshot_root"))
+        if getattr(args, "snapshot_root", None)
+        else Path(config.research_dir) / "watchlist"
+    )
+    program = str(getattr(args, "program", "") or "dell").strip()
+    if not program:
+        print("ERROR: ValueError: invalid program", file=sys.stderr)
+        return 1
+
+    previous, current = two_most_recent_snapshots(snapshot_root, program)
+    if current is None:
+        print(
+            f"ERROR: ValueError: no local watchlist snapshots for "
+            f"program={program!r} under {snapshot_root}",
+            file=sys.stderr,
+        )
+        return 1
+
+    result = compare_snapshots(previous, current)
+
+    delta_path_name = ""
+    written = False
+    delta_id = ""
+    if bool(getattr(args, "apply", False)):
+        payload = build_delta_payload(previous, current, program=program)
+        delta_id = str(payload.get("delta_id") or "")
+        try:
+            dest, written = write_delta_snapshot(
+                payload, snapshot_root, program, delta_id
+            )
+        except (OSError, ValueError) as exc:
+            print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        delta_path_name = dest.name
+
+    if getattr(args, "json", False):
+        envelope = dict(result)
+        if bool(getattr(args, "apply", False)):
+            envelope["delta_id"] = delta_id
+            envelope["delta_path"] = delta_path_name
+            envelope["written"] = written
+        print(json.dumps(envelope, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    print("Watchlist delta")
+    print("===============")
+    print(
+        f"program={program} | "
+        f"previous={result['previous_snapshot_id'] or '-'} | "
+        f"current={result['current_snapshot_id'] or '-'}"
+    )
+    summary = result["summary"]
+    print(
+        "  summary: "
+        + ", ".join(f"{key}={summary.get(key, 0)}" for key in sorted(summary))
+    )
+    for change in result["changes"]:
+        print(f"  {change['cve_id']:18s} {change['change_type']}")
+    if bool(getattr(args, "apply", False)):
+        if written:
+            print(f"  delta written: {delta_path_name}")
+        else:
+            print("  delta written: no (replayed, already exists)")
+    else:
+        print("  delta written: no (dry-run)")
+    print("MODE: local-only structural comparison (no Mongo, no network)")
+    return 0
+
+
 def run_agent_schedule(args: argparse.Namespace) -> int:
     """R92: read-only case-aware scheduling preview (no execution, no writes)."""
 
@@ -3715,6 +3806,8 @@ def run_agent(args: argparse.Namespace) -> int:
         return run_agent_acquisitions(args)
     if command == "watchlist":
         return run_agent_watchlist(args)
+    if command == "watchlist-delta":
+        return run_agent_watchlist_delta(args)
     if command == "schedule":
         return run_agent_schedule(args)
     return 2
@@ -4623,6 +4716,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_watchlist.add_argument(
         "--json", action="store_true", help="emit the watchlist run as JSON"
+    )
+
+    agent_watchlist_delta = agent_sub.add_parser(
+        "watchlist-delta",
+        help="local watchlist delta intelligence: compare the two most "
+        "recent local snapshots for one program (read-only by default; "
+        "--apply writes one atomic no-overwrite delta artifact; never "
+        "invokes the real watchlist, never touches MongoDB)",
+    )
+    agent_watchlist_delta.add_argument(
+        "--program", default="dell", help="program to compare (default: dell)"
+    )
+    agent_watchlist_delta.add_argument(
+        "--snapshot-root",
+        default=None,
+        help="override the watchlist snapshot root "
+        "(default: <research_dir>/watchlist)",
+    )
+    agent_watchlist_delta.add_argument(
+        "--apply",
+        action="store_true",
+        help="persist the delta artifact (default: dry-run, no write)",
+    )
+    agent_watchlist_delta.add_argument(
+        "--json", action="store_true", help="emit the delta as JSON"
     )
 
     agent_schedule = agent_sub.add_parser(
