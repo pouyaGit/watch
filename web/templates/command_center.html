@@ -114,6 +114,81 @@
   </div>
 </section>
 
+{# ===================== A0b. REPOSITORY INTELLIGENCE ===================== #}
+{% set repo_cats = [
+  'source_changes', 'generated_knowledge', 'agent_reports',
+  'runtime_artifacts', 'ignored_artifacts', 'deleted_files',
+  'unknown_changes'
+] %}
+<div class="section-label">Repository Intelligence
+  <span class="rl-note">read-only index + working-tree classification · no git invocation</span>
+</div>
+
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Repository state</h2>
+    <span class="badge-sm">
+      {% if repository.available %}branch {{ repository.branch or '—' }}{% else %}unavailable{% endif %}
+    </span>
+  </div>
+  <div class="panel-body">
+    {% if repository.available %}
+    <div class="kpi-grid kpi-4 mb-4">
+      <div class="stat-card">
+        <div class="stat-label">State</div>
+        <div class="stat-value {{ 'ok' if repository.summary.state == 'clean' else 'warn' }}">{{ repository.summary.state | upper }}</div>
+        <div class="stat-sub">{{ repository.summary.total_changes | fmtnum }} change(s) detected</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Risk</div>
+        <div class="stat-value {% if repository.summary.risk in ('none', 'low') %}ok{% elif repository.summary.risk == 'medium' %}warn{% else %}err{% endif %}">{{ repository.summary.risk | upper }}</div>
+        <div class="stat-sub">source / deleted changes raise risk</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Branch</div>
+        <div class="stat-value mono text-sm">{{ repository.branch or '—' }}</div>
+        <div class="stat-sub">{{ 'detached HEAD' if repository.detached else ('index ' ~ ('available' if repository.index_available else 'unavailable')) }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Agent reports pending</div>
+        <div class="stat-value">{{ repository.summary.counts.get('agent_reports', 0) | fmtnum }}</div>
+        <div class="stat-sub">uncommitted report artifacts</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid kpi-4 kpi-secondary mb-4">
+      <div class="stat-card"><div class="stat-label">Source changes</div><div class="stat-value">{{ repository.summary.counts.get('source_changes', 0) | fmtnum }}</div></div>
+      <div class="stat-card"><div class="stat-label">Generated knowledge</div><div class="stat-value">{{ repository.summary.counts.get('generated_knowledge', 0) | fmtnum }}</div></div>
+      <div class="stat-card"><div class="stat-label">Runtime artifacts</div><div class="stat-value">{{ repository.summary.counts.get('runtime_artifacts', 0) | fmtnum }}</div></div>
+      <div class="stat-card"><div class="stat-label">Deleted files</div><div class="stat-value">{{ repository.summary.counts.get('deleted_files', 0) | fmtnum }}</div></div>
+    </div>
+
+    <div class="cc-repo-cats">
+      {% for cat in repo_cats %}
+        {% if repository.categories.get(cat) %}
+        <div class="cc-repo-cat">
+          <div class="cc-repo-cat-title">{{ cat }} · {{ repository.summary.counts.get(cat, 0) | fmtnum }}</div>
+          <div class="cc-repo-cat-list">
+            {% for path in repository.categories.get(cat) %}
+            <span class="cc-chip mono">{{ path }}</span>
+            {% endfor %}
+          </div>
+          {% if cat in repository.summary.truncated_categories %}
+          <div class="cc-note">list truncated to {{ repository.scan.display_limit }}; count is complete</div>
+          {% endif %}
+        </div>
+        {% endif %}
+      {% endfor %}
+      {% if repository.summary.state == 'clean' %}
+        {{ empty_state("Working tree clean", "No tracked modifications or untracked files were detected in this checkout.", compact=True) }}
+      {% endif %}
+    </div>
+    {% else %}
+      {{ empty_state("Repository intelligence unavailable", "The repository index could not be read. Nothing is fabricated.", compact=True) }}
+    {% endif %}
+  </div>
+</section>
+
 {# ======================= A1. SYSTEM OPERATIONS ======================= #}
 <div class="section-label">System Operations
   <span class="rl-note">read-only systemd unit state · never start/stop/restart</span>

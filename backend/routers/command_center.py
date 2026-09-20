@@ -8,6 +8,7 @@ the real runtime facts the rest of the dashboard already exposes.
     GET /ui/command              -- server-rendered Command Center
     GET /api/command/overview    -- bounded JSON projection of the same data
     GET /api/command/operations  -- bounded JSON system-operations projection
+    GET /api/command/repository  -- bounded JSON repository-state projection
 
 Data sources (all read-only, all fail-soft):
 
@@ -21,6 +22,10 @@ Data sources (all read-only, all fail-soft):
 - ``backend.agent_operations``     -- the autonomous development workspace
   facts (mode, workspace, branch, agent reports, tmux socket probe), read
   from filesystem + Git metadata only.
+- ``backend.repository_intelligence`` -- categorizes the running checkout's
+  uncommitted state (source/knowledge/reports/runtime/ignored/deleted/unknown)
+  from a read-only Git index parse plus a bounded working-tree scan. No git
+  command is executed.
 - ``backend.operations_status``    -- live operations: read-only ``systemctl
   show`` unit state + last execution for the primary Watch units, and host
   resources (CPU/RAM/disk/load/uptime) via the existing ``system_stats``.
@@ -31,9 +36,10 @@ Data sources (all read-only, all fail-soft):
   the existing htmx ``/api/system/stats`` fragment for live polling).
 
 No Mongo writes, no network, no LLM, no matcher invocation, no target
-interaction. The only subprocess is the bounded, read-only ``systemctl show``
-status query in ``backend.operations_status``. Missing observability is
-rendered as an honest empty/unavailable state, never invented.
+interaction and no git invocation. The only subprocess is the bounded,
+read-only ``systemctl show`` status query in ``backend.operations_status``.
+Missing observability is rendered as an honest empty/unavailable state, never
+invented.
 """
 
 from __future__ import annotations
@@ -46,6 +52,7 @@ from fastapi.responses import HTMLResponse
 from backend import agent_operations as adata
 from backend import command_intelligence as cintel
 from backend import operations_status as ostatus
+from backend import repository_intelligence as rintel
 from backend import watchlist_data as wdata
 from backend.deps import API_KEY, build_url, verify_api_key
 from backend.templating import templates
@@ -134,6 +141,12 @@ def _system_operations() -> dict:
         "events": [],
     }
     return _safe(ostatus.snapshot, empty)
+
+
+def _repository_state() -> dict:
+    """Read-only repository-state intelligence for the running checkout."""
+
+    return _safe(rintel.analyze, rintel.empty_payload(str(rintel.PROJECT_ROOT)))
 
 
 def _last_successful_run(runs: list) -> dict | None:
@@ -272,6 +285,7 @@ def _command_payload(program: Optional[str] = None,
     watchlist_items = wdata.recent_activity(limit=ACTIVITY_LIMIT)
     report_items = adata.recent_report_activity()
     system_ops = _system_operations()
+    repository = _repository_state()
     research_ops = cintel.research_operations(watchlist)
     lifecycle = cintel.lifecycle_view(
         watchlist, report_cves=cintel.report_cves_for(watchlist)
@@ -283,6 +297,7 @@ def _command_payload(program: Optional[str] = None,
         "watchlist": watchlist,
         "activity": activity,
         "agent": adata.agent_operations(),
+        "repository": repository,
         "research_ops": research_ops,
         "lifecycle": lifecycle,
         "operations": system_ops["operations"],
@@ -341,3 +356,13 @@ def api_command_operations():
         "resources": system_ops["resources"],
         "events": system_ops["events"],
     }
+
+
+@router.get("/api/command/repository", dependencies=_UI_AUTH)
+def api_command_repository():
+    """Bounded JSON repository-state projection (deterministic, read-only).
+
+    Categorizes the running checkout's uncommitted state without invoking git.
+    """
+
+    return _repository_state()
