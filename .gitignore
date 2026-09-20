@@ -1,5 +1,7 @@
 # Environment variables
 .env
+.env.*
+!.env.example
 
 # Python
 __pycache__/
@@ -23,6 +25,15 @@ wheels/
 .installed.cfg
 *.egg
 
+# Python tooling / test caches (generated)
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
 # Virtual Environment
 venv/
 ENV/
@@ -45,12 +56,25 @@ resume.cfg
 domains.txt
 resolvers.txt
 
+# Runtime lock files (knowledge / task stores write these during operation)
+*.lock
+
+# Deterministic project artifacts - these MUST stay tracked. Do not ignore:
+#   ai_data/knowledge/   (SHA-256 content-addressed KnowledgeStore docs + index.json)
+#   ai_data/reports/     (deterministic CVE research reports)
+#   ai_data/nuclei/      (generated templates / results / findings)
+#   agent-reports/       (task, review and deterministic research reports)
+#   wordlists/           (source wordlists consumed by parameter discovery)
+
 # Database
 *.db
 *.sqlite3
 
 # Temporary files
 *.tmp
+*.bak
+*.orig
+*.rej
 temp/
 programs/*
 !programs/test_program.json
@@ -67,6 +91,9 @@ ai_data/cve/
 
 # Runtime crawler output
 crawl/output/
+
+# Runtime task logs (per-run logs may contain sensitive recon data)
+logs/
 
 # DNS brute force runtime workspace
 dns-bruteforce/work/
