@@ -114,6 +114,111 @@
   </div>
 </section>
 
+{# ======================= A1. SYSTEM OPERATIONS ======================= #}
+<div class="section-label">System Operations
+  <span class="rl-note">read-only systemd unit state · never start/stop/restart</span>
+</div>
+
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Watch services</h2>
+    <span class="badge-sm">
+      {% if operations.available %}systemd unit state{% else %}systemd unavailable{% endif %}
+    </span>
+  </div>
+  <div class="panel-body">
+    {% if operations.available %}
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Unit</th>
+            <th>Kind</th>
+            <th>State</th>
+            <th>Enabled</th>
+            <th>Last run</th>
+            <th>Exit</th>
+            <th>Duration</th>
+            <th>Next</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in operations.units %}
+          <tr>
+            <td class="mono text-xs">{{ u.unit }}</td>
+            <td class="text-xs">{{ u.kind }}</td>
+            <td>
+              {% if u.status in ('RUNNING', 'ACTIVE', 'LAST RUN SUCCESS', 'SCHEDULED') %}
+              <span class="badge badge-ok">{{ u.status }}</span>
+              {% elif u.status in ('FAILED', 'UNAVAILABLE') %}
+              <span class="badge badge-err">{{ u.status }}</span>
+              {% elif u.status in ('STARTING', 'STOPPING') %}
+              <span class="badge badge-warn">{{ u.status }}</span>
+              {% else %}
+              <span class="badge badge-idle">{{ u.status }}</span>
+              {% endif %}
+            </td>
+            <td class="text-xs">{{ 'yes' if u.enabled else ('no' if u.enabled is not none else '—') }}</td>
+            <td class="text-xs" title="{{ (u.last_run.started_at | tehran) if u.last_run and u.last_run.started_at else '' }}">
+              {% if u.last_run and u.last_run.started_at %}{{ u.last_run.started_at | ago }}{% else %}—{% endif %}
+            </td>
+            <td class="mono text-xs">{{ u.last_run.exit_status if u.last_run and u.last_run.exit_status is not none else '—' }}</td>
+            <td class="text-xs">{{ (u.last_run.duration_label if u.last_run else '') or '—' }}</td>
+            <td class="text-xs" title="{{ (u.next_elapse | tehran) if u.next_elapse else '' }}">
+              {% if u.next_elapse %}{{ u.next_elapse | ago }}{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if operations.note %}<div class="cc-note">{{ operations.note }}</div>{% endif %}
+    {% else %}
+      {{ empty_state("System operations unavailable", operations.note or "systemctl/systemd is not available here. Nothing is fabricated.", compact=True) }}
+    {% endif %}
+  </div>
+</section>
+
+{# ======================== A2. RESOURCE STATUS ======================== #}
+<div class="section-label">Resource Status
+  <span class="rl-note">read-only host resources · no monitoring daemon</span>
+</div>
+
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Host resources</h2>
+    <a class="badge-link" href="/api/system/stats?api_key={{ api_key_qs }}">raw /api/system/stats →</a>
+  </div>
+  <div class="panel-body">
+    {% if resources.available %}
+    <div class="kpi-grid kpi-4 kpi-research">
+      <div class="stat-card">
+        <div class="stat-label">CPU</div>
+        <div class="stat-value">{% if resources.cpu_percent is not none %}{{ resources.cpu_percent | round(0) | int }}%{% else %}—{% endif %}</div>
+        <div class="stat-sub">{% if resources.load_avg %}load {{ resources.load_avg | join(', ') }}{% else %}load n/a{% endif %}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Memory</div>
+        <div class="stat-value">{% if resources.ram_percent is not none %}{{ resources.ram_percent | round(0) | int }}%{% else %}—{% endif %}</div>
+        <div class="stat-sub">{% if resources.ram_used_mb is not none and resources.ram_total_mb is not none %}{{ (resources.ram_used_mb / 1024) | round(1) }} / {{ (resources.ram_total_mb / 1024) | round(1) }} GB{% endif %}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Disk</div>
+        <div class="stat-value">{% if resources.disk_percent is not none %}{{ resources.disk_percent | round(0) | int }}%{% else %}—{% endif %}</div>
+        <div class="stat-sub">{% if resources.disk_used_gb is not none and resources.disk_total_gb is not none %}{{ resources.disk_used_gb }} / {{ resources.disk_total_gb }} GB{% endif %}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Uptime</div>
+        <div class="stat-value text-sm">{{ resources.uptime_label or '—' }}</div>
+        <div class="stat-sub" title="{{ (resources.boot_time | tehran) if resources.boot_time else '' }}">since boot</div>
+      </div>
+    </div>
+    {% else %}
+      {{ empty_state("Resource status unavailable", "Host resource collectors returned no values. Nothing is fabricated.", compact=True) }}
+    {% endif %}
+  </div>
+</section>
+
 {# ============================ A. RUNTIME STATUS ============================ #}
 <div class="section-label">System / Runtime Status
   <span class="rl-note">read-only runtime facts — never a health score</span>
@@ -539,14 +644,14 @@
 </div>
 {% endif %}
 
-{# ============================ D. RECENT ACTIVITY ============================ #}
-<div class="section-label">Recent Activity
-  <span class="rl-note">real persisted events only</span>
+{# ============================ D. LIVE TIMELINE ============================ #}
+<div class="section-label">Live Timeline
+  <span class="rl-note">real persisted events + system executions only</span>
 </div>
 
 <section class="panel mb-6">
   <div class="panel-head">
-    <h2>Operational timeline</h2>
+    <h2>Live operational timeline</h2>
     <a class="badge-link" href="{{ runs_url }}">All runs →</a>
   </div>
   <div class="panel-body">
