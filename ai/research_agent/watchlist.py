@@ -17,7 +17,12 @@ Existing components only (composed read-only, never reimplemented):
 - Matching: one ``backend.asset_cve_matching.build_matches(cve=..., program=...)``
   call per discovered CVE. The matcher, component inference, version ownership,
   aliases and evidence semantics are untouched; the expensive unfiltered
-  ``build_matches(program=...)`` sweep is never used.
+  ``build_matches(program=...)`` sweep is never used. The existing R30.2
+  observed-inventory projection is built once per run and injected into every
+  per-CVE matcher call through the matcher's own ``inventories`` parameter
+  (the same value the matcher would otherwise read from
+  ``observed_inventory.get_inventory``), so a point-in-time sweep does not
+  rebuild the identical whole-inventory projection for every CVE.
 - Research state: the queue row for the same CVE/program is carried into the
   snapshot (relevance/queue scores, blockers) so a queue-level change is part
   of the snapshot identity.
@@ -212,14 +217,42 @@ def default_queue_loader() -> list[dict]:
 
 
 def default_match_loader(program: str) -> MatchLoader:
-    """Existing R30.1 matcher bound to one program (read-only; fail-soft)."""
+    """Existing R30.1 matcher bound to one program (read-only; fail-soft).
+
+    The existing R30.2 observed-inventory projection is built at most once
+    per loader and reused for every CVE via the matcher's existing
+    ``inventories`` injection point. Building the inventory dominates a run
+    (tens of seconds on the current corpus) and the matcher's own 10 s TTL
+    cache expires between CVEs, so the previous per-CVE call rebuilt the
+    identical whole-inventory projection for every CVE. The injected mapping
+    is exactly the value the matcher would otherwise read from
+    ``observed_inventory.get_inventory``; matcher semantics are unchanged.
+    """
+
+    program_text = str(program)
+    state: dict = {"loaded": False, "inventories": None}
+
+    def _inventories() -> Mapping | None:
+        if not state["loaded"]:
+            state["loaded"] = True
+            try:
+                from backend import observed_inventory
+
+                inventory = observed_inventory.get_inventory(program_text)
+            except Exception:
+                inventory = None
+            if isinstance(inventory, Mapping) and inventory:
+                state["inventories"] = {program_text: inventory}
+        return state["inventories"]
 
     def load(cve: str) -> dict:
         try:
             from backend import asset_cve_matching
 
             result = asset_cve_matching.build_matches(
-                cve=str(cve), program=str(program)
+                cve=str(cve),
+                program=program_text,
+                inventories=_inventories(),
             )
         except Exception:
             return {}

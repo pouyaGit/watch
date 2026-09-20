@@ -22,6 +22,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 from ai import research_cli
 from ai.research_agent.watchlist import (
@@ -33,6 +34,7 @@ from ai.research_agent.watchlist import (
     STATUS_ERROR,
     STATUS_REPLAYED,
     build_entry,
+    default_match_loader,
     discover_cves,
     entry_fingerprint,
     list_snapshots,
@@ -563,6 +565,162 @@ class TestCli(WatchlistTestCase):
         payload = json.loads(buffer.getvalue())
         self.assertTrue(payload["written"])
         self.assertEqual(len(self.snapshot_files()), 1)
+
+
+class TestInventoryReuse(unittest.TestCase):
+    """The R30.2 inventory projection is built once and injected per CVE.
+
+    The matcher's ``inventories`` parameter is the existing injection point;
+    injecting the same projection the matcher would otherwise read must not
+    change matcher semantics and must avoid rebuilding it for every CVE.
+    """
+
+    SENTINEL = {
+        "products": [{"value": "WordPress"}],
+        "components": [],
+        "version_associations": [],
+    }
+
+    def _patches(self, get_inventory, build_matches):
+        from backend import asset_cve_matching, observed_inventory
+
+        return (
+            mock.patch.object(
+                observed_inventory, "get_inventory", get_inventory
+            ),
+            mock.patch.object(
+                asset_cve_matching, "build_matches", build_matches
+            ),
+        )
+
+    def test_inventory_built_once_and_reused_for_every_cve(self):
+        calls: list[str] = []
+        seen: list[tuple] = []
+
+        def fake_get_inventory(program):
+            calls.append(program)
+            return self.SENTINEL
+
+        def fake_build_matches(cve=None, program=None, *, inventories=None):
+            seen.append((cve, program, inventories))
+            return {"items": [], "total": 0}
+
+        get_patch, match_patch = self._patches(
+            fake_get_inventory, fake_build_matches
+        )
+        with get_patch, match_patch:
+            loader = default_match_loader("dell")
+            for cve in ("CVE-1", "CVE-2", "CVE-3"):
+                loader(cve)
+
+        self.assertEqual(calls, ["dell"])
+        self.assertEqual(len(seen), 3)
+        for cve, program, inventories in seen:
+            self.assertEqual(program, "dell")
+            self.assertEqual(inventories, {"dell": self.SENTINEL})
+
+    def test_inventory_build_is_lazy(self):
+        calls: list[str] = []
+
+        def fake_get_inventory(program):
+            calls.append(program)
+            return self.SENTINEL
+
+        def fake_build_matches(cve=None, program=None, *, inventories=None):
+            return {"items": [], "total": 0}
+
+        get_patch, match_patch = self._patches(
+            fake_get_inventory, fake_build_matches
+        )
+        with get_patch, match_patch:
+            loader = default_match_loader("dell")
+            self.assertEqual(calls, [])
+            loader("CVE-1")
+            self.assertEqual(calls, ["dell"])
+            loader("CVE-2")
+            self.assertEqual(calls, ["dell"])
+
+    def test_unavailable_inventory_falls_back_to_matcher_default(self):
+        seen: list[object] = []
+
+        def boom(program):
+            raise RuntimeError("inventory read failed")
+
+        def fake_build_matches(cve=None, program=None, *, inventories=None):
+            seen.append(inventories)
+            return {"items": [], "total": 0}
+
+        get_patch, match_patch = self._patches(boom, fake_build_matches)
+        with get_patch, match_patch:
+            loader = default_match_loader("dell")
+            loader("CVE-1")
+            loader("CVE-2")
+        # No injection => the matcher uses its own read path unchanged.
+        self.assertEqual(seen, [None, None])
+
+    def test_none_inventory_is_not_injected(self):
+        seen: list[object] = []
+
+        def no_inventory(program):
+            return None
+
+        def fake_build_matches(cve=None, program=None, *, inventories=None):
+            seen.append(inventories)
+            return {"items": [], "total": 0}
+
+        get_patch, match_patch = self._patches(
+            no_inventory, fake_build_matches
+        )
+        with get_patch, match_patch:
+            default_match_loader("dell")("CVE-1")
+        self.assertEqual(seen, [None])
+
+    def test_non_mapping_matcher_result_is_fail_soft(self):
+        def fake_get_inventory(program):
+            return self.SENTINEL
+
+        def fake_build_matches(cve=None, program=None, *, inventories=None):
+            return "not-a-mapping"
+
+        get_patch, match_patch = self._patches(
+            fake_get_inventory, fake_build_matches
+        )
+        with get_patch, match_patch:
+            loader = default_match_loader("dell")
+            self.assertEqual(loader("CVE-1"), {})
+
+    def test_run_watchlist_builds_inventory_once(self):
+        calls: list[str] = []
+        seen: list[tuple] = []
+
+        def fake_get_inventory(program):
+            calls.append(program)
+            return self.SENTINEL
+
+        def fake_build_matches(cve=None, program=None, *, inventories=None):
+            seen.append((cve, program, inventories))
+            return {"items": [], "total": 0}
+
+        get_patch, match_patch = self._patches(
+            fake_get_inventory, fake_build_matches
+        )
+        with tempfile.TemporaryDirectory() as tmp, get_patch, match_patch:
+            outcome = run_watchlist(
+                "dell",
+                snapshot_root=Path(tmp),
+                queue_loader=lambda: queue_rows(),
+                now=NOW_1,
+                write=False,
+            )
+
+        self.assertEqual(outcome["status"], STATUS_COMPLETED)
+        self.assertEqual(outcome["cve_count"], 2)
+        self.assertEqual(calls, ["dell"])
+        self.assertEqual(
+            [cve for cve, _program, _inv in seen], [CVE_HTTP, CVE_SILENT]
+        )
+        for _cve, program, inventories in seen:
+            self.assertEqual(inventories, {"dell": self.SENTINEL})
 
 
 class TestPreviousSnapshotSelection(WatchlistTestCase):
