@@ -7,6 +7,7 @@ the real runtime facts the rest of the dashboard already exposes.
 
     GET /ui/command              -- server-rendered Command Center
     GET /api/command/overview    -- bounded JSON projection of the same data
+    GET /api/command/operations  -- bounded JSON system-operations projection
 
 Data sources (all read-only, all fail-soft):
 
@@ -20,15 +21,19 @@ Data sources (all read-only, all fail-soft):
 - ``backend.agent_operations``     -- the autonomous development workspace
   facts (mode, workspace, branch, agent reports, tmux socket probe), read
   from filesystem + Git metadata only.
+- ``backend.operations_status``    -- live operations: read-only ``systemctl
+  show`` unit state + last execution for the primary Watch units, and host
+  resources (CPU/RAM/disk/load/uptime) via the existing ``system_stats``.
 - ``backend.research_activity``    -- the existing R83 bounded AI runtime
   status contract (agent runs, scheduler lock, window policy).
 - ``backend.dashboard.latest_runs`` -- the existing recon operation status.
 - ``backend.system_stats``         -- host CPU/RAM/disk/load (the page reuses
   the existing htmx ``/api/system/stats`` fragment for live polling).
 
-No Mongo writes, no network, no subprocess, no LLM, no matcher invocation,
-no target interaction. Missing observability is rendered as an honest empty
-state, never invented.
+No Mongo writes, no network, no LLM, no matcher invocation, no target
+interaction. The only subprocess is the bounded, read-only ``systemctl show``
+status query in ``backend.operations_status``. Missing observability is
+rendered as an honest empty/unavailable state, never invented.
 """
 
 from __future__ import annotations
@@ -40,6 +45,7 @@ from fastapi.responses import HTMLResponse
 
 from backend import agent_operations as adata
 from backend import command_intelligence as cintel
+from backend import operations_status as ostatus
 from backend import watchlist_data as wdata
 from backend.deps import API_KEY, build_url, verify_api_key
 from backend.templating import templates
@@ -116,6 +122,18 @@ def _operation_runs() -> list:
         return dashboard.latest_runs()
 
     return _safe(_run, []) or []
+
+
+def _system_operations() -> dict:
+    """Read-only live operations projection (systemd + resources + events)."""
+
+    empty = {
+        "operations": {"available": False, "note": "unavailable",
+                       "unit_count": 0, "units": []},
+        "resources": {"available": False},
+        "events": [],
+    }
+    return _safe(ostatus.snapshot, empty)
 
 
 def _last_successful_run(runs: list) -> dict | None:
@@ -202,12 +220,14 @@ def _activity_from_research(activity: dict | None) -> list:
 
 
 def _timeline(activity: dict | None, runs: list, watchlist_items: list,
-              report_items: list, limit: int = ACTIVITY_LIMIT) -> list:
+              report_items: list, operation_items: list | None = None,
+              limit: int = ACTIVITY_LIMIT) -> list:
     items = (
         _activity_from_watchlist(watchlist_items)
         + _activity_from_runs(runs)
         + _activity_from_research(activity)
         + list(report_items or [])
+        + list(operation_items or [])
     )
     items = [item for item in items if item.get("at") is not None]
     items.sort(key=lambda item: item["at"], reverse=True)
@@ -251,6 +271,7 @@ def _command_payload(program: Optional[str] = None,
     runs = _operation_runs()
     watchlist_items = wdata.recent_activity(limit=ACTIVITY_LIMIT)
     report_items = adata.recent_report_activity()
+    system_ops = _system_operations()
     research_ops = cintel.research_operations(watchlist)
     lifecycle = cintel.lifecycle_view(
         watchlist, report_cves=cintel.report_cves_for(watchlist)
@@ -264,6 +285,8 @@ def _command_payload(program: Optional[str] = None,
         "agent": adata.agent_operations(),
         "research_ops": research_ops,
         "lifecycle": lifecycle,
+        "operations": system_ops["operations"],
+        "resources": system_ops["resources"],
         "runs": [
             {
                 "task_id": run.get("task_id"),
@@ -274,7 +297,9 @@ def _command_payload(program: Optional[str] = None,
             for run in runs
         ],
         "last_successful_run": _last_successful_run(runs),
-        "timeline": _timeline(activity, runs, watchlist_items, report_items),
+        "timeline": _timeline(
+            activity, runs, watchlist_items, report_items, system_ops["events"]
+        ),
     }
 
 
@@ -300,3 +325,19 @@ def api_command_overview(program: Optional[str] = None):
     """Bounded JSON projection of the Command Center (same data, read-only)."""
 
     return _command_payload(program)
+
+
+@router.get("/api/command/operations", dependencies=_UI_AUTH)
+def api_command_operations():
+    """Bounded JSON system-operations projection (systemd + resources + events).
+
+    Deterministic shape; read-only. Separate from ``/api/command/overview`` so
+    operators (and tests) can poll just the live operations slice.
+    """
+
+    system_ops = _system_operations()
+    return {
+        "operations": system_ops["operations"],
+        "resources": system_ops["resources"],
+        "events": system_ops["events"],
+    }
