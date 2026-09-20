@@ -1,0 +1,18 @@
+[Unit]
+Description=Run Watch Dell Standing CVE Watchlist every 6 hours
+Documentation=file:/opt/watch/agent-reports/REAL-OPERATION-DELL-WATCHLIST-AUDIT.md
+Documentation=file:/opt/watch/agent-reports/REAL-OPERATION-DELL-WATCHLIST-VM-VERIFICATION.md
+
+[Timer]
+Unit=watch-dell-watchlist.service
+# Tehran operating window 12:00 -> 00:00, every 6h aligned to Asia/Tehran.
+# systemd 255 has no Timezone= timer directive, host stays Etc/UTC, so use
+# explicit UTC equivalents of 12:00 / 18:00 / 00:00 Tehran (UTC+03:30).
+OnCalendar=*-*-* 08:30:00
+OnCalendar=*-*-* 14:30:00
+OnCalendar=*-*-* 20:30:00
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

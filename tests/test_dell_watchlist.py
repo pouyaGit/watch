@@ -36,6 +36,7 @@ from ai.research_agent.watchlist import (
     discover_cves,
     entry_fingerprint,
     list_snapshots,
+    load_previous_snapshot,
     run_watchlist,
     snapshot_path,
     write_snapshot,
@@ -562,6 +563,113 @@ class TestCli(WatchlistTestCase):
         payload = json.loads(buffer.getvalue())
         self.assertTrue(payload["written"])
         self.assertEqual(len(self.snapshot_files()), 1)
+
+
+class TestPreviousSnapshotSelection(WatchlistTestCase):
+    """load_previous_snapshot must equal the full-scan selection.
+
+    The loader parses newest-first and stops early so history growth
+    does not force a full load; results must be identical to scanning
+    every snapshot (oldest-first, last accepted wins).
+    """
+
+    def write_raw(self, stem, text):
+        directory = self.root / "dell"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / (stem + ".json")).write_text(text, encoding="utf-8")
+
+    def write_snapshot_file(self, snapshot_id, entries=()):
+        self.write_raw(
+            snapshot_id,
+            json.dumps({"snapshot_id": snapshot_id, "entries": list(entries)}),
+        )
+
+    def old_selection(self, target):
+        """Reference: the previous full-scan algorithm via list_snapshots."""
+        from ai.research_agent.watchlist import _text
+
+        previous = None
+        for payload in list_snapshots(self.root, "dell"):
+            if _text(payload.get("snapshot_id"), 32) <= target:
+                previous = payload
+        return previous
+
+    def test_selects_latest_at_or_before(self):
+        for sid in (
+            "watch-20260918T120000Z",
+            "watch-20260918T180000Z",
+            "watch-20260919T000000Z",
+        ):
+            self.write_snapshot_file(sid)
+        self.assertEqual(
+            load_previous_snapshot(
+                self.root, "dell", "watch-20260918T180000Z"
+            )["snapshot_id"],
+            "watch-20260918T180000Z",
+        )
+        self.assertEqual(
+            load_previous_snapshot(
+                self.root, "dell", "watch-20260919T000000Z"
+            )["snapshot_id"],
+            "watch-20260919T000000Z",
+        )
+        self.assertIsNone(
+            load_previous_snapshot(self.root, "dell", "watch-20260918T115900Z")
+        )
+
+    def test_matches_full_scan_on_adversarial_history(self):
+        # Newer filename carrying an older content id, malformed JSON,
+        # non-mapping payloads, missing ids, and bad stems.
+        self.write_snapshot_file("watch-20260918T120000Z")
+        self.write_raw(
+            "watch-20260918T180000Z",
+            json.dumps(
+                {"snapshot_id": "watch-20260918T120000Z", "entries": []}
+            ),
+        )
+        self.write_raw("watch-20260919T000000Z", "{not json")
+        self.write_raw("watch-20260919T003000Z", json.dumps([1, 2, 3]))
+        self.write_raw(
+            "watch-20260919T010000Z", json.dumps({"entries": []})
+        )
+        self.write_raw("watch-bogus.json", json.dumps({"snapshot_id": "x"}))
+        self.write_snapshot_file("watch-20260919T020000Z")
+        for target in (
+            "watch-20260918T115900Z",
+            "watch-20260918T120000Z",
+            "watch-20260918T150000Z",
+            "watch-20260919T000000Z",
+            "watch-20260919T020000Z",
+            "watch-20260920T000000Z",
+        ):
+            expected = self.old_selection(target)
+            actual = load_previous_snapshot(self.root, "dell", target)
+            if expected is None:
+                self.assertIsNone(actual, target)
+            else:
+                self.assertEqual(
+                    actual["snapshot_id"], expected["snapshot_id"], target
+                )
+
+    def test_empty_or_missing_history_returns_none(self):
+        self.assertIsNone(
+            load_previous_snapshot(self.root, "dell", "watch-20260919T000000Z")
+        )
+        self.write_raw("watch-bogus.json", json.dumps({"snapshot_id": "x"}))
+        self.assertIsNone(
+            load_previous_snapshot(self.root, "dell", "watch-20260919T000000Z")
+        )
+
+    def test_run_against_history_selects_previous(self):
+        self.run_case({CVE_HTTP: match_item(), CVE_SILENT: None})
+        outcome = self.run_case(
+            {CVE_HTTP: match_item(), CVE_SILENT: None}, now=NOW_2
+        )
+        self.assertEqual(outcome["previous_snapshot_id"], "watch-20260918T120000Z")
+        self.assertEqual(
+            outcome["delta_counts"],
+            {DELTA_NEW: 0, DELTA_CHANGED: 0, DELTA_UNCHANGED: 2},
+        )
 
 
 if __name__ == "__main__":

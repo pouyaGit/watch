@@ -478,13 +478,31 @@ def list_snapshots(snapshot_root: object, program: str) -> list[dict]:
 def load_previous_snapshot(
     snapshot_root: object, program: str, snapshot_id: str
 ) -> dict | None:
-    """Latest persisted snapshot at or before ``snapshot_id`` (or ``None``)."""
+    """Latest persisted snapshot at or before ``snapshot_id`` (or ``None``).
 
-    previous: dict | None = None
-    for payload in list_snapshots(snapshot_root, program):
+    Candidate files are scanned newest-first and parsing stops at the
+    first valid snapshot at or before ``snapshot_id``, so a long
+    accumulated history is not fully loaded into memory. The result is
+    identical to scanning every snapshot: the scan accepts the same
+    files under the same condition, and the newest accepted file is
+    exactly the one a full oldest-first scan would return last.
+    """
+
+    directory = snapshot_dir(snapshot_root, program)
+    if not directory.is_dir():
+        return None
+    for path in sorted(directory.glob("watch-*.json"), reverse=True):
+        if not _SNAPSHOT_ID_RE.match(path.stem):
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, Mapping) or not payload.get("snapshot_id"):
+            continue
         if _text(payload.get("snapshot_id"), 32) <= snapshot_id:
-            previous = payload
-    return previous
+            return dict(payload)
+    return None
 
 
 def write_snapshot(
@@ -626,6 +644,10 @@ def run_watchlist(
         return outcome
 
     queue_by_cve = queue_rows_by_cve(rows, program_text)
+    # The raw queue rows are fully reduced into bounded per-CVE blocks
+    # above; release them before the per-CVE matcher loop so they are not
+    # retained for the whole run.
+    del rows
     loader = match_loader or default_match_loader(program_text)
     entries: list[dict] = []
     per_cve_ms: dict[str, float] = {}
