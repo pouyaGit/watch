@@ -1,0 +1,324 @@
+{# command_center.html — WATCH Command Center v1.
+
+   Read-only operational overview composed from existing authorities:
+   - runtime / system status (R83 AI activity contract + recon operations)
+   - standing CVE watchlist state (persisted sweep snapshots)
+   - candidates with the deterministic R30.1 match state and the existing
+     evidence-gap / readiness projection (never upgraded to a verdict)
+   - a real activity timeline (watchlist sweeps, deltas, acquisitions,
+     recon operations, research runs)
+
+   No fake metrics, no fabricated activity, no confirmation inference. #}
+{% extends "base.html" %}
+{% block title %}WATCH &middot; Command Center{% endblock %}
+{% block page %}Command Center{% endblock %}
+
+{% from "macros.html" import empty_state, research_banner with context %}
+
+{% set runtime_status_cls = {
+  'COMPLETED': 'ok', 'IDLE': '', 'RUNNING': 'accent2', 'ERROR': 'warn',
+  'WAITING_FOR_EVIDENCE': 'warn', 'COMPLETED_WITH_REJECTIONS': 'warn',
+  'UNKNOWN': ''
+} %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Command Center</h1>
+  <p class="page-sub">Operational overview — watchlist state, evidence readiness and runtime</p>
+</div>
+
+{{ research_banner('WATCHLIST RESEARCH ONLY — NOT CONFIRMED FINDINGS') }}
+
+<div class="quick-actions">
+  <a class="quick-action" href="{{ queue_url }}"><span class="qa-icon">≡</span> Research Queue</a>
+  <a class="quick-action" href="{{ research_url }}"><span class="qa-icon">☣</span> Research / CVEs</a>
+  <a class="quick-action" href="{{ runs_url }}"><span class="qa-icon">↻</span> Runs</a>
+  <a class="quick-action" href="{{ agent_url }}"><span class="qa-icon">⚙</span> Research Agent</a>
+  <a class="quick-action" href="{{ changes_url }}"><span class="qa-icon">±</span> Recent Changes</a>
+</div>
+
+{# ============================ A. RUNTIME STATUS ============================ #}
+<div class="section-label">System / Runtime Status
+  <span class="rl-note">read-only runtime facts — never a health score</span>
+</div>
+
+<div class="kpi-grid kpi-4 mb-6">
+  <div class="stat-card">
+    <div class="stat-label">Watch API</div>
+    <div class="stat-value ok">ONLINE</div>
+    <div class="stat-sub">served this page · API-key gated</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">Research runtime</div>
+    {% if activity %}
+    <div class="stat-value {{ runtime_status_cls.get(activity.status, '') }}">{{ activity.status }}</div>
+    <div class="stat-sub">{{ activity.status_basis }}</div>
+    {% else %}
+    <div class="stat-value">UNKNOWN</div>
+    <div class="stat-sub">activity collector unavailable</div>
+    {% endif %}
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">Last successful run</div>
+    {% if last_successful_run %}
+    <div class="stat-value ok">SUCCESS</div>
+    <div class="stat-sub">{{ last_successful_run.name }}{% if last_successful_run.last_run %} · {{ last_successful_run.last_run.ago }}{% endif %}</div>
+    {% else %}
+    <div class="stat-value">—</div>
+    <div class="stat-sub">no successful run observed</div>
+    {% endif %}
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">Scheduler window</div>
+    {% if activity %}
+    <div class="stat-value {{ 'ok' if activity.window.in_window else '' }}">{{ 'IN WINDOW' if activity.window.in_window else 'OUT OF WINDOW' }}</div>
+    <div class="stat-sub">{{ activity.window.start }}–{{ activity.window.end }} {{ activity.window.timezone }}{% if activity.window.scheduler_enabled is not none %} · {{ 'enabled' if activity.window.scheduler_enabled else 'disabled' }}{% endif %}</div>
+    {% else %}
+    <div class="stat-value">—</div>
+    <div class="stat-sub">window policy unavailable</div>
+    {% endif %}
+  </div>
+</div>
+
+{# host resources: reuse the existing live htmx fragment #}
+<div class="kpi-grid kpi-4 kpi-secondary mb-6"
+     hx-get="/api/system/stats?api_key={{ api_key_qs }}"
+     hx-trigger="load, every 10s"
+     hx-swap="innerHTML">
+  <div class="stat-card"><div class="stat-label">CPU</div><div class="stat-value">…</div></div>
+  <div class="stat-card"><div class="stat-label">RAM</div><div class="stat-value">…</div></div>
+  <div class="stat-card"><div class="stat-label">Disk</div><div class="stat-value">…</div></div>
+  <div class="stat-card"><div class="stat-label">Load</div><div class="stat-value">…</div></div>
+</div>
+
+{% if activity and activity.daily %}
+<div class="activity-summary mb-6">
+  <span class="as-title">Research window</span>
+  <span class="as-item">{{ activity.daily.runs | fmtnum }} run(s)</span>
+  <span class="as-item accent2">{{ activity.daily.results | fmtnum }} result(s)</span>
+  <span class="as-item">{{ activity.daily.evidence_acquired | fmtnum }} evidence item(s)</span>
+  <span class="as-item">{{ activity.daily.cases_processed | fmtnum }} case(s)</span>
+  {% if activity.last_error %}<span class="as-item warn">last error: {{ activity.last_error }}</span>{% endif %}
+</div>
+{% endif %}
+
+{# ============================ B. WATCHLIST ============================ #}
+<div class="section-label">Watchlist
+  <span class="rl-note">latest persisted sweep per program · research only</span>
+</div>
+
+{% if watchlist.available %}
+<div class="kpi-grid kpi-4 kpi-research mb-6">
+  <div class="stat-card">
+    <div class="stat-label">Programs</div>
+    <div class="stat-value">{{ watchlist.totals.programs | fmtnum }}</div>
+    <div class="stat-sub">with a persisted snapshot</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Monitored CVEs</div>
+    <div class="stat-value">{{ watchlist.totals.cves | fmtnum }}</div>
+    <div class="stat-sub">in the latest sweep(s)</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Delta (latest)</div>
+    <div class="stat-value accent2">{{ watchlist.totals.delta.NEW | fmtnum }} / {{ watchlist.totals.delta.CHANGED | fmtnum }}</div>
+    <div class="stat-sub">NEW / CHANGED · {{ watchlist.totals.delta.UNCHANGED | fmtnum }} unchanged</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Evidence readiness</div>
+    <div class="stat-value">{{ watchlist.totals.readiness.get('EVIDENCE_READY', 0) | fmtnum }} ready</div>
+    <div class="stat-sub">{{ watchlist.totals.readiness.get('EVIDENCE_PARTIAL', 0) | fmtnum }} partial · {{ watchlist.totals.readiness.get('INSUFFICIENT_EVIDENCE', 0) | fmtnum }} insufficient</div>
+  </div>
+</div>
+
+{% for pv in watchlist.programs %}
+<section class="panel cc-prog mb-6">
+  <div class="panel-head">
+    <h2>{{ pv.program }} · {{ pv.snapshot_id }}</h2>
+    <span class="text-xs text-muted">
+      {% if pv.created_utc %}{{ pv.created_utc | tehran }} ({{ pv.created_utc | ago }}){% else %}—{% endif %}
+      · {{ pv.snapshot_count | fmtnum }} snapshot(s)
+      {% if pv.previous_snapshot_id %} · prev {{ pv.previous_snapshot_id }}{% endif %}
+    </span>
+  </div>
+  <div class="panel-body">
+    <div class="cc-chiprow">
+      <span class="cc-label">Delta</span>
+      <span class="cc-chip cc-new">NEW {{ pv.delta_counts.NEW | fmtnum }}</span>
+      <span class="cc-chip cc-changed">CHANGED {{ pv.delta_counts.CHANGED | fmtnum }}</span>
+      <span class="cc-chip cc-unchanged">UNCHANGED {{ pv.delta_counts.UNCHANGED | fmtnum }}</span>
+    </div>
+    <div class="cc-chiprow">
+      <span class="cc-label">Asset match</span>
+      {% for state, count in pv.match_state_counts.items() %}
+      <span class="cc-chip">{{ state }} {{ count | fmtnum }}</span>
+      {% else %}
+      <span class="text-muted text-xs">no match states</span>
+      {% endfor %}
+    </div>
+    <div class="cc-chiprow">
+      <span class="cc-label">Readiness</span>
+      <span class="cc-chip cc-ready">EVIDENCE_READY {{ pv.readiness_counts.get('EVIDENCE_READY', 0) | fmtnum }}</span>
+      <span class="cc-chip cc-partial">EVIDENCE_PARTIAL {{ pv.readiness_counts.get('EVIDENCE_PARTIAL', 0) | fmtnum }}</span>
+      <span class="cc-chip cc-insufficient">INSUFFICIENT_EVIDENCE {{ pv.readiness_counts.get('INSUFFICIENT_EVIDENCE', 0) | fmtnum }}</span>
+    </div>
+    {% if pv.latest_changes %}
+    <div class="cc-chiprow">
+      <span class="cc-label">Changes vs prev</span>
+      {% for ch in pv.latest_changes %}
+      <span class="cc-chip">{{ ch.cve_id }} · {{ ch.change_type }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endfor %}
+
+{% else %}
+<div class="panel mb-6">
+  <div class="panel-body">
+    {{ empty_state(
+        "No watchlist snapshots available",
+        "The local watchlist data directory has no persisted sweeps yet. Run the standing CVE watchlist (agent watchlist --apply) to populate it. Nothing is fabricated here.",
+        compact=True) }}
+  </div>
+</div>
+{% endif %}
+
+{# ============================ C. CANDIDATES ============================ #}
+<div class="section-label">Candidates
+  <span class="rl-note">deterministic matcher output — not confirmed vulnerabilities</span>
+</div>
+
+{% if watchlist.available %}
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Watchlist candidates</h2>
+    <span class="badge-sm" title="R30.1 asset-match state and the existing evidence-gap dimensions; no verdict is inferred">research only · not confirmed</span>
+  </div>
+  <div class="table-wrap">
+    <table class="tbl cc-tbl">
+      <thead>
+        <tr>
+          <th>CVE</th>
+          <th>Program</th>
+          <th title="R30.1 asset-match state (not a vulnerability conclusion)">Asset match</th>
+          <th>Conf</th>
+          <th title="Strongest observed matcher signal (real R30.1 output)">Signal</th>
+          <th>Component</th>
+          <th>Version</th>
+          <th>Version association</th>
+          <th>Research status</th>
+          <th>Evidence readiness</th>
+          <th>Evidence gaps</th>
+          <th>Δ</th>
+          <th>Snapshot</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pv in watchlist.programs %}
+          {% for c in pv.candidates %}
+          <tr>
+            <td><a class="cve-link" href="{{ c.research_url }}">{{ c.cve_id }}</a></td>
+            <td class="text-xs">{{ c.program }}</td>
+            <td>
+              {% if c.match_state in ('SUPPORTED', 'CONFIRMED') %}
+              <span class="badge badge-ok">{{ c.match_state }}</span>
+              {% elif c.match_state == 'WEAK' %}
+              <span class="badge badge-warn">{{ c.match_state }}</span>
+              {% else %}
+              <span class="badge badge-idle">{{ c.match_state }}</span>
+              {% endif %}
+            </td>
+            <td class="text-xs">{{ c.confidence }}</td>
+            <td class="text-xs">
+              {% if c.strongest_match_type %}
+              {{ c.strongest_match_type }}{% if c.strongest_match_value %} <span class="mono">{{ c.strongest_match_value }}</span>{% endif %}
+              {% else %}—{% endif %}
+            </td>
+            <td class="text-xs">{{ c.matched_component or '— (unbound)' }}</td>
+            <td class="mono text-xs">{{ c.matched_version or '—' }}</td>
+            <td class="text-xs" title="{{ c.version_association_reason }}">{{ c.version_association_state or '—' }}</td>
+            <td class="text-xs">{{ c.research_status or '—' }}</td>
+            <td>
+              {% if c.finding_readiness == 'EVIDENCE_READY' %}
+              <span class="badge badge-ok">EVIDENCE_READY</span>
+              {% elif c.finding_readiness == 'EVIDENCE_PARTIAL' %}
+              <span class="badge badge-warn">EVIDENCE_PARTIAL</span>
+              {% elif c.finding_readiness == 'INSUFFICIENT_EVIDENCE' %}
+              <span class="badge badge-idle">INSUFFICIENT</span>
+              {% else %}
+              <span class="badge badge-neutral">{{ c.finding_readiness }}</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="cc-gaps">
+                {% for dim in c.gap_missing %}
+                <span class="cc-chip cc-missing" title="missing evidence dimension">missing: {{ dim }}</span>
+                {% endfor %}
+                {% for dim in c.gap_partial %}
+                <span class="cc-chip cc-partial-chip" title="partial evidence dimension">partial: {{ dim }}</span>
+                {% endfor %}
+                {% if not c.gap_missing and not c.gap_partial %}
+                <span class="text-muted text-xs">—</span>
+                {% endif %}
+              </div>
+            </td>
+            <td>
+              {% if c.delta == 'NEW' %}
+              <span class="badge badge-ok">NEW</span>
+              {% elif c.delta == 'CHANGED' %}
+              <span class="badge badge-warn">CHANGED</span>
+              {% else %}
+              <span class="badge badge-idle">UNCHANGED</span>
+              {% endif %}
+            </td>
+            <td class="text-xs" title="{{ c.snapshot_at | tehran }}">{{ c.snapshot_at | ago }}</td>
+          </tr>
+          {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+<div class="panel mb-6">
+  <div class="panel-body">
+    {{ empty_state("No candidates to show", "Candidates appear once a watchlist sweep has persisted a snapshot.", compact=True) }}
+  </div>
+</div>
+{% endif %}
+
+{# ============================ D. RECENT ACTIVITY ============================ #}
+<div class="section-label">Recent Activity
+  <span class="rl-note">real persisted events only</span>
+</div>
+
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Operational timeline</h2>
+    <a class="badge-link" href="{{ runs_url }}">All runs →</a>
+  </div>
+  <div class="panel-body">
+    {% if timeline %}
+    <div class="cc-timeline">
+      {% for a in timeline %}
+      <div class="cc-act">
+        <span class="cc-act-kind">{{ a.source }}</span>
+        <div class="cc-act-body">
+          <div class="cc-act-title">{{ a.title }}{% if a.program %} · <span class="mono">{{ a.program }}</span>{% endif %}</div>
+          {% if a.detail %}<div class="cc-act-detail">{{ a.detail }}</div>{% endif %}
+        </div>
+        <div class="cc-act-time" title="{{ a.at | tehran }}">{{ a.at | ago }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+      {{ empty_state("No activity observed", "No persisted watchlist, operation or research activity was found. Nothing is fabricated.", compact=True) }}
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

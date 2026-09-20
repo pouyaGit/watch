@@ -34,6 +34,7 @@ from starlette.staticfiles import StaticFiles
 import database.db  # noqa: F401  (side-effect import)
 
 from backend.routers import pages, programs, runs, system, tasks
+from backend.routers import command_center as command_center_router
 from backend.routers import product_api as product_api_router
 from backend.routers import research as research_router
 from backend.routers import research_activity as research_activity_router
@@ -106,6 +107,7 @@ app.include_router(research_activity_router.router)
 app.include_router(research_cases_router.router)
 app.include_router(research_router.router)
 app.include_router(research_pages.router)
+app.include_router(command_center_router.router)
 app.include_router(product_api_router.router)
 
 

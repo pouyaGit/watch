@@ -53,6 +53,8 @@
 
     <nav class="sidebar-nav">
       <p class="nav-group">Overview</p>
+      <a class="side-link{{ ' active' if active == 'command' }}" href="{{ command_url }}" @click="navOpen = false">
+        <span class="side-ico">⌂</span>Command Center</a>
       <a class="side-link{{ ' active' if active == 'dashboard' }}" href="{{ root_url }}" @click="navOpen = false">
         <span class="side-ico">◈</span>Dashboard</a>
       <a class="side-link{{ ' active' if active == 'programs' }}" href="{{ programs_url }}" @click="navOpen = false">

@@ -1222,3 +1222,91 @@ ul.plain li::before { content: "›"; position: absolute; left: 0; color: var(--
   .r82-topnav { flex-wrap: wrap; }
   .r82-controls { flex-direction: column; }
 }
+
+/* =====================================================================
+   Command Center v1 — read-only operational overview.
+   Reuses the existing dark theme tokens, .panel/.tbl/.badge system and
+   the .kpi-grid/.section-label primitives. Only the watchlist-specific
+   chip rows and the activity timeline are new.
+   ===================================================================== */
+
+/* watchlist program cards: chip rows for delta / match state / readiness */
+.cc-prog .panel-head h2 { color: var(--text); }
+.cc-chiprow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+}
+.cc-chiprow + .cc-chiprow { border-top: 1px solid var(--border-soft); }
+.cc-label {
+  flex: 0 0 92px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.cc-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel2);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cc-chip.cc-new       { color: var(--ok); border-color: rgba(63, 185, 80, 0.55); background: rgba(63, 185, 80, 0.12); }
+.cc-chip.cc-changed   { color: var(--warn); border-color: rgba(210, 153, 34, 0.55); background: rgba(210, 153, 34, 0.12); }
+.cc-chip.cc-unchanged { color: var(--muted); }
+.cc-chip.cc-ready        { color: var(--ok); border-color: rgba(63, 185, 80, 0.55); background: rgba(63, 185, 80, 0.12); }
+.cc-chip.cc-partial,
+.cc-chip.cc-partial-chip { color: #e3b341; border-color: rgba(210, 153, 34, 0.55); background: rgba(210, 153, 34, 0.12); }
+.cc-chip.cc-insufficient { color: #ff7b72; border-color: rgba(248, 81, 73, 0.5); background: rgba(248, 81, 73, 0.1); }
+.cc-chip.cc-missing      { color: #ff7b72; border-color: rgba(248, 81, 73, 0.55); background: rgba(248, 81, 73, 0.12); }
+
+/* candidates table: a wider console table with visible evidence gaps */
+.cc-tbl { min-width: 1080px; }
+.cc-gaps { display: flex; flex-wrap: wrap; gap: 4px; max-width: 320px; }
+
+/* recent activity timeline */
+.cc-timeline { display: flex; flex-direction: column; }
+.cc-act {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.cc-act:last-child { border-bottom: none; }
+.cc-act-kind {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.cc-act-body { flex: 1 1 auto; min-width: 0; }
+.cc-act-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.cc-act-detail { font-size: 12px; color: var(--muted); margin-top: 1px; }
+.cc-act-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .cc-label { flex-basis: 100%; }
+  .cc-act { flex-wrap: wrap; }
+}

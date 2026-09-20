@@ -29,6 +29,7 @@ def _ctx(request: Request, **extra):
         "api_key_qs": API_KEY or "",
         "root_url": build_url("/"),
         "home_url": build_url("/"),
+        "command_url": build_url("/ui/command"),
         "tasks_url": build_url("/ui/tasks"),
         "runs_url": build_url("/ui/runs"),
         "changes_url": build_url("/ui/changes"),
