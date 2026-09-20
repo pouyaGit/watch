@@ -445,6 +445,158 @@
 </div>
 {% endif %}
 
+{# =============== B1. ATTACK SURFACE INTELLIGENCE =============== #}
+<div class="section-label">Attack Surface Intelligence
+  <span class="rl-note">deterministic research candidates from existing recon data · never confirmed vulnerabilities</span>
+</div>
+
+{% if attack_surface.available %}
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Discovery</h2>
+    <span class="badge-sm">{{ attack_surface.rule_version }} · read-only projection</span>
+  </div>
+  <div class="panel-body">
+    <div class="kpi-grid kpi-4 kpi-research mb-4">
+      <div class="stat-card">
+        <div class="stat-label">Domains</div>
+        <div class="stat-value">{{ attack_surface.discovery.domains | fmtnum }}</div>
+        <div class="stat-sub">observed subdomains</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">URLs</div>
+        <div class="stat-value">{{ attack_surface.discovery.urls | fmtnum }}</div>
+        <div class="stat-sub">crawl / discovery rows</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Endpoints</div>
+        <div class="stat-value">{{ attack_surface.discovery.endpoints | fmtnum }}</div>
+        <div class="stat-sub">unique paths</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Parameters</div>
+        <div class="stat-value">{{ attack_surface.discovery.parameters | fmtnum }}</div>
+        <div class="stat-sub">distinct parameter names</div>
+      </div>
+    </div>
+    {% if attack_surface.discovery.programs %}
+    <div class="cc-chiprow">
+      <span class="cc-label">Programs</span>
+      {% for program in attack_surface.discovery.programs %}
+      <span class="cc-chip">{{ program }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Candidates</h2>
+    <span class="badge-sm">{{ attack_surface.summary.total | fmtnum }} candidate(s) · research only</span>
+  </div>
+  <div class="panel-body">
+    <div class="kpi-grid kpi-4 mb-4">
+      <div class="stat-card">
+        <div class="stat-label">XSS</div>
+        <div class="stat-value accent2">{{ attack_surface.summary.short.XSS | fmtnum }}</div>
+        <div class="stat-sub">input / reflection signals</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">IDOR</div>
+        <div class="stat-value accent2">{{ attack_surface.summary.short.IDOR | fmtnum }}</div>
+        <div class="stat-sub">object identifier signals</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">SSRF</div>
+        <div class="stat-value accent2">{{ attack_surface.summary.short.SSRF | fmtnum }}</div>
+        <div class="stat-sub">remote resource signals</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Upload</div>
+        <div class="stat-value accent2">{{ attack_surface.summary.short.UPLOAD | fmtnum }}</div>
+        <div class="stat-sub">file handling signals</div>
+      </div>
+    </div>
+    <div class="cc-chiprow">
+      <span class="cc-label">Confidence</span>
+      {% for level, count in attack_surface.summary.by_confidence.items() %}
+      <span class="cc-chip">{{ level }} {{ count | fmtnum }}</span>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="panel mb-6">
+  <div class="panel-head">
+    <h2>Priority queue</h2>
+    <span class="badge-sm">what to investigate next · explainable score</span>
+  </div>
+  <div class="panel-body">
+    {% if attack_surface.priority_queue %}
+    <div class="table-wrap">
+      <table class="tbl cc-tbl">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Endpoint</th>
+            <th>Parameter</th>
+            <th>Category</th>
+            <th>Confidence</th>
+            <th class="num">Score</th>
+            <th>Reasons</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in attack_surface.priority_queue %}
+          <tr>
+            <td class="mono text-xs">{{ c.rank }}</td>
+            <td class="mono text-xs">{{ c.endpoint }}{% if c.parameter %}?{{ c.parameter }}= {% endif %}</td>
+            <td class="mono text-xs">{{ c.parameter or '—' }}</td>
+            <td class="text-xs">
+              <span class="badge badge-neutral">{{ c.label }}</span>
+            </td>
+            <td>
+              {% if c.confidence == 'HIGH' %}
+              <span class="badge badge-ok">HIGH</span>
+              {% elif c.confidence == 'MEDIUM' %}
+              <span class="badge badge-warn">MEDIUM</span>
+              {% else %}
+              <span class="badge badge-idle">LOW</span>
+              {% endif %}
+            </td>
+            <td class="num mono text-xs">{{ c.score }}</td>
+            <td>
+              <div class="cc-gaps">
+                {% for reason in c.reasons %}
+                <span class="cc-chip">{{ reason }}</span>
+                {% endfor %}
+              </div>
+            </td>
+            <td class="text-xs">{{ c.status }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="cc-note">
+      Priority queue shows the top {{ attack_surface.priority_queue | length }} candidate(s) by explainable score.
+      Candidates are deterministic research hypotheses, not confirmed findings.
+    </div>
+    {% else %}
+      {{ empty_state("No attack surface candidates", "No endpoint parameter matched a v1 classification rule. Nothing is fabricated.", compact=True) }}
+    {% endif %}
+  </div>
+</section>
+{% else %}
+<div class="panel mb-6">
+  <div class="panel-body">
+    {{ empty_state("Attack surface intelligence unavailable", attack_surface.summary.generated_from or "The read-only recon projection returned no data. Nothing is fabricated.", compact=True) }}
+  </div>
+</div>
+{% endif %}
+
 {# ===================== B2. RESEARCH OPERATIONS ===================== #}
 <div class="section-label">Research Operations
   <span class="rl-note">aggregated from the latest persisted watchlist snapshots · research only</span>

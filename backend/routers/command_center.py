@@ -9,6 +9,7 @@ the real runtime facts the rest of the dashboard already exposes.
     GET /api/command/overview    -- bounded JSON projection of the same data
     GET /api/command/operations  -- bounded JSON system-operations projection
     GET /api/command/repository  -- bounded JSON repository-state projection
+    GET /api/command/attack-surface -- bounded JSON attack-surface intelligence
 
 Data sources (all read-only, all fail-soft):
 
@@ -26,6 +27,11 @@ Data sources (all read-only, all fail-soft):
   uncommitted state (source/knowledge/reports/runtime/ignored/deleted/unknown)
   from a read-only Git index parse plus a bounded working-tree scan. No git
   command is executed.
+- ``backend.attack_surface``    -- the Attack Surface Intelligence layer: the
+  existing recon rows (HTTP technologies, URLs, endpoints, parameters) are
+  normalized read-only and turned into deterministic, explainable research
+  candidates (XSS / IDOR / SSRF / file-upload) plus a ranked priority queue.
+  Candidates are research hypotheses, never confirmed vulnerabilities.
 - ``backend.operations_status``    -- live operations: read-only ``systemctl
   show`` unit state + last execution for the primary Watch units, and host
   resources (CPU/RAM/disk/load/uptime) via the existing ``system_stats``.
@@ -147,6 +153,25 @@ def _repository_state() -> dict:
     """Read-only repository-state intelligence for the running checkout."""
 
     return _safe(rintel.analyze, rintel.empty_payload(str(rintel.PROJECT_ROOT)))
+
+
+def _empty_attack_surface() -> dict:
+    from backend.attack_surface import service as asurface
+
+    return asurface.attack_surface_payload(
+        snapshot=asurface.AttackSurfaceSnapshot()
+    )
+
+
+def _attack_surface_state(program: Optional[str] = None) -> dict:
+    """Read-only attack-surface intelligence (fail-soft, never raises)."""
+
+    def _run():
+        from backend.attack_surface import service as asurface
+
+        return asurface.attack_surface_payload(program)
+
+    return _safe(_run, _empty_attack_surface())
 
 
 def _last_successful_run(runs: list) -> dict | None:
@@ -298,6 +323,7 @@ def _command_payload(program: Optional[str] = None,
         "activity": activity,
         "agent": adata.agent_operations(),
         "repository": repository,
+        "attack_surface": _attack_surface_state(program),
         "research_ops": research_ops,
         "lifecycle": lifecycle,
         "operations": system_ops["operations"],
@@ -366,3 +392,15 @@ def api_command_repository():
     """
 
     return _repository_state()
+
+
+@router.get("/api/command/attack-surface", dependencies=_UI_AUTH)
+def api_command_attack_surface(program: Optional[str] = None):
+    """Bounded JSON attack-surface intelligence (deterministic, read-only).
+
+    Stable schema: ``{summary, discovery, candidates, priority_queue}``.
+    Candidates are deterministic research hypotheses, never confirmed
+    vulnerabilities.
+    """
+
+    return _attack_surface_state(program)
