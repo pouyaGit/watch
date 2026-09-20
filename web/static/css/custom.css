@@ -137,6 +137,8 @@ body {
   font-weight: 600;
 }
 .side-link.active .side-ico { color: var(--accent); }
+.side-link.side-sub { padding-left: 26px; font-size: 12.5px; }
+.side-link.side-sub .side-ico { font-size: 11px; }
 
 .sidebar-foot {
   padding: 12px 16px;
@@ -244,6 +246,8 @@ body {
   padding-bottom: 4px;
   border-bottom: 1px solid var(--border-soft);
 }
+/* anchor target: keep the section label clear of the sticky topbar */
+.section-anchor { scroll-margin-top: 72px; }
 
 /* ================= quick actions ================= */
 .quick-actions {
