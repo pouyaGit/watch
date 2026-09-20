@@ -3658,6 +3658,103 @@ def run_agent_watchlist_delta(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_agent_evidence_gaps(args: argparse.Namespace) -> int:
+    """Local watchlist evidence-gap intelligence (read-only).
+
+    Analyzes the most recent local watchlist snapshot for one program (or
+    one caller-selected snapshot via ``--snapshot-id``) with
+    ``ai.research_agent.watchlist_evidence_gaps.analyze_snapshot`` and
+    prints the deterministic gap analysis as JSON (``--json``) or a compact
+    human summary. Never invokes the real watchlist, never touches MongoDB,
+    never uses the network, never writes.
+    """
+
+    from ai.research_agent.scheduler import SchedulerConfig
+    from ai.research_agent.watchlist import list_snapshots
+    from ai.research_agent.watchlist_evidence_gaps import analyze_snapshot
+
+    config = SchedulerConfig.from_env()
+    snapshot_root = (
+        Path(getattr(args, "snapshot_root"))
+        if getattr(args, "snapshot_root", None)
+        else Path(config.research_dir) / "watchlist"
+    )
+    program = str(getattr(args, "program", "") or "dell").strip()
+    if not program:
+        print("ERROR: ValueError: invalid program", file=sys.stderr)
+        return 1
+
+    snapshots = list_snapshots(snapshot_root, program)
+    if not snapshots:
+        print(
+            f"ERROR: ValueError: no local watchlist snapshots for "
+            f"program={program!r} under {snapshot_root}",
+            file=sys.stderr,
+        )
+        return 1
+    wanted = str(getattr(args, "snapshot_id", "") or "").strip()
+    snapshot = None
+    if wanted:
+        for payload in snapshots:
+            if str(payload.get("snapshot_id") or "") == wanted:
+                snapshot = payload
+                break
+        if snapshot is None:
+            print(
+                f"ERROR: ValueError: unknown snapshot id {wanted!r} for "
+                f"program={program!r}",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        snapshot = snapshots[-1]
+
+    cve_filter = str(getattr(args, "cve", "") or "").strip().upper()
+    result = analyze_snapshot(snapshot)
+    if cve_filter:
+        result = dict(result)
+        result["candidates"] = [
+            item for item in result["candidates"] if item["cve_id"] == cve_filter
+        ]
+        result["cve_count"] = len(result["candidates"])
+        counts = {
+            key: 0 for key in result.get("readiness_counts", {})
+        }
+        for item in result["candidates"]:
+            readiness = item["finding_readiness"]
+            counts[readiness] = counts.get(readiness, 0) + 1
+        result["readiness_counts"] = counts
+
+    if getattr(args, "json", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    print("Watchlist evidence gaps")
+    print("=======================")
+    print(
+        f"program={result['program'] or program} | "
+        f"snapshot={result['snapshot_id'] or '-'} | "
+        f"cves={result['cve_count']}"
+    )
+    counts = result["readiness_counts"]
+    print(
+        "  readiness: "
+        + ", ".join(f"{key}={counts.get(key, 0)}" for key in sorted(counts))
+    )
+    for item in result["candidates"]:
+        print(
+            f"  {item['cve_id']:18s} {item['finding_readiness']} "
+            f"(missing={len(item['missing'])} "
+            f"partial={len(item['partial'])})"
+        )
+        if item["missing"]:
+            print(f"      missing: {', '.join(item['missing'])}")
+        if item["partial"]:
+            print(f"      partial: {', '.join(item['partial'])}")
+    print("MODE: local-only gap analysis (no Mongo, no network, no writes)")
+    return 0
+
+
 def run_agent_schedule(args: argparse.Namespace) -> int:
     """R92: read-only case-aware scheduling preview (no execution, no writes)."""
 
@@ -3808,6 +3905,8 @@ def run_agent(args: argparse.Namespace) -> int:
         return run_agent_watchlist(args)
     if command == "watchlist-delta":
         return run_agent_watchlist_delta(args)
+    if command == "evidence-gaps":
+        return run_agent_evidence_gaps(args)
     if command == "schedule":
         return run_agent_schedule(args)
     return 2
@@ -4741,6 +4840,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_watchlist_delta.add_argument(
         "--json", action="store_true", help="emit the delta as JSON"
+    )
+
+    agent_evidence_gaps = agent_sub.add_parser(
+        "evidence-gaps",
+        help="local watchlist evidence-gap intelligence: analyze the most "
+        "recent local snapshot for one program (read-only; never invokes "
+        "the real watchlist, never touches MongoDB)",
+    )
+    agent_evidence_gaps.add_argument(
+        "--program", default="dell", help="program to analyze (default: dell)"
+    )
+    agent_evidence_gaps.add_argument(
+        "--snapshot-root",
+        default=None,
+        help="override the watchlist snapshot root "
+        "(default: <research_dir>/watchlist)",
+    )
+    agent_evidence_gaps.add_argument(
+        "--snapshot-id",
+        default="",
+        help="analyze a specific local snapshot id "
+        "(default: most recent)",
+    )
+    agent_evidence_gaps.add_argument(
+        "--cve",
+        default="",
+        help="limit analysis to one CVE, e.g. CVE-2026-1557",
+    )
+    agent_evidence_gaps.add_argument(
+        "--json", action="store_true", help="emit the gap analysis as JSON"
     )
 
     agent_schedule = agent_sub.add_parser(
