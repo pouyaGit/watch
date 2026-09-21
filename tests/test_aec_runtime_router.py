@@ -54,14 +54,14 @@ class TestNewRoutesExist(unittest.TestCase):
                          "/api/aec/execution-summary"):
             self.assertIn(existing, paths)
 
-    def test_exactly_nineteen_get_routes(self):
+    def test_exactly_thirty_one_get_routes(self):
         from backend.routers import aec
 
         routes = [
             r.path for r in aec.router.routes
             if hasattr(r, "methods") and "GET" in r.methods
         ]
-        self.assertEqual(len(routes), 19)
+        self.assertEqual(len(routes), 31)
 
 
 class TestRuntimeOverviewView(unittest.TestCase):

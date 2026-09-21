@@ -17,16 +17,42 @@ The router is inert until mounted: importing it serves nothing.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 
 from aec.orchestrator.models import STATES as LIFECYCLE_STATES
 
 router = APIRouter()
 
 LAYER_VERSION = "aec-1/epic-3"
+
+#: EPIC8: server-rendered AEC pages share the dashboard template directory
+#: (fresh instance on purpose — aec.py stays free of backend.* imports).
+_TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "web" / "templates"
+_templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+OBSERVATION_LIFECYCLE_STATES = frozenset({
+    "RECEIVED", "VALIDATING", "AUTHORIZED", "DISPATCHED", "OBSERVING",
+    "COLLECTING", "COMPLETED", "REFUSED", "BLOCKED", "TIMED_OUT", "FAILED",
+})
+
+AUDIT_ACTIONS = frozenset({
+    "case.created", "assignment.created", "authorization.requested",
+    "authorization.approved", "observation.executed", "evidence.stored",
+    "review.requested",
+})
+
+BADGE_OK = "ok"
+BADGE_WARN = "warn"
+BADGE_ERR = "err"
+BADGE_MUTED = "muted"
 
 CASE_VIEW_KEYS = ("case_id", "state", "evidence_state", "selection_order")
 
@@ -112,8 +138,8 @@ def build_status_view(counts: Mapping[str, int]) -> dict[str, Any]:
 
 @router.get("/api/aec/cases")
 def get_cases() -> dict[str, Any]:
-    """Case records currently held in memory (empty until wired)."""
-    return build_cases_view([])
+    """Case explorer rows over the fixture simulation (EPIC8 Part 3)."""
+    return build_case_explorer_view(_simulation_run().get("cases", []))
 
 
 @router.get("/api/aec/queue")
@@ -475,6 +501,554 @@ def get_execution_summary() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# EPIC8: Command Center Intelligence UI (read-only views, GET only).
+# Every builder below is a pure projection of the committed simulations:
+# no storage, no network, no mutation, no execution trigger.
+# ---------------------------------------------------------------------------
+
+TERMINAL_CASE_STATES = frozenset({"COMPLETED", "REFUSED", "BLOCKED",
+                                  "FAILED"})
+
+
+def _activity_entries() -> list[dict[str, Any]]:
+    """Deterministic recent-activity feed derived from the simulations."""
+    sim = _simulation_run()
+    run = _execution_run()
+    entries: list[dict[str, Any]] = []
+    entries.append({
+        "timestamp": 10, "actor": "pipeline",
+        "action": "started research run", "result": sim.get("run_id", "")})
+    for case in sim.get("cases", []):
+        if isinstance(case, Mapping):
+            entries.append({
+                "timestamp": 9, "actor": "pipeline",
+                "action": "created case",
+                "result": _text(case.get("case_id"))})
+    for assignment in sim.get("assignments", []):
+        if isinstance(assignment, Mapping):
+            entries.append({
+                "timestamp": 8, "actor": "pipeline",
+                "action": "assigned specialist",
+                "result": _text(assignment.get("specialist"))})
+    for case in sim.get("cases", []):
+        if isinstance(case, Mapping) and sim.get(
+                "authorization_states", {}).get(case.get("candidate_id")):
+            entries.append({
+                "timestamp": 7, "actor": "gate",
+                "action": "authorized research",
+                "result": "ALLOW"})
+    for record in run.get("evidence", []):
+        if isinstance(record, Mapping):
+            entries.append({
+                "timestamp": 6, "actor": "runtime",
+                "action": "stored evidence",
+                "result": _text(record.get("evidence_id"))})
+    for record in run.get("review_records", []):
+        if isinstance(record, Mapping):
+            entries.append({
+                "timestamp": 5, "actor": "pipeline",
+                "action": "requested review",
+                "result": _text(record.get("outcome"))})
+    for reason in run.get("blocked_reasons", []) or []:
+        entries.append({
+            "timestamp": 4, "actor": "runtime",
+            "action": "blocked observation",
+            "result": str(reason)})
+    return entries[:40]
+
+
+def build_dashboard_view(empty: bool = False) -> dict[str, Any]:
+    """System overview: KPI counts plus a bounded recent-activity feed."""
+    sim = _simulation_run()
+    run = _execution_run()
+    if empty:
+        return {
+            "candidates": 0, "active_cases": 0, "research_jobs": 0,
+            "waiting_evidence": 0, "observations": 0, "review_pending": 0,
+            "recent_activity": [], "generated_at": 0,
+        }
+    cases = sim.get("cases", [])
+    active = sum(
+        1 for case in cases
+        if case.get("state", "") not in TERMINAL_CASE_STATES)
+    waiting = sum(
+        1 for case in cases
+        if case.get("evidence_state") == "WAITING_EVIDENCE")
+    return {
+        "candidates": sim.get("candidates_processed", 0),
+        "active_cases": active,
+        "research_jobs": run.get("job_count", 0),
+        "waiting_evidence": waiting,
+        "observations": run.get("observation_count", 0),
+        "review_pending": run.get("review_required_count", 0),
+        "recent_activity": _activity_entries(),
+        # deterministic logical generation stamp (fixture-derived, stable)
+        "generated_at": max(
+            [entry["timestamp"] for entry in _activity_entries()] or [0]),
+    }
+
+
+def _explorer_row(case: Mapping[str, Any],
+                  jobs_by_case: Mapping[str, Any]) -> dict[str, Any]:
+    case_id = _text(case.get("case_id"))
+    job = jobs_by_case.get(case_id) if jobs_by_case else None
+    transitions = job.get("transitions", []) if job else []
+    last_tick = max(
+        [t.get("tick", 0) for t in transitions if isinstance(t, Mapping)]
+        or [0]) if transitions else 0
+    evidence_state = _text(case.get("evidence_state"))
+    if not evidence_state and job:
+        # Execution-run cases carry research state instead of a dedicated
+        # evidence column; derive the display value from the job state.
+        state = _text(job.get("state"))
+        evidence_state = (
+            "REVIEW_REQUIRED" if state == "REVIEW_REQUIRED"
+            else "WAITING_EVIDENCE" if state == "READY_FOR_OBSERVATION"
+            else state or "")
+    if not evidence_state:
+        # A case that was selected but never processed has no evidence yet.
+        evidence_state = "NOT_STARTED"
+    state = _text(case.get("state"))
+    if evidence_state == "WAITING_EVIDENCE" or state == "WAITING_EVIDENCE":
+        next_action = "collect evidence"
+        badge = BADGE_WARN
+    elif state == "WAITING_AUTHORIZATION":
+        next_action = "await authorization"
+        badge = BADGE_WARN
+    elif state in TERMINAL_CASE_STATES:
+        next_action = "none (terminal)"
+        badge = BADGE_MUTED
+    else:
+        next_action = "monitor"
+        badge = BADGE_OK
+    return {
+        "case_id": case_id,
+        "target": _text(case.get("asset")) or _text(case.get("endpoint")),
+        "category": _text(case.get("category")),
+        "research_state": state,
+        "evidence_state": evidence_state,
+        "specialist": _text(case.get("specialist")),
+        "last_activity": f"tick {last_tick}" if last_tick else "",
+        "next_action": next_action,
+        "badge": badge,
+    }
+
+
+def build_case_explorer_view(
+        records: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
+    """Case list projection with operator columns (EPIC8 Part 3)."""
+    if records is None:
+        records = _simulation_run().get("cases", [])
+    if isinstance(records, (str, bytes)) or not isinstance(records,
+                                                           Sequence):
+        raise ValueError("records must be a sequence of mappings")
+    run = _execution_run()
+    jobs_by_case = {
+        job.get("case_id"): job for job in run.get("jobs", [])
+        if isinstance(job, Mapping) and job.get("case_id")
+    }
+    rows = []
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        case_id = _text(record.get("case_id"))
+        if not case_id:
+            continue
+        rows.append(_explorer_row(record, jobs_by_case))
+    rows.sort(key=lambda row: row["case_id"])
+    return {"cases": rows, "total": len(rows)}
+
+
+def build_case_detail_view(case_id: str) -> dict[str, Any]:
+    """One case: timeline, history, evidence, authorization, audit."""
+    if not isinstance(case_id, str) or not case_id:
+        return {"not_found": True, "case": {}}
+    sim = _simulation_run()
+    run = _execution_run()
+    case = next(
+        (c for c in sim.get("cases", [])
+         if isinstance(c, Mapping) and c.get("case_id") == case_id),
+        None)
+    if case is None:
+        # Execution-run cases (jobs) are also valid detail targets.
+        job_match = next(
+            (j for j in run.get("jobs", [])
+             if isinstance(j, Mapping) and j.get("case_id") == case_id),
+            None)
+        if job_match is not None:
+            case = job_match
+    if case is None:
+        return {"not_found": True, "case": {}}
+    jobs_by_case = {
+        job.get("case_id"): job for job in run.get("jobs", [])
+        if isinstance(job, Mapping) and job.get("case_id")
+    }
+    job = jobs_by_case.get(case_id)
+    transitions = job.get("transitions", []) if job else []
+    timeline = [
+        {"tick": t.get("tick", 0), "actor": _text(t.get("actor")),
+         "event": _text(t.get("next_state"))}
+        for t in transitions if isinstance(t, Mapping)
+    ]
+    timeline.sort(key=lambda entry: entry["tick"])
+    research_history = []
+    steps = case.get("steps", [])
+    if isinstance(steps, (list, tuple)):
+        research_history.append({
+            "plan_id": _text(case.get("plan_id")),
+            "step_count": len(
+                [s for s in steps if isinstance(s, Mapping)]),
+        })
+    evidence_artifacts = [
+        dict(record) for record in run.get("evidence", [])
+        if isinstance(record, Mapping) and record.get("case_id") == case_id
+    ]
+    authz_state = sim.get("authorization_states", {}).get(
+        case.get("candidate_id"), "")
+    audit_events = [
+        event for event in build_audit_view()["events"]
+        if event.get("reference") == case_id
+    ]
+    observations = [
+        row for row in build_observations_view()["observations"]
+        if row["case_id"] == case_id
+    ]
+    return {
+        "case": _explorer_row(case, jobs_by_case),
+        "timeline": timeline,
+        "research_history": research_history,
+        "evidence_artifacts": evidence_artifacts,
+        "authorization_status": {
+            "state": authz_state or "UNKNOWN",
+            "reference": "authz-" + case_id[5:] if len(case_id) > 5
+            else "",
+        },
+        "observation_history": observations,
+        "audit_events": audit_events,
+    }
+
+
+def build_pipeline_view(empty: bool = False) -> dict[str, Any]:
+    """Research pipeline: candidate -> … -> review, with blockers."""
+    sim = _simulation_run()
+    run = _execution_run()
+    if empty:
+        stages = [{"stage": name, "state": "", "blocks": [],
+                   "badge": BADGE_MUTED}
+                  for name in ("candidate", "case", "assignment",
+                               "research_job", "authorization",
+                               "observation", "evidence", "review")]
+        return {"stages": stages}
+    review_items = sim.get("review_items", []) or []
+    waiting_evidence = sum(
+        1 for case in sim.get("cases", [])
+        if isinstance(case, Mapping)
+        and case.get("evidence_state") == "WAITING_EVIDENCE")
+    stages = [
+        {"stage": "candidate", "state": "SELECTED"
+            if sim.get("candidates_processed", 0) > 0 else "",
+         "blocks": [], "badge": BADGE_OK},
+        {"stage": "case", "state": "OPEN"
+            if sim.get("cases") else "",
+         "blocks": [], "badge": BADGE_OK},
+        {"stage": "assignment", "state": "ASSIGNED"
+            if sim.get("assignments") else "",
+         "blocks": [], "badge": BADGE_OK},
+        {"stage": "research_job", "state": "RUNNING"
+            if run.get("job_count", 0) > 0 else "",
+         "blocks": [], "badge": BADGE_OK},
+        {"stage": "authorization", "state": "ALLOW"
+            if sim.get("authorization_states") else "",
+         "blocks": [], "badge": BADGE_OK},
+        {"stage": "observation", "state": "COMPLETED"
+            if run.get("observation_count", 0) > 0 else "",
+         "blocks": [], "badge": BADGE_OK},
+        {"stage": "evidence", "state": "WAITING_EVIDENCE"
+            if waiting_evidence > 0 else "EVIDENCE_READY",
+         "blocks": ["Missing comparison artifact"]
+            if waiting_evidence > 0 else [],
+         "badge": BADGE_WARN if waiting_evidence > 0 else BADGE_OK},
+        {"stage": "review", "state": "REQUIRED"
+            if len(review_items) > 0 else "",
+         "blocks": ["Human review required"] if review_items else [],
+         "badge": BADGE_WARN if review_items else BADGE_MUTED},
+    ]
+    for stage in stages:
+        if not stage["state"]:
+            stage["badge"] = BADGE_MUTED
+    return {"stages": stages}
+
+
+def build_observations_view(
+        records: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
+    """Read-only observation center rows (EPIC8 Part 5)."""
+    if records is None:
+        records = _execution_run().get("evidence", [])
+    if isinstance(records, (str, bytes)):
+        raise ValueError("records must be a sequence of mappings")
+    rows = []
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        artifact = _text(record.get("artifact_reference"))
+        evidence_id = _text(record.get("evidence_id"))
+        if not artifact or not evidence_id:
+            continue
+        tick = record.get("tick", 0)
+        obs_id = "obs-" + (artifact.split(":", 1)[0]
+                           .split("-", 1)[-1])
+        suffix = artifact.split(":", 1)[-1] if ":" in artifact else ""
+        if suffix:
+            obs_id = f"{obs_id}-{suffix}"
+        rows.append({
+            "request_id": obs_id,
+            "case_id": _text(record.get("case_id")),
+            "target": "/".join(str(p) for p in
+                               (record.get("observation") or [])),
+            "observation_type": "HTTP_METADATA",
+            "state": "COMPLETED",
+            "created_time": tick if isinstance(tick, int) else 0,
+            "completed_time": tick if isinstance(tick, int) else 0,
+            "evidence_id": evidence_id,
+            "badge": BADGE_OK,
+        })
+    return {"observations": rows, "total": len(rows)}
+
+
+def _viewer_artifact(record: Mapping[str, Any]) -> dict[str, Any]:
+    evidence_id = _text(record.get("evidence_id"))
+    integrity = _text(record.get("integrity")) or "0" * 64
+    return {
+        "evidence_id": evidence_id,
+        "case_id": _text(record.get("case_id")),
+        "observation_type": "HTTP_METADATA",
+        "authorization_reference": "authz-" + _text(record.get("case_id"))[5:],
+        "scope_validation": "n/a",
+        "provenance": {
+            "source": _text(record.get("source")),
+            "source_mode": _text(record.get("source_mode")),
+            "tick": record.get("tick", 0),
+        },
+        "integrity": "sha256:" + integrity,
+        "integrity_badge": BADGE_OK,
+        "redaction_status": _text(record.get("redaction_status"))
+        or "clean",
+        "redaction_badge": BADGE_MUTED,
+        "quality_score": "partial",
+    }
+
+
+def build_evidence_viewer_view(
+        records: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
+    """Evidence artifacts with integrity/redaction display fields."""
+    if records is None:
+        records = _execution_run().get("evidence", [])
+    if isinstance(records, (str, bytes)):
+        raise ValueError("records must be a sequence of mappings")
+    artifacts = [_viewer_artifact(r) for r in records
+                 if isinstance(r, Mapping) and r.get("evidence_id")]
+    artifacts.sort(key=lambda row: row["evidence_id"])
+    return {"artifacts": artifacts}
+
+
+def build_audit_view(empty: bool = False) -> dict[str, Any]:
+    """Unified audit timeline: case created -> … -> review requested."""
+    if empty:
+        return {"events": []}
+    sim = _simulation_run()
+    run = _execution_run()
+    events: list[dict[str, Any]] = []
+    for case in sim.get("cases", []):
+        if isinstance(case, Mapping):
+            events.append({
+                "timestamp": 1, "actor": "pipeline",
+                "action": "case.created",
+                "result": "created",
+                "reference": _text(case.get("case_id")),
+                "badge": BADGE_MUTED,
+            })
+    for assignment in sim.get("assignments", []):
+        if isinstance(assignment, Mapping):
+            events.append({
+                "timestamp": 2, "actor": "pipeline",
+                "action": "assignment.created",
+                "result": _text(assignment.get("specialist")),
+                "reference": _text(assignment.get("candidate_id")),
+                "badge": BADGE_MUTED,
+            })
+    authz = sim.get("authorization_states", {})
+    for candidate_id, state in authz.items():
+        if isinstance(state, str) and state:
+            events.append({
+                "timestamp": 3, "actor": "gate",
+                "action": "authorization.requested",
+                "result": state,
+                "reference": candidate_id,
+                "badge": BADGE_WARN,
+            })
+            events.append({
+                "timestamp": 4, "actor": "authorizer",
+                "action": "authorization.approved",
+                "result": "granted",
+                "reference": candidate_id,
+                "badge": BADGE_OK,
+            })
+    for record in run.get("evidence", []):
+        if isinstance(record, Mapping):
+            events.append({
+                "timestamp": 5, "actor": "runtime",
+                "action": "observation.executed",
+                "result": "COMPLETED",
+                "reference": _text(record.get("case_id")),
+                "badge": BADGE_OK,
+            })
+            events.append({
+                "timestamp": 6, "actor": "runtime",
+                "action": "evidence.stored",
+                "result": "stored",
+                "reference": _text(record.get("evidence_id")),
+                "badge": BADGE_MUTED,
+            })
+    for record in run.get("review_records", []):
+        if isinstance(record, Mapping):
+            events.append({
+                "timestamp": 7, "actor": "pipeline",
+                "action": "review.requested",
+                "result": _text(record.get("outcome")),
+                "reference": _text(record.get("case_id")),
+                "badge": BADGE_WARN,
+            })
+    events.sort(key=lambda event: (event["timestamp"],
+                                   event["reference"]))
+    return {"events": events}
+
+
+# --- EPIC8 API handlers -------------------------------------------------
+
+@router.get("/api/aec/dashboard")
+def get_dashboard() -> dict[str, Any]:
+    """Command Center dashboard overview (simulated, read-only)."""
+    return build_dashboard_view()
+
+
+@router.get("/api/aec/cases/{id}")
+def get_case_detail(case_id: str) -> dict[str, Any]:
+    """One case with timeline, evidence, and audit sections."""
+    return build_case_detail_view(case_id)
+
+
+@router.get("/api/aec/research/jobs")
+def get_research_pipeline() -> dict[str, Any]:
+    """Research pipeline visualization (stages + blockers)."""
+    return build_pipeline_view()
+
+
+@router.get("/api/aec/observations")
+def get_observations() -> dict[str, Any]:
+    """Read-only observation center rows."""
+    return build_observations_view()
+
+
+@router.get("/api/aec/audit")
+def get_audit() -> dict[str, Any]:
+    """Unified audit timeline."""
+    return build_audit_view()
+
+
+# --- EPIC8 page payloads (server-rendered UI) ---------------------------
+
+def dashboard_page_payload() -> dict[str, Any]:
+    return {
+        "view": build_dashboard_view(),
+        "active": "aec-dashboard",
+        "page_title": "AEC Command Center",
+    }
+
+
+def cases_page_payload(empty: bool = False) -> dict[str, Any]:
+    view = ({"cases": [], "total": 0} if empty
+            else build_case_explorer_view(_simulation_run().get(
+                "cases", [])))
+    return {**view, "active": "aec-cases", "page_title": "AEC Cases"}
+
+
+def case_detail_page_payload(case_id: str) -> dict[str, Any]:
+    detail = build_case_detail_view(case_id)
+    if detail.get("not_found"):
+        return {**detail, "page_title": "Case not found",
+                "active": "aec-cases"}
+    return {**detail, "page_title": "AEC Case Detail",
+            "active": "aec-cases"}
+
+
+def pipeline_page_payload() -> dict[str, Any]:
+    return {**build_pipeline_view(),
+            "page_title": "AEC Research Pipeline",
+            "active": "aec-pipeline"}
+
+
+def observations_page_payload() -> dict[str, Any]:
+    return {**build_observations_view(),
+            "page_title": "AEC Observations",
+            "active": "aec-observations"}
+
+
+def evidence_page_payload(
+        records: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
+    return {**build_evidence_viewer_view(records),
+            "page_title": "AEC Evidence", "active": "aec-evidence"}
+
+
+def audit_page_payload() -> dict[str, Any]:
+    return {**build_audit_view(), "page_title": "AEC Audit",
+            "active": "aec-audit"}
+
+
+# --- EPIC8 page routes (GET only, server-rendered) ----------------------
+
+@router.get("/ui/aec/dashboard", response_class=HTMLResponse)
+def ui_aec_dashboard(request: Request):
+    return _templates.TemplateResponse(
+        request, "aec/dashboard.html", dashboard_page_payload())
+
+
+@router.get("/ui/aec/cases", response_class=HTMLResponse)
+def ui_aec_cases(request: Request):
+    return _templates.TemplateResponse(
+        request, "aec/cases.html", cases_page_payload())
+
+
+@router.get("/ui/aec/cases/{id}", response_class=HTMLResponse)
+def ui_aec_case_detail(request: Request, case_id: str):
+    return _templates.TemplateResponse(
+        request, "aec/case_detail.html", case_detail_page_payload(case_id))
+
+
+@router.get("/ui/aec/pipeline", response_class=HTMLResponse)
+def ui_aec_pipeline(request: Request):
+    return _templates.TemplateResponse(
+        request, "aec/pipeline.html", pipeline_page_payload())
+
+
+@router.get("/ui/aec/observations", response_class=HTMLResponse)
+def ui_aec_observations(request: Request):
+    return _templates.TemplateResponse(
+        request, "aec/observations.html", observations_page_payload())
+
+
+@router.get("/ui/aec/evidence", response_class=HTMLResponse)
+def ui_aec_evidence(request: Request):
+    return _templates.TemplateResponse(
+        request, "aec/evidence.html", evidence_page_payload())
+
+
+@router.get("/ui/aec/audit", response_class=HTMLResponse)
+def ui_aec_audit(request: Request):
+    return _templates.TemplateResponse(
+        request, "aec/audit.html", audit_page_payload())
+
+
+# ---------------------------------------------------------------------------
 # EPIC7 Part 18: Authorized Observation Runtime API (additive GET only).
 # The runtime is exposed as operational state over the committed fixture
 # simulation — DRY_RUN mode, zero network. Live observation stays behind
@@ -609,6 +1183,25 @@ __all__ = [
     "build_runtime_view",
     "build_specialists_view",
     "build_status_view",
+    "build_evidence_viewer_view",
+    "build_dashboard_view",
+    "build_case_explorer_view",
+    "build_case_detail_view",
+    "build_pipeline_view",
+    "build_observations_view",
+    "build_audit_view",
+    "dashboard_page_payload",
+    "cases_page_payload",
+    "case_detail_page_payload",
+    "pipeline_page_payload",
+    "observations_page_payload",
+    "evidence_page_payload",
+    "audit_page_payload",
+    "get_dashboard",
+    "get_case_detail",
+    "get_research_pipeline",
+    "get_observations",
+    "get_audit",
     "get_candidates",
     "get_cases",
     "get_evidence",

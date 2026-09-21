@@ -1,0 +1,45 @@
+{# aec/pipeline.html — AEC Research Pipeline (EPIC8 Part 4).
+   Candidate → Case → Assignment → Research Job → Authorization →
+   Observation → Evidence → Review, with blocked reasons. Read-only. #}
+{% extends "base.html" %}
+{% block title %}WATCH &middot; AEC Research Pipeline{% endblock %}
+{% block page %}AEC Research Pipeline{% endblock %}
+
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/aec/aec.css">
+<script defer src="/static/js/aec/aec.js"></script>
+{% macro empty_state(message) -%}
+<div class="empty-state">
+  <div class="empty-title">{{ message }}</div>
+</div>
+{%- endmacro %}
+<div class="page-head">
+  <h1 class="page-title">AEC Research Pipeline</h1>
+  <p class="page-sub">Current stage states and blockers across the research flow</p>
+</div>
+
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Stages</h2></div>
+  <div class="panel-body">
+    <ol class="pipeline-list grid-flow">
+      {% for stage in stages %}
+      <li class="pipeline-stage">
+        <span class="pipeline-name">{{ stage.stage | replace('_', ' ') | title }}</span>
+        <span class="badge badge-{{ stage.badge }}">{{ stage.state or 'idle' }}</span>
+        {% if stage.blocks %}
+        <ul class="pipeline-blocks">
+          {% for block in stage.blocks %}
+          <li class="pipeline-block">{{ block }}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+  </div>
+</section>
+
+<div class="loading-note" data-aec-loading hidden>Loading…</div>
+<div class="error-note" data-aec-error hidden>Could not load pipeline.</div>
+{% endblock %}

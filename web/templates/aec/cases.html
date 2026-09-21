@@ -1,0 +1,63 @@
+{# aec/cases.html — AEC Case Explorer (EPIC8 Part 3).
+   Read-only case list; every row projects simulated research state. #}
+{% extends "base.html" %}
+{% block title %}WATCH &middot; AEC Cases{% endblock %}
+{% block page %}AEC Cases{% endblock %}
+
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/aec/aec.css">
+<script defer src="/static/js/aec/aec.js"></script>
+{% macro empty_state(message) -%}
+<div class="empty-state">
+  <div class="empty-title">{{ message }}</div>
+</div>
+{%- endmacro %}
+<div class="page-head">
+  <h1 class="page-title">AEC Cases</h1>
+  <p class="page-sub">Case explorer — research and evidence state at a glance</p>
+</div>
+
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Cases <span class="badge-sm">{{ total }}</span></h2></div>
+  <div class="panel-body">
+    {% if cases %}
+    <div class="table-wrap flex-col">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Case ID</th>
+            <th>Target</th>
+            <th>Category</th>
+            <th>Research State</th>
+            <th>Evidence State</th>
+            <th>Specialist</th>
+            <th>Last Activity</th>
+            <th>Next Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in cases %}
+          <tr>
+            <td><a class="cell-link" href="/ui/aec/cases/{{ row.case_id }}">{{ row.case_id }}</a></td>
+            <td>{{ row.target }}</td>
+            <td>{{ row.category }}</td>
+            <td><span class="badge badge-{{ row.badge }}">{{ row.research_state }}</span></td>
+            <td><span class="badge badge-{{ row.badge }}">{{ row.evidence_state }}</span></td>
+            <td>{{ row.specialist or '—' }}</td>
+            <td>{{ row.last_activity or '—' }}</td>
+            <td>{{ row.next_action }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    {{ empty_state('No cases yet.') }}
+    {% endif %}
+  </div>
+</section>
+
+<div class="loading-note" data-aec-loading hidden>Loading…</div>
+<div class="error-note" data-aec-error hidden>Could not load cases.</div>
+{% endblock %}

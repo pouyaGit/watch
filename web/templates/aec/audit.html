@@ -1,0 +1,44 @@
+{# aec/audit.html — AEC Unified Audit Timeline (EPIC8 Part 7).
+   Events: case created, assignment, authorization, observation,
+   evidence, review. Read-only; timestamp, actor, action, result. #}
+{% extends "base.html" %}
+{% block title %}WATCH &middot; AEC Audit{% endblock %}
+{% block page %}AEC Audit{% endblock %}
+
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/aec/aec.css">
+<script defer src="/static/js/aec/aec.js"></script>
+{% macro empty_state(message) -%}
+<div class="empty-state">
+  <div class="empty-title">{{ message }}</div>
+</div>
+{%- endmacro %}
+<div class="page-head">
+  <h1 class="page-title">AEC Audit</h1>
+  <p class="page-sub">Unified audit timeline across the research lifecycle</p>
+</div>
+
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Timeline <span class="badge-sm">{{ events|length }}</span></h2></div>
+  <div class="panel-body aec-timeline-grid">
+    {% if events %}
+    <ul class="timeline-list">
+      {% for event in events %}
+      <li class="timeline-item">
+        <span class="timeline-stamp">tick {{ event.timestamp }}</span>
+        <span class="timeline-actor">{{ event.actor }}</span>
+        <span class="badge badge-{{ event.badge }}">{{ event.action }}</span>
+        <span class="timeline-result">{{ event.result }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    {{ empty_state('No audit events recorded.') }}
+    {% endif %}
+  </div>
+</section>
+
+<div class="loading-note" data-aec-loading hidden>Loading…</div>
+<div class="error-note" data-aec-error hidden>Could not load audit timeline.</div>
+{% endblock %}

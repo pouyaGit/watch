@@ -186,6 +186,7 @@ class TestResearchHandlers(unittest.TestCase):
                 (("GET",), "/api/aec/research-runs"),
                 (("GET",), "/api/aec/research-status"),
                 (("GET",), "/api/aec/research-summary"),
+                (("GET",), "/api/aec/research/jobs"),
                 (("GET",), "/api/aec/review"),
                 (("GET",), "/api/aec/specialists"),
             ],
@@ -411,18 +412,23 @@ class TestResearchHandlerDetails(unittest.TestCase):
     def test_legacy_status_routes_intact(self):
         from backend.routers import aec
 
-        self.assertEqual(aec.get_cases(), {"cases": []})
+        # EPIC8 wires /api/aec/cases to the fixture simulation (case
+        # explorer); the empty-until-wired contract is replaced by the
+        # populated explorer shape. get_status stays exactly as before.
+        cases = aec.get_cases()
+        self.assertIn("cases", cases)
+        self.assertIn("total", cases)
         self.assertEqual(
             aec.get_status(), {"counts": {}, "versions": {"aec": aec.LAYER_VERSION}}
         )
 
-    def test_nineteen_routes_total(self):
+    def test_thirty_one_routes_total(self):
         from backend.routers import aec
 
         paths = [
             r.path for r in aec.router.routes if hasattr(r, "methods")
         ]
-        self.assertEqual(len(paths), 19)
+        self.assertEqual(len(paths), 31)
 
 
 if __name__ == "__main__":

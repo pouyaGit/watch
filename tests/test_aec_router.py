@@ -122,7 +122,7 @@ class TestStatusView(unittest.TestCase):
 
 
 class TestRouteTable(unittest.TestCase):
-    def test_exactly_nineteen_get_routes(self):
+    def test_exactly_thirty_one_get_routes(self):
         from backend.routers import aec
 
         routes = [
@@ -133,17 +133,22 @@ class TestRouteTable(unittest.TestCase):
         self.assertEqual(
             sorted(routes),
             [
+                (["GET"], "/api/aec/audit"),
                 (["GET"], "/api/aec/candidates"),
                 (["GET"], "/api/aec/cases"),
+                (["GET"], "/api/aec/cases/{id}"),
+                (["GET"], "/api/aec/dashboard"),
                 (["GET"], "/api/aec/evidence"),
                 (["GET"], "/api/aec/execution-runs"),
                 (["GET"], "/api/aec/execution-summary"),
+                (["GET"], "/api/aec/observations"),
                 (["GET"], "/api/aec/queue"),
                 (["GET"], "/api/aec/research-jobs"),
                 (["GET"], "/api/aec/research-queue"),
                 (["GET"], "/api/aec/research-runs"),
                 (["GET"], "/api/aec/research-status"),
                 (["GET"], "/api/aec/research-summary"),
+                (["GET"], "/api/aec/research/jobs"),
                 (["GET"], "/api/aec/review"),
                 (["GET"], "/api/aec/runtime"),
                 (["GET"], "/api/aec/runtime/audit"),
@@ -152,6 +157,13 @@ class TestRouteTable(unittest.TestCase):
                 (["GET"], "/api/aec/runtime/requests"),
                 (["GET"], "/api/aec/specialists"),
                 (["GET"], "/api/aec/status"),
+                (["GET"], "/ui/aec/audit"),
+                (["GET"], "/ui/aec/cases"),
+                (["GET"], "/ui/aec/cases/{id}"),
+                (["GET"], "/ui/aec/dashboard"),
+                (["GET"], "/ui/aec/evidence"),
+                (["GET"], "/ui/aec/observations"),
+                (["GET"], "/ui/aec/pipeline"),
             ],
         )
 
@@ -272,7 +284,11 @@ class TestRouteTable(unittest.TestCase):
             aec.get_research_status(),
             {"bands": {}, "roles": {}, "versions": {"aec": aec.LAYER_VERSION}},
         )
-        self.assertEqual(aec.get_cases(), {"cases": []})
+        # EPIC8 wires /api/aec/cases to the fixture simulation; the case
+        # explorer is the documented populated contract now.
+        cases = aec.get_cases()
+        self.assertIn("cases", cases)
+        self.assertIn("total", cases)
         self.assertEqual(
             aec.get_queue(),
             {"snapshot_id": "", "entries": [], "total": 0},
