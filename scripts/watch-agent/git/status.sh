@@ -65,24 +65,56 @@ python_bin() {
   return 1
 }
 
-SSH_BIN="${GIT_AUTH_SSH:-ssh}"
 GH_BIN="${GIT_AUTH_GH:-gh}"
 
+# Single source of truth: run the checker once, with cwd inside REPO and no
+# --repo flag — exactly the operator's own invocation. Rationale (Epic 0.2.2):
+# check_auth.py's --repo gate tests os.path.isdir(.git), which is false for
+# linked worktrees whose .git is a *file*; CWD-based git config is
+# worktree-aware. Passing --repo therefore reported REMOTE_UNREACHABLE for a
+# healthy worktree while the bare checker reported READY. check_auth.py is
+# frozen (Epic 0.2.2 forbids modifying it), so the fix lives here: invoke the
+# checker the way that works and render its JSON verdict.
+auth_json=""
+checker_ok=0
+if PYTHON="$(python_bin)" && [ -f "$CHECK_AUTH" ]; then
+  auth_json="$(cd "$REPO" && "$PYTHON" "$CHECK_AUTH" --json 2>/dev/null || true)"
+  CHECK_PYTHON="$PYTHON"
+  checker_ok=1
+fi
+parsed="$(printf '%s' "$auth_json" | ${CHECK_PYTHON:-false} -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    print("PARSE_FAIL")
+    raise SystemExit
+verdict = doc.get("verdict", "")
+print(verdict)
+print(doc.get("method", ""))
+reasons = doc.get("reasons", []) or []
+print(" ".join(str(r.get("code", "")) for r in reasons))
+' 2>/dev/null || true)"
+auth_verdict="$(printf '%s' "$parsed" | sed -n '1p')"
+auth_method="$(printf '%s' "$parsed" | sed -n '2p')"
+auth_reasons="$(printf '%s' "$parsed" | sed -n '3p')"
+[ "$auth_verdict" = "READY" ] && [ -n "$auth_method" ] || auth_verdict="BLOCKED"
+[ "$checker_ok" = "1" ] || auth_reasons="CHECKER_UNAVAILABLE"
+
 section "Authentication"
-if "$SSH_BIN" -T -o BatchMode=yes -o ConnectTimeout=8 git@github.com >/dev/null 2>&1; then
+# Derived from the checker verdict — status performs no auth probing of its
+# own (the ssh exit-1-on-success semantics and helper/gh policy live in
+# check_auth.py; duplicating them here is what disagreed with the checker).
+if [ "$auth_method" = "ssh" ]; then
   item "ssh" "available"
 else
-  # ssh -T returns 1 on successful auth (no shell); re-probe for the message.
-  if "$SSH_BIN" -T -o BatchMode=yes -o ConnectTimeout=8 git@github.com 2>&1 \
-      | grep -qi "successfully authenticated"; then
-    item "ssh" "available"
-  else
-    item "ssh" "unavailable"
-  fi
+  item "ssh" "unavailable"
 fi
 
 helper="$(command git -C "$REPO" config --get credential.helper 2>/dev/null || true)"
-if [ -z "$helper" ]; then
+if [ "$auth_method" = "credential-helper" ]; then
+  item "cred helper" "${helper:-configured} (in use)"
+elif [ -z "$helper" ]; then
   item "cred helper" "none configured"
 elif [ "$helper" = "store" ] || [[ "$helper" == "store "* ]]; then
   item "cred helper" "store (plaintext — not accepted)"
@@ -90,7 +122,9 @@ else
   item "cred helper" "$helper"
 fi
 
-if ! command -v "$GH_BIN" >/dev/null 2>&1 && [ "$GH_BIN" = "gh" ]; then
+if [ "$auth_method" = "github-cli" ]; then
+  item "gh" "authenticated (in use)"
+elif ! command -v "$GH_BIN" >/dev/null 2>&1 && [ "$GH_BIN" = "gh" ]; then
   item "gh" "not installed"
 elif "$GH_BIN" auth status >/dev/null 2>&1; then
   item "gh" "authenticated"
@@ -113,41 +147,15 @@ else
 fi
 
 section "Push capability"
-# The checker owns auth logic; status only renders its JSON verdict. Parsing
-# goes through a real JSON decoder and fails closed: anything unparsable (or
-# a missing checker) displays BLOCKED, never READY.
-if PYTHON="$(python_bin)" && [ -f "$CHECK_AUTH" ]; then
-  auth_json="$("$PYTHON" "$CHECK_AUTH" --repo "$REPO" --json 2>/dev/null || true)"
-  parsed="$(printf '%s' "$auth_json" | "$PYTHON" -c '
-import json, sys
-try:
-    doc = json.load(sys.stdin)
-except Exception:
-    print("PARSE_FAIL")
-    raise SystemExit
-verdict = doc.get("verdict", "")
-print(verdict)
-if verdict == "READY":
-    print(doc.get("method", ""))
-else:
-    reasons = doc.get("reasons", []) or []
-    first = reasons[0].get("code", "") if reasons else ""
-    print(first)
-    print(" ".join(str(r.get("code", "")) for r in reasons))
-' 2>/dev/null || true)"
-  parsed_verdict="$(printf '%s' "$parsed" | sed -n '1p')"
-  parsed_method="$(printf '%s' "$parsed" | sed -n '2p')"
-  parsed_reasons="$(printf '%s' "$parsed" | sed -n '3p')"
-  if [ "$parsed_verdict" = "READY" ] && [ -n "$parsed_method" ]; then
-    item "push" "READY"
-    item "method" "$parsed_method"
-  else
-    item "push" "BLOCKED"
-    item "reason" "${parsed_method:-CHECKER_OUTPUT_UNPARSEABLE} ${parsed_reasons:-}"
-  fi
+# Rendered from the same checker verdict above — no second invocation, no
+# re-interpretation. Fail-closed: anything but READY (missing checker,
+# invalid JSON, BLOCKED) displays BLOCKED.
+if [ "$auth_verdict" = "READY" ]; then
+  item "push" "READY"
+  item "method" "$auth_method"
 else
   item "push" "BLOCKED"
-  item "reason" "CHECKER_UNAVAILABLE"
+  item "reason" "${auth_reasons:-CHECKER_OUTPUT_UNPARSEABLE}"
 fi
 
 exit 0
