@@ -1,0 +1,13 @@
+/* soc.css — AI Security Operations Center (SOC-1..SOC-5).
+   Additive component styles on the existing WATCH palette
+   (custom.css variables are inherited — no new theme). */
+
+/* Generic inline link used across SOC pages. */
+a.link { color: var(--accent, #22d3ee); text-decoration: none; }
+a.link:hover { text-decoration: underline; }
+
+/* Empty-state prose used inside panels (non-table). */
+.empty { color: var(--muted, #94a3b8); font-size: 13px; padding: 14px 4px; }
+
+/* Timeline rows: keep the time column fixed-width and mono. */
+.timeline-time { font-family: ui-monospace, monospace; font-size: 12px; }
