@@ -957,6 +957,19 @@ def get_audit() -> dict[str, Any]:
 
 # --- EPIC8 page payloads (server-rendered UI) ---------------------------
 
+def _page_api_key(request: Request) -> str:
+    """The caller's API key, read back from the validated query string.
+
+    Middleware-approved requests may carry ?api_key=; propagating it
+    keeps internal navigation authenticated (same api_key_qs convention
+    every other router uses). The middleware has already validated the
+    key before this handler runs, so this is display plumbing, not auth.
+    Never logs the value, never appends it to external links, and never
+    requires it (empty string = clean links).
+    """
+    return request.query_params.get("api_key", "") or ""
+
+
 def dashboard_page_payload() -> dict[str, Any]:
     return {
         "view": build_dashboard_view(),
@@ -1008,44 +1021,58 @@ def audit_page_payload() -> dict[str, Any]:
 
 @router.get("/ui/aec/dashboard", response_class=HTMLResponse)
 def ui_aec_dashboard(request: Request):
+    payload = dashboard_page_payload()
+    payload["api_key_qs"] = _page_api_key(request)
     return _templates.TemplateResponse(
-        request, "aec/dashboard.html", dashboard_page_payload())
+        request, "aec/dashboard.html", payload)
 
 
 @router.get("/ui/aec/cases", response_class=HTMLResponse)
 def ui_aec_cases(request: Request):
+    payload = cases_page_payload()
+    payload["api_key_qs"] = _page_api_key(request)
     return _templates.TemplateResponse(
-        request, "aec/cases.html", cases_page_payload())
+        request, "aec/cases.html", payload)
 
 
 @router.get("/ui/aec/cases/{id}", response_class=HTMLResponse)
 def ui_aec_case_detail(request: Request, case_id: str):
+    payload = case_detail_page_payload(case_id)
+    payload["api_key_qs"] = _page_api_key(request)
     return _templates.TemplateResponse(
-        request, "aec/case_detail.html", case_detail_page_payload(case_id))
+        request, "aec/case_detail.html", payload)
 
 
 @router.get("/ui/aec/pipeline", response_class=HTMLResponse)
 def ui_aec_pipeline(request: Request):
+    payload = pipeline_page_payload()
+    payload["api_key_qs"] = _page_api_key(request)
     return _templates.TemplateResponse(
-        request, "aec/pipeline.html", pipeline_page_payload())
+        request, "aec/pipeline.html", payload)
 
 
 @router.get("/ui/aec/observations", response_class=HTMLResponse)
 def ui_aec_observations(request: Request):
+    payload = observations_page_payload()
+    payload["api_key_qs"] = _page_api_key(request)
     return _templates.TemplateResponse(
-        request, "aec/observations.html", observations_page_payload())
+        request, "aec/observations.html", payload)
 
 
 @router.get("/ui/aec/evidence", response_class=HTMLResponse)
 def ui_aec_evidence(request: Request):
+    payload = evidence_page_payload()
+    payload["api_key_qs"] = _page_api_key(request)
     return _templates.TemplateResponse(
-        request, "aec/evidence.html", evidence_page_payload())
+        request, "aec/evidence.html", payload)
 
 
 @router.get("/ui/aec/audit", response_class=HTMLResponse)
 def ui_aec_audit(request: Request):
+    payload = audit_page_payload()
+    payload["api_key_qs"] = _page_api_key(request)
     return _templates.TemplateResponse(
-        request, "aec/audit.html", audit_page_payload())
+        request, "aec/audit.html", payload)
 
 
 # ---------------------------------------------------------------------------

@@ -39,7 +39,7 @@
         <tbody>
           {% for row in cases %}
           <tr>
-            <td><a class="cell-link" href="/ui/aec/cases/{{ row.case_id }}">{{ row.case_id }}</a></td>
+            <td><a class="cell-link" href="/ui/aec/cases/{{ row.case_id }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">{{ row.case_id }}</a></td>
             <td>{{ row.target }}</td>
             <td>{{ row.category }}</td>
             <td><span class="badge badge-{{ row.badge }}">{{ row.research_state }}</span></td>
