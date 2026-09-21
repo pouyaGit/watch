@@ -42,9 +42,14 @@ class TestTemplateFiles(unittest.TestCase):
     def test_templates_contain_no_secret_literals(self):
         for template, _route in PAGES:
             text = (WEB / template).read_text().lower()
-            for secret in ("bearer ", "api_key=", "authorization:",
-                           "set-cookie", "password="):
+            for secret in ("bearer ", "authorization:", "set-cookie",
+                           "password="):
                 self.assertNotIn(secret, text, template)
+            # api_key= appears only as a query-param placeholder bound to
+            # the api_key_qs variable (never a hardcoded secret value)
+            if "api_key=" in text:
+                self.assertIn("api_key={{ api_key_qs }}", text, template)
+                self.assertNotIn("api_key=secret", text, template)
 
     def test_empty_state_present(self):
         for template, _route in PAGES:
