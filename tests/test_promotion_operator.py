@@ -97,6 +97,18 @@ class TempRepos:
         git(self.agent, "fetch", "origin")
         git(self.agent, "checkout", "-b", AGENT_BRANCH, f"origin/{MAIN_BRANCH}")
         git(self.main, "fetch", "origin")
+        # The merge path now pushes through push_safe.sh, which re-checks
+        # auth. Mirror an operator machine: SSH auth is configured here via
+        # a stand-in binary (same probe interface, controlled answer).
+        self.bindir = self.tmp / "bin"
+        self.bindir.mkdir()
+        fakessh = self.bindir / "fakessh"
+        fakessh.write_text(
+            "#!/bin/sh\n"
+            'echo "Hi testuser! You have successfully authenticated." >&2\n'
+            "exit 1\n"
+        )
+        fakessh.chmod(0o755)
 
     def commit_agent_file(self, name, content, message):
         (self.agent / name).write_text(content)
@@ -114,6 +126,8 @@ class TempRepos:
             "PROMOTION_MAIN_CHECKOUT": str(self.main),
             "WATCH_AGENT_BRANCH": AGENT_BRANCH,
             "WATCH_MAIN_BRANCH": MAIN_BRANCH,
+            "GIT_AUTH_SSH": str(self.bindir / "fakessh"),
+            "GIT_AUTH_GH": "/bin/false",
             "NO_COLOR": "1",
         }
         base.update(extra or {})
