@@ -15,7 +15,8 @@
 #   6. the operator passed --yes on this invocation (no automation -> BLOCK)
 #
 # Then: fetch the agent branch into the main checkout, verify the fetched
-# commit equals the approved commit, merge with --no-ff, push origin main.
+# commit equals the approved commit, merge with --no-ff, and push through
+# git/push_safe.sh (Epic 0.2 re-checks auth, refuses force flags).
 # Any failure before the merge aborts with BLOCK and records
 # PROMOTION_BLOCKED in the audit log. Success records PROMOTION_COMPLETED.
 #
@@ -49,6 +50,8 @@ REMOTE="${WATCH_REMOTE:-origin}"
 CHECK_SH="$DELIVERY_DIR/check.sh"
 GUARD_PY="$DELIVERY_DIR/diff_guard.py"
 PROMOTION_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+GIT_OPS_DIR="$(cd -- "$PROMOTION_DIR/../git" && pwd)"
+PUSH_SAFE="$GIT_OPS_DIR/push_safe.sh"
 AUDIT_PY="$PROMOTION_DIR/audit.py"
 AUDIT_LOG="$OUTPUT_DIR/AUDIT.log"
 
@@ -180,8 +183,10 @@ fetched="$(git_main rev-parse FETCH_HEAD 2>/dev/null || true)"
 git_main merge --no-ff -m "Merge branch '$AGENT_BRANCH'" FETCH_HEAD >/dev/null 2>&1 \
   || block "MAIN: merge failed"
 merged="$(git_main rev-parse HEAD 2>/dev/null || true)"
-git_main push "$REMOTE" "$MAIN_BRANCH" >/dev/null 2>&1 \
-  || block "MAIN: push to $REMOTE $MAIN_BRANCH failed"
+# Credentialless push (Epic 0.2): the safe wrapper re-checks auth readiness
+# and refuses force/bypass flags. Auth logic lives there, not here.
+"$PUSH_SAFE" --repo "$MAIN_CHECKOUT" "$REMOTE" "$MAIN_BRANCH" >/dev/null 2>&1 \
+  || block "MAIN: safe push to $REMOTE $MAIN_BRANCH failed"
 
 audit_event "PROMOTION_COMPLETED" "$REQUEST_BASE" "$merged" \
   "merged $AGENT_BRANCH @ $REQ_COMMIT into $MAIN_BRANCH"
