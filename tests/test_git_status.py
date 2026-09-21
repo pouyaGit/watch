@@ -175,6 +175,52 @@ class TestReadinessDisplay(unittest.TestCase):
         finally:
             box.cleanup()
 
+    def test_linked_worktree_with_ready_ssh_displays_ready(self):
+        """Epic 0.2.2: a linked worktree (.git file) must not read BLOCKED."""
+        box = Sandbox()
+        try:
+            origin = box.tmp / "origin.git"
+            run(["git", "init", "--bare", str(origin)],
+                env=box.env(), cwd=str(box.tmp))
+            git(box.repo, "remote", "set-url", "origin", str(origin), env=box.env())
+            git(box.repo, "push", "origin", "main", env=box.env())
+            linked = box.tmp / "linked"
+            git(box.repo, "worktree", "add", str(linked), env=box.env())
+            self.assertFalse((linked / ".git").is_dir())
+            # Reported scenario evidence: ssh -T exits 1 *with* the success
+            # text, and ls-remote reaches the remote.
+            ls_remote = run(
+                ["git", "-C", str(linked), "ls-remote", "origin", "HEAD"],
+                env=box.env(),
+            )
+            self.assertEqual(ls_remote.returncode, 0, ls_remote.stderr)
+            result = box.status({
+                "GIT_AUTH_REPO": str(linked),
+                "GIT_AUTH_SSH": str(box.bin / "fakessh"),
+                "GIT_AUTH_GH": "/bin/false",
+            })
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIsNotNone(re.search(r"(?m)^\s*push\s+READY\s*$", result.stdout))
+            self.assertIsNotNone(re.search(r"(?m)^\s*method\s+ssh\s*$", result.stdout))
+        finally:
+            box.cleanup()
+
+    def test_linked_worktree_without_auth_still_blocked(self):
+        box = Sandbox()
+        try:
+            linked = box.tmp / "linked"
+            git(box.repo, "worktree", "add", str(linked), env=box.env())
+            result = box.status({
+                "GIT_AUTH_REPO": str(linked),
+                "GIT_AUTH_SSH": str(box.bin / "falsessh"),
+                "GIT_AUTH_GH": str(box.bin / "falsessh"),
+            })
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIsNotNone(re.search(r"(?m)^\s*push\s+BLOCKED\s*$", result.stdout))
+            self.assertIsNone(re.search(r"(?m)^\s*push\s+READY\s*$", result.stdout))
+        finally:
+            box.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()
