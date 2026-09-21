@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}WATCH &middot; SOC Activity{% endblock %}
+{% block page %}Activity{% endblock %}
+{% block content %}
+<div class="p-6">
+  <h1 class="page-title mb-2">AI Activity / Mission Control</h1>
+  <p class="text-slate-400 text-sm mb-6">What the AI platform is doing right
+    now — from real orchestrator/runtime state.</p>
+
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Runtime</h2></div>
+    <div class="flex flex-wrap gap-4 text-sm">
+      <div><span class="text-slate-400">Status:</span> <span class="font-mono">{{ runtime.status }}</span></div>
+      <div><span class="text-slate-400">Stage:</span> {{ runtime.current_stage or '—' }}</div>
+      <div><span class="text-slate-400">Run:</span> <span class="font-mono">{{ runtime.current_run or '—' }}</span></div>
+      <div><span class="text-slate-400">Basis:</span> <span class="text-slate-500">{{ runtime.status_basis }}</span></div>
+    </div>
+  </section>
+
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+    <div class="panel p-4"><div class="text-3xl font-bold">{{ counts.running_agents }}</div><div class="text-slate-400 text-sm">Running agents</div></div>
+    <div class="panel p-4"><div class="text-3xl font-bold">{{ counts.queued_jobs }}</div><div class="text-slate-400 text-sm">Queued jobs</div></div>
+    <div class="panel p-4"><div class="text-3xl font-bold">{{ counts.completed_jobs }}</div><div class="text-slate-400 text-sm">Completed jobs</div></div>
+    <div class="panel p-4"><div class="text-3xl font-bold">{{ counts.blocked_jobs }}</div><div class="text-slate-400 text-sm">Blocked jobs</div></div>
+    <div class="panel p-4"><div class="text-3xl font-bold">{{ counts.waiting_review }}</div><div class="text-slate-400 text-sm">Waiting review</div></div>
+  </div>
+
+  <section class="panel p-4">
+    <div class="panel-head"><h2>Agent timeline</h2></div>
+    <ul class="text-sm space-y-2">
+      {% for entry in timeline %}
+      <li class="flex gap-3">
+        <span class="font-mono text-xs text-slate-500 w-16 shrink-0">{{ entry.time or '—' }}</span>
+        <span class="w-32 shrink-0 font-medium">{{ entry.agent }}</span>
+        <span class="w-40 shrink-0 text-slate-300">{{ entry.action }}</span>
+        <span class="text-slate-500">{{ entry.detail }}</span>
+      </li>
+      {% else %}
+      <li class="empty">No activity recorded.</li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

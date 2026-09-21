@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}WATCH &middot; Case {{ case_id }}{% endblock %}
+{% block page %}Case {{ case_id }}{% endblock %}
+{% block content %}
+<div class="p-6">
+  <div class="mb-6">
+    <a class="link text-sm" href="/ui/soc/cases{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">← all cases</a>
+    <h1 class="page-title mb-1 font-mono">{{ case_id }}</h1>
+    <span class="badge {{ 'badge-warn' if verdict != 'CONFIRMED' else 'badge-ok' }}">{{ verdict }}</span>
+  </div>
+
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Target</h2></div>
+    <dl class="text-sm space-y-1">
+      <div class="flex gap-2"><dt class="w-32 text-slate-400">Domain</dt><dd>{{ target.domain or '—' }}</dd></div>
+      <div class="flex gap-2"><dt class="w-32 text-slate-400">Category</dt><dd>{{ target.category or '—' }}</dd></div>
+      <div class="flex gap-2"><dt class="w-32 text-slate-400">Program</dt><dd>{{ target.program or '—' }}</dd></div>
+      <div class="flex gap-2"><dt class="w-32 text-slate-400">Endpoint</dt><dd class="font-mono">{{ target.endpoint or '—' }}</dd></div>
+      <div class="flex gap-2"><dt class="w-32 text-slate-400">Method</dt><dd class="font-mono">{{ target.method or '—' }}</dd></div>
+      <div class="flex gap-2"><dt class="w-32 text-slate-400">Parameters</dt><dd>{{ target.parameters|join(', ') if target.parameters else '—' }}</dd></div>
+    </dl>
+  </section>
+
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Research hypothesis</h2></div>
+    <p class="text-sm mb-3">{{ hypothesis.why }}</p>
+    <div class="text-slate-400 text-sm mb-1">Research history</div>
+    <ul class="text-sm list-disc pl-5">
+      {% for h in hypothesis.research_history %}
+      <li><span class="font-mono">{{ h.plan_id }}</span> — {{ h.step_count }} steps</li>
+      {% else %}<li class="text-slate-500">—</li>{% endfor %}
+    </ul>
+  </section>
+
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Suggested analysis</h2></div>
+    <div class="grid md:grid-cols-2 gap-6 text-sm">
+      <div>
+        <div class="text-slate-400 mb-1">Possible attack paths</div>
+        <ul class="list-disc pl-5">{% for p in suggested_analysis.attack_paths %}<li>{{ p }}</li>{% else %}<li class="text-slate-500">—</li>{% endfor %}</ul>
+      </div>
+      <div>
+        <div class="text-slate-400 mb-1">Required validation</div>
+        <ul class="list-disc pl-5">{% for v in suggested_analysis.required_validation %}<li>{{ v }}</li>{% else %}<li class="text-slate-500">—</li>{% endfor %}</ul>
+      </div>
+      <div>
+        <div class="text-slate-400 mb-1">Suggested payload ideas</div>
+        <ul class="list-disc pl-5">{% for p in suggested_analysis.payload_ideas %}<li>{{ p.probe }} <span class="text-slate-500">({{ p.kind }})</span></li>{% else %}<li class="text-slate-500">—</li>{% endfor %}</ul>
+      </div>
+      <div>
+        <div class="text-slate-400 mb-1">Related knowledge</div>
+        <ul class="list-disc pl-5">{% for k in suggested_analysis.related_knowledge %}<li><a class="link" href="{{ k.source_url }}">{{ k.title }}</a></li>{% else %}<li class="text-slate-500">—</li>{% endfor %}</ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Evidence</h2></div>
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr><th>Evidence ID</th><th>Level</th><th>Integrity</th><th>Redaction</th><th>Source</th><th>Tick</th></tr></thead>
+        <tbody>
+          {% for e in evidence %}
+          <tr>
+            <td class="font-mono">{{ e.evidence_id }}</td>
+            <td>{{ e.evidence_level }}</td>
+            <td class="font-mono text-xs">{{ e.integrity|truncate(16, True, '…') }}</td>
+            <td>{{ e.redaction_status }}</td>
+            <td>{{ e.source }}</td>
+            <td>{{ e.tick }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="empty">No evidence artifacts recorded.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel p-4">
+    <div class="panel-head"><h2>Authorization &amp; audit</h2></div>
+    <p class="text-sm mb-2">Authorization: <span class="font-mono">{{ authorization_status.state or '—' }}</span>
+      <span class="text-slate-500">{{ authorization_status.reference }}</span></p>
+    <ul class="text-sm space-y-1">
+      {% for e in audit_events %}
+      <li><span class="font-mono text-xs">{{ e.timestamp }}</span> {{ e.actor }} — {{ e.action }} <span class="text-slate-500">({{ e.result }})</span></li>
+      {% else %}<li class="text-slate-500">No audit events.</li>{% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}WATCH &middot; SOC Agents{% endblock %}
+{% block page %}AI Agents{% endblock %}
+{% block content %}
+<div class="p-6">
+  <h1 class="page-title mb-2">AI Agents</h1>
+  <p class="text-slate-400 text-sm mb-6">{{ count }} registered specialist
+    agents. Each agent page shows identity, knowledge, research history and
+    target cases.</p>
+
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>Agent</th><th>Role</th><th>Status</th>
+          <th>Queue</th><th>Active jobs</th><th>Jobs</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for agent in agents %}
+        <tr>
+          <td class="font-medium">{{ agent.name }}</td>
+          <td class="text-slate-400">{{ agent.role }}</td>
+          <td><span class="badge {{ 'badge-ok' if agent.available else 'badge-muted' }}">{{ agent.status }}</span></td>
+          <td>{{ agent.queue }}</td>
+          <td>{{ agent.active_jobs }}</td>
+          <td>{{ agent.job_count }}</td>
+          <td><a class="link" href="/ui/soc/agents/{{ agent.slug }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">open →</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not agents %}
+    <p class="empty">No agents registered.</p>
+  {% endif %}
+</div>
+{% endblock %}

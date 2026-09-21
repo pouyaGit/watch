@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}WATCH &middot; Analyst Handoff{% endblock %}
+{% block page %}Analyst Handoff{% endblock %}
+{% block content %}
+<div class="p-6">
+  <h1 class="page-title mb-2">External Analyst Handoff</h1>
+  <p class="text-slate-400 text-sm mb-6">{{ count }} shareable read-only
+    investigation packages. Open one to review target, evidence and
+    suggested tests with an external researcher.</p>
+
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr><th>Job</th><th>Report</th><th>Target</th><th>Category</th><th>Agent</th><th>Status</th><th>Generated</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for report in reports %}
+        <tr>
+          <td class="font-mono">{{ report.job_id }}</td>
+          <td class="font-mono">{{ report.report_id }}</td>
+          <td>{{ report.target }} <span class="text-slate-500">{{ report.subdomain }}</span></td>
+          <td>{{ report.category }}</td>
+          <td>{{ report.agent }}</td>
+          <td>{{ report.status }}</td>
+          <td>{{ report.generated_at }}</td>
+          <td><a class="link" href="{{ report.view_url }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">open →</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="empty">No handoff packages available.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

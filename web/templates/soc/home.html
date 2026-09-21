@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}WATCH &middot; AI SOC{% endblock %}
+{% block page %}AI Security Operations Center{% endblock %}
+{% block content %}
+<div class="p-6">
+  <h1 class="page-title mb-2">AI Security Operations Center</h1>
+  <p class="text-slate-400 text-sm mb-6">System-wide posture: what the AI
+    platform knows, is doing, and has produced.</p>
+
+  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+    <a class="panel p-4 block hover:border-cyan-500/50" href="/ui/soc/agents{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">
+      <div class="text-3xl font-bold">{{ agents }}</div>
+      <div class="text-slate-400 text-sm">Agents</div>
+    </a>
+    <a class="panel p-4 block hover:border-cyan-500/50" href="/ui/soc/cases{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">
+      <div class="text-3xl font-bold">{{ cases }}</div>
+      <div class="text-slate-400 text-sm">Cases</div>
+    </a>
+    <a class="panel p-4 block hover:border-cyan-500/50" href="/ui/soc/cases{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">
+      <div class="text-3xl font-bold">{{ evidence }}</div>
+      <div class="text-slate-400 text-sm">Evidence artifacts</div>
+    </a>
+    <a class="panel p-4 block hover:border-cyan-500/50" href="/ui/soc/handoff{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">
+      <div class="text-3xl font-bold">{{ reports }}</div>
+      <div class="text-slate-400 text-sm">Handoff reports</div>
+    </a>
+    <a class="panel p-4 block hover:border-cyan-500/50" href="/ui/kb{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">
+      <div class="text-3xl font-bold">{{ knowledge }}</div>
+      <div class="text-slate-400 text-sm">Knowledge docs</div>
+    </a>
+  </div>
+
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Runtime status</h2></div>
+    <div class="flex flex-wrap gap-4 text-sm">
+      <div><span class="text-slate-400">Status:</span>
+        <span class="font-mono">{{ runtime.status }}</span></div>
+      <div><span class="text-slate-400">Stage:</span>
+        <span>{{ runtime.current_stage or '—' }}</span></div>
+      <div><span class="text-slate-400">Current run:</span>
+        <span class="font-mono">{{ runtime.current_run or '—' }}</span></div>
+      <div><span class="text-slate-400">Basis:</span>
+        <span class="text-slate-500">{{ runtime.status_basis }}</span></div>
+    </div>
+  </section>
+
+  <div class="flex flex-wrap gap-3">
+    <a class="quick-action" href="/ui/soc/agents{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">Agents</a>
+    <a class="quick-action" href="/ui/soc/cases{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">Cases</a>
+    <a class="quick-action" href="/ui/soc/activity{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">Activity</a>
+    <a class="quick-action" href="/ui/soc/handoff{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">Handoff</a>
+  </div>
+</div>
+{% endblock %}

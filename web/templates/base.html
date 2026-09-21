@@ -38,6 +38,7 @@
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script defer src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js"></script>
   <link rel="stylesheet" href="/static/css/custom.css">
+  <link rel="stylesheet" href="/static/css/soc/soc.css">
 </head>
 <body class="bg-bg text-gray-200 font-sans" x-data="{ navOpen: false }">
 
@@ -52,6 +53,23 @@
     </div>
 
     <nav class="sidebar-nav">
+      <p class="nav-group">AI SOC</p>
+      <a class="side-link{{ ' active' if active == 'soc-overview' }}" href="/ui/soc/{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">◈</span>Overview</a>
+      <a class="side-link{{ ' active' if active == 'soc-agents' }}" href="/ui/soc/agents{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">✦</span>Agents</a>
+      <a class="side-link{{ ' active' if active == 'soc-activity' }}" href="/ui/soc/activity{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">↻</span>Missions / Activity</a>
+      <a class="side-link{{ ' active' if active == 'soc-cases' }}" href="/ui/soc/cases{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">□</span>Cases</a>
+      <a class="side-link{{ ' active' if active == 'soc-evidence' }}" href="/ui/soc/cases{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}#evidence" @click="navOpen = false">
+        <span class="side-ico">▤</span>Evidence</a>
+      <a class="side-link{{ ' active' if active == 'soc-knowledge' }}" href="/ui/kb{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">✎</span>Knowledge</a>
+      <a class="side-link{{ ' active' if active == 'soc-handoff' }}" href="/ui/soc/handoff{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">⇪</span>Handoff</a>
+
+      <p class="nav-group">Legacy / Engineering</p>
       <p class="nav-group">Overview</p>
       <a class="side-link{{ ' active' if active == 'command' }}" href="{{ command_url }}" @click="navOpen = false">
         <span class="side-ico">⌂</span>Command Center</a>

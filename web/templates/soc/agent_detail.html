@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}WATCH &middot; {{ identity.name }}{% endblock %}
+{% block page %}{{ identity.name }}{% endblock %}
+{% block content %}
+<div class="p-6">
+  <div class="mb-6">
+    <a class="link text-sm" href="/ui/soc/agents{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">← all agents</a>
+    <h1 class="page-title mb-1">{{ identity.name }}</h1>
+    <p class="text-slate-400 text-sm">{{ identity.purpose }}</p>
+  </div>
+
+  <div class="grid md:grid-cols-2 gap-6 mb-6">
+    <section class="panel p-4">
+      <div class="panel-head"><h2>Identity</h2></div>
+      <dl class="text-sm space-y-1">
+        <div class="flex gap-2"><dt class="w-32 text-slate-400">Role</dt><dd>{{ identity.role }}</dd></div>
+        <div class="flex gap-2"><dt class="w-32 text-slate-400">Status</dt><dd><span class="badge {{ 'badge-ok' if counters.available else 'badge-warn' }}">{{ identity.status }}</span></dd></div>
+        <div class="flex gap-2"><dt class="w-32 text-slate-400">Queue</dt><dd>{{ counters.queue }}</dd></div>
+        <div class="flex gap-2"><dt class="w-32 text-slate-400">Active jobs</dt><dd>{{ counters.active_jobs }}</dd></div>
+        <div class="flex gap-2"><dt class="w-32 text-slate-400">Total jobs</dt><dd>{{ counters.job_count }}</dd></div>
+      </dl>
+    </section>
+
+    <section class="panel p-4">
+      <div class="panel-head"><h2>Knowledge</h2></div>
+      <div class="text-sm space-y-3">
+        <div>
+          <div class="text-slate-400 mb-1">Vulnerability areas</div>
+          <div class="flex flex-wrap gap-1">
+            {% for area in knowledge.vulnerability_areas %}<span class="badge">{{ area }}</span>{% else %}<span class="text-slate-500">—</span>{% endfor %}
+          </div>
+        </div>
+        <div>
+          <div class="text-slate-400 mb-1">Techniques</div>
+          <ul class="list-disc pl-5">
+            {% for t in knowledge.techniques %}<li>{{ t }}</li>{% else %}<li class="text-slate-500">—</li>{% endfor %}
+          </ul>
+        </div>
+        <div>
+          <div class="text-slate-400 mb-1">Frameworks / technologies</div>
+          <div class="flex flex-wrap gap-1">
+            {% for f in knowledge.frameworks %}<span class="badge badge-muted">{{ f }}</span>{% else %}<span class="text-slate-500">—</span>{% endfor %}
+          </div>
+        </div>
+        <div>
+          <div class="text-slate-400 mb-1">Previous research topics</div>
+          <ul class="list-disc pl-5">
+            {% for t in knowledge.topics %}<li>{{ t }}</li>{% else %}<li class="text-slate-500">—</li>{% endfor %}
+          </ul>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Research history</h2></div>
+    <div class="grid md:grid-cols-3 gap-4 text-sm">
+      <div>
+        <div class="text-slate-400 mb-1">Papers / articles studied</div>
+        <ul class="space-y-1">
+          {% for p in history.papers %}<li><a class="link" href="{{ p.source_url }}">{{ p.title }}</a> <span class="text-slate-500">{{ p.indexed_at }}</span></li>{% else %}<li class="text-slate-500">—</li>{% endfor %}
+        </ul>
+      </div>
+      <div>
+        <div class="text-slate-400 mb-1">CVEs analyzed</div>
+        <ul class="space-y-1">
+          {% for c in history.cves %}<li><span class="font-mono">{{ c.id }}</span> <span class="badge badge-muted">{{ c.status }}</span></li>{% else %}<li class="text-slate-500">—</li>{% endfor %}
+        </ul>
+      </div>
+      <div>
+        <div class="text-slate-400 mb-1">Internal notes</div>
+        <ul class="space-y-1">
+          {% for n in history.notes %}<li>{{ n.target or n.category }} <span class="text-slate-500">{{ n.last_seen }}</span></li>{% else %}<li class="text-slate-500">—</li>{% endfor %}
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel p-4">
+    <div class="panel-head"><h2>Target cases</h2></div>
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr><th>Case</th><th>Target</th><th>Category</th><th>Evidence status</th><th></th></tr></thead>
+        <tbody>
+          {% for case in target_cases %}
+          <tr>
+            <td class="font-mono">{{ case.case_id }}</td>
+            <td>{{ case.target }}</td>
+            <td>{{ case.category }}</td>
+            <td>{{ case.evidence_status }}</td>
+            <td><a class="link" href="{{ case.detail_url }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">case →</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="empty">No target cases in the current view.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}
