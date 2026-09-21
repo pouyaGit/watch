@@ -41,6 +41,7 @@ ASSIGNMENT_ROLES = frozenset({
     "authorization-researcher",
     "input-researcher",
     "server-researcher",
+    "technology-researcher",
     "general-researcher",
 })
 
@@ -196,15 +197,152 @@ def get_research_status() -> dict[str, Any]:
     return build_research_status_view({"bands": {}, "roles": {}})
 
 
+RESEARCH_RUN_KEYS = (
+    "run_id", "candidates_processed", "cases_created", "cases_skipped",
+    "plans_generated", "review_items", "failures", "completion_summary",
+)
+
+
+def _simulation_run() -> dict[str, Any]:
+    """Run the committed fixture through the coordinator (pure, no I/O).
+
+    The fixture lives in-module, so handlers serve real
+    simulation-derived data on demand: deterministic, read-only, no
+    storage reads or writes. Imported lazily so importing this router
+    never pays for a simulation.
+    """
+    from aec.coordinator import fixtures, pipeline
+
+    return pipeline.run_research(list(fixtures.CANDIDATES)).to_dict()
+
+
+def build_research_runs_view(runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Project research runs to the public field set, in input order."""
+    if isinstance(runs, (str, bytes)) or not isinstance(runs, Sequence):
+        raise ValueError("runs must be a sequence of mappings")
+    projected: list[dict[str, Any]] = []
+    for run in runs:
+        if not isinstance(run, Mapping):
+            continue
+        run_id = _text(run.get("run_id"))
+        if not run_id:
+            continue
+        projected.append(
+            {
+                "run_id": run_id,
+                "candidates_processed": run.get("candidates_processed", 0),
+                "cases_created": list(run.get("cases_created", [])),
+                "cases_skipped": list(run.get("cases_skipped", [])),
+                "plans_generated": list(run.get("plans_generated", [])),
+                "review_items": list(run.get("review_items", [])),
+                "failures": list(run.get("failures", [])),
+                "completion_summary": dict(run.get("completion_summary", {})),
+            }
+        )
+    return {"runs": projected}
+
+
+def build_research_queue_view(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Project a coordinator queue snapshot (empty view for None)."""
+    if snapshot is None:
+        return {"snapshot_id": "", "entries": [], "total": 0}
+    return build_queue_view(snapshot)
+
+
+def build_review_view(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Project review items, dropping malformed entries."""
+    if isinstance(items, (str, bytes)) or not isinstance(items, Sequence):
+        raise ValueError("items must be a sequence of mappings")
+    from aec.review import queue as review_queue
+
+    projected: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            projected.append(review_queue.build_review_item(item).to_dict())
+        except ValueError:
+            continue
+    return {"items": projected}
+
+
+def build_research_summary_view(run: Mapping[str, Any]) -> dict[str, Any]:
+    """Aggregate a run into band, specialist, authorization, and evidence counts."""
+    if not isinstance(run, Mapping):
+        raise ValueError("run must be a mapping")
+    cases = run.get("cases", [])
+    if not isinstance(cases, (list, tuple)):
+        raise ValueError("run cases must be a sequence")
+    bands: dict[str, int] = {}
+    by_specialist: dict[str, int] = {}
+    for case in cases:
+        if not isinstance(case, Mapping):
+            continue
+        band = _text(case.get("band"))
+        if band in RESEARCH_BANDS:
+            bands[band] = bands.get(band, 0) + 1
+        specialist = _text(case.get("specialist"))
+        if specialist in ASSIGNMENT_ROLES:
+            by_specialist[specialist] = by_specialist.get(specialist, 0) + 1
+    authorizations = run.get("authorization_states", {})
+    evidence = run.get("evidence_states", {})
+    if not isinstance(authorizations, Mapping) or not isinstance(evidence, Mapping):
+        raise ValueError("run states must be mappings")
+    failures = run.get("failures", [])
+    return {
+        "run_id": _text(run.get("run_id")),
+        "candidates_processed": run.get("candidates_processed", 0),
+        "cases_created": len(run.get("cases_created", []) or []),
+        "bands": bands,
+        "assignments_by_specialist": by_specialist,
+        "authorizations": dict(authorizations),
+        "evidence_states": dict(evidence),
+        "failures": len(failures) if isinstance(failures, (list, tuple)) else 0,
+        "versions": {"aec": LAYER_VERSION},
+    }
+
+
+@router.get("/api/aec/research-runs")
+def get_research_runs() -> dict[str, Any]:
+    """Latest research run over the committed fixture (simulated)."""
+    return build_research_runs_view([_simulation_run()])
+
+
+@router.get("/api/aec/research-queue")
+def get_research_queue() -> dict[str, Any]:
+    """Research queue from the fixture simulation."""
+    return build_research_queue_view(_simulation_run().get("queue_snapshot"))
+
+
+@router.get("/api/aec/review")
+def get_review() -> dict[str, Any]:
+    """Human review queue from the fixture simulation."""
+    return build_review_view(_simulation_run().get("review_items", []))
+
+
+@router.get("/api/aec/research-summary")
+def get_research_summary() -> dict[str, Any]:
+    """Aggregate counts from the fixture simulation."""
+    return build_research_summary_view(_simulation_run())
+
+
 __all__ = [
     "build_candidates_view",
     "build_cases_view",
     "build_queue_view",
+    "build_research_queue_view",
+    "build_research_runs_view",
     "build_research_status_view",
+    "build_research_summary_view",
+    "build_review_view",
     "build_status_view",
     "get_candidates",
     "get_cases",
     "get_queue",
+    "get_research_queue",
+    "get_research_runs",
+    "get_research_summary",
+    "get_review",
     "get_research_status",
     "get_status",
     "router",
