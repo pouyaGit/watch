@@ -35,6 +35,7 @@ ALLOWED_STDLIB = frozenset(
         "enum",
         "functools",
         "hashlib",
+        "ipaddress",
         "itertools",
         "json",
         "math",
@@ -92,6 +93,20 @@ MUST_NOT_EXIST = (
     AEC_DIR / "observation_lane.py",
 )
 
+#: EPIC7 narrow authorization: the ONE file licensed to import a transport,
+#: the runtime HTTP observation adapter (§5). Every other module stays
+#: offline; this file's imports must remain function-local (asserted below).
+SANCTIONED_TRANSPORT = (
+    AEC_DIR / "runtime" / "adapters" / "http_observation.py"
+)
+
+#: Never allowed, whatever the reason (transport, process, or project internals) —
+#: except the single EPIC7-sanctioned adapter above, and only for the listed
+#: import names, which must never appear at module level.
+TRANSPORT_IMPORT_NAMES = frozenset(
+    {"http", "urllib", "socket", "ssl", "requests", "httpx", "aiohttp"}
+)
+
 #: Danger flags that must never be raised to True inside aec/.
 FORBIDDEN_FLAG_VALUES = {
     "AEC_LIVE_HTTP_ENABLED": False,
@@ -124,6 +139,16 @@ def aec_modules():
     return sorted(path for path in AEC_DIR.rglob("*.py"))
 
 
+def _function_parent(tree: ast.Module, target: ast.AST):
+    """The nearest enclosing function node, or None for module-level."""
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for child in ast.walk(node):
+                if child is target:
+                    return node
+    return None
+
+
 class TestImportGuard(unittest.TestCase):
     def test_the_package_has_modules_to_guard(self):
         self.assertGreaterEqual(len(aec_modules()), 5)
@@ -139,12 +164,60 @@ class TestImportGuard(unittest.TestCase):
                     names = [node.module.split(".")[0]]
                 else:
                     continue
-                for name in names:
-                    if name in FORBIDDEN_MODULES:
-                        offenders.append(f"{path.name}:{node.lineno} imports {name}")
-                    elif name not in ALLOWED_STDLIB:
-                        offenders.append(f"{path.name}:{node.lineno} imports {name} (not on the allowlist)")
+                # The EPIC7 runtime HTTP adapter is the single sanctioned
+                # transport file; everything else stays fully offline.
+                if path != SANCTIONED_TRANSPORT:
+                    for name in names:
+                        if name in FORBIDDEN_MODULES:
+                            offenders.append(f"{path.name}:{node.lineno} imports {name}")
+                        elif name not in ALLOWED_STDLIB:
+                            offenders.append(f"{path.name}:{node.lineno} imports {name} (not on the allowlist)")
+                else:
+                    # Even the sanctioned file: no transport name at module
+                    # level, and no forbidden module outside the transport set.
+                    for name in names:
+                        if name in FORBIDDEN_MODULES and name not in TRANSPORT_IMPORT_NAMES:
+                            offenders.append(f"{path.name}:{node.lineno} imports {name}")
+                        elif name not in ALLOWED_STDLIB and name not in TRANSPORT_IMPORT_NAMES:
+                            offenders.append(f"{path.name}:{node.lineno} imports {name} (not on the allowlist)")
         self.assertEqual(offenders, [], f"forbidden imports in aec/: {offenders}")
+
+    def test_sanctioned_transport_imports_are_function_local(self):
+        """The one licensed adapter may import a transport, but only inside
+        functions — importing the module itself must never touch the network."""
+        tree = ast.parse(SANCTIONED_TRANSPORT.read_text(encoding="utf-8"),
+                         filename=str(SANCTIONED_TRANSPORT))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.Import):
+                    names = [alias.name.split(".")[0] for alias in node.names]
+                else:
+                    names = [node.module.split(".")[0]]
+                if any(name in TRANSPORT_IMPORT_NAMES for name in names):
+                    parent = _function_parent(tree, node)
+                    self.assertIsNotNone(
+                        parent,
+                        f"transport import at line {node.lineno} must be "
+                        "function-local")
+
+    def test_no_transport_import_in_runtime_elsewhere(self):
+        """Only the sanctioned adapter may import transport names."""
+        offenders = []
+        for path in aec_modules():
+            if path == SANCTIONED_TRANSPORT:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name.split(".")[0] for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                    names = [node.module.split(".")[0]]
+                else:
+                    continue
+                for name in names:
+                    if name in TRANSPORT_IMPORT_NAMES:
+                        offenders.append(f"{path.name}:{node.lineno} imports {name}")
+        self.assertEqual(offenders, [], f"transport imports outside the sanctioned adapter: {offenders}")
 
     def test_no_dynamic_import_escape_hatches(self):
         banned_bare = {"__import__", "compile", "eval", "exec", "input"}

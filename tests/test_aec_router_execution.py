@@ -131,9 +131,9 @@ class TestRoutes(unittest.TestCase):
         for marker in ("confirmed", "finding", "verdict"):
             self.assertNotIn(marker, blob)
 
-    def test_routes_total_now_fourteen(self):
+    def test_routes_total_now_nineteen(self):
         paths = sorted(route.path for route in aec.router.routes)
-        self.assertEqual(len(paths), 14)
+        self.assertEqual(len(paths), 19)
 
     def test_no_mutation_endpoints(self):
         for route in aec.router.routes:
