@@ -1,0 +1,64 @@
+{# aec/evidence.html — AEC Evidence Viewer (EPIC8 Part 6).
+   Artifact metadata only: no secrets, cookies, authorization headers or
+   raw bodies are ever rendered. Integrity and redaction status shown. #}
+{% extends "base.html" %}
+{% block title %}WATCH &middot; AEC Evidence{% endblock %}
+{% block page %}AEC Evidence{% endblock %}
+
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/aec/aec.css">
+<script defer src="/static/js/aec/aec.js"></script>
+{% macro empty_state(message) -%}
+<div class="empty-state">
+  <div class="empty-title">{{ message }}</div>
+</div>
+{%- endmacro %}
+<div class="page-head">
+  <h1 class="page-title">AEC Evidence</h1>
+  <p class="page-sub">Evidence artifacts — integrity, provenance, redaction status</p>
+</div>
+
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Artifacts <span class="badge-sm">{{ artifacts|length }}</span></h2></div>
+  <div class="panel-body">
+    {% if artifacts %}
+    <div class="table-wrap flex-col">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Evidence ID</th>
+            <th>Case</th>
+            <th>Type</th>
+            <th>Scope</th>
+            <th>Integrity</th>
+            <th>Redaction</th>
+            <th>Quality</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for artifact in artifacts %}
+          <tr>
+            <td>{{ artifact.evidence_id }}</td>
+            <td>{{ artifact.case_id }}</td>
+            <td>{{ artifact.observation_type }}</td>
+            <td>{{ artifact.scope_validation }}</td>
+            <td><span class="badge badge-{{ artifact.integrity_badge }}">{{ artifact.integrity[:17] }}…</span></td>
+            <td><span class="badge badge-{{ artifact.redaction_badge }}">{{ artifact.redaction_status }}</span></td>
+            <td>{{ artifact.quality_score }}</td>
+            <td>{{ artifact.provenance.source }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    {{ empty_state('No evidence artifacts yet.') }}
+    {% endif %}
+  </div>
+</section>
+
+<div class="loading-note" data-aec-loading hidden>Loading…</div>
+<div class="error-note" data-aec-error hidden>Could not load evidence.</div>
+{% endblock %}

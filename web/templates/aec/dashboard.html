@@ -1,0 +1,81 @@
+{# aec/dashboard.html — AEC Command Center overview (EPIC8 Part 2).
+   Read-only: every number is a projection of the committed simulations.
+   No controls, no execution, no authorization actions. #}
+{% extends "base.html" %}
+{% block title %}WATCH &middot; AEC Command Center{% endblock %}
+{% block page %}AEC Command Center{% endblock %}
+
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/aec/aec.css">
+<script defer src="/static/js/aec/aec.js"></script>
+{% macro empty_state(message) -%}
+<div class="empty-state">
+  <div class="empty-title">{{ message }}</div>
+</div>
+{%- endmacro %}
+<div class="page-head">
+  <h1 class="page-title">AEC Command Center</h1>
+  <p class="page-sub">Operational overview — candidates, cases, evidence, observations, review</p>
+</div>
+
+<div class="quick-actions">
+  <a class="quick-action" href="/ui/aec/dashboard"><span class="qa-icon">○</span> Overview</a>
+  <a class="quick-action" href="/ui/aec/cases"><span class="qa-icon">□</span> Cases</a>
+  <a class="quick-action" href="/ui/aec/pipeline"><span class="qa-icon">⇉</span> Pipeline</a>
+  <a class="quick-action" href="/ui/aec/observations"><span class="qa-icon">◉</span> Observations</a>
+  <a class="quick-action" href="/ui/aec/evidence"><span class="qa-icon">≡</span> Evidence</a>
+  <a class="quick-action" href="/ui/aec/audit"><span class="qa-icon">↻</span> Audit</a>
+</div>
+
+<div class="kpi-grid kpi-6 mb-4">
+  <div class="stat-card">
+    <div class="stat-label">Candidates</div>
+    <div class="stat-value">{{ view.candidates }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Active Cases</div>
+    <div class="stat-value">{{ view.active_cases }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Research Jobs</div>
+    <div class="stat-value">{{ view.research_jobs }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Waiting Evidence</div>
+    <div class="stat-value warn">{{ view.waiting_evidence }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Observations</div>
+    <div class="stat-value">{{ view.observations }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Review Pending</div>
+    <div class="stat-value accent2">{{ view.review_pending }}</div>
+  </div>
+</div>
+
+<div class="section-label">Recent Activity</div>
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Recent activity</h2></div>
+  <div class="panel-body">
+    {% if view.recent_activity %}
+    <ul class="timeline-list">
+      {% for entry in view.recent_activity %}
+      <li class="timeline-item">
+        <span class="timeline-actor">{{ entry.actor }}</span>
+        <span class="timeline-action">{{ entry.action }}</span>
+        <span class="timeline-result">{{ entry.result }}</span>
+        <span class="timeline-stamp">tick {{ entry.timestamp }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    {{ empty_state('No activity recorded yet.') }}
+    {% endif %}
+  </div>
+</section>
+
+<div class="loading-note" data-aec-loading hidden>Loading…</div>
+<div class="error-note" data-aec-error hidden>Could not load dashboard.</div>
+{% endblock %}

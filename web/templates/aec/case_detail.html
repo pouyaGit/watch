@@ -1,0 +1,154 @@
+{# aec/case_detail.html — AEC Case Detail (EPIC8 Part 3).
+   Timeline, research history, evidence, authorization status, observations,
+   audit events. Read-only; no raw payloads, no secrets. #}
+{% extends "base.html" %}
+{% block title %}WATCH &middot; AEC Case Detail{% endblock %}
+{% block page %}AEC Case Detail{% endblock %}
+
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/aec/aec.css">
+<script defer src="/static/js/aec/aec.js"></script>
+{% macro empty_state(message) -%}
+<div class="empty-state">
+  <div class="empty-title">{{ message }}</div>
+</div>
+{%- endmacro %}
+{% if not_found %}
+<div class="page-head">
+  <h1 class="page-title">Case not found</h1>
+  <p class="page-sub">The requested case does not exist in the current simulation.</p>
+</div>
+{{ empty_state('No case matches that identifier.') }}
+{% else %}
+<div class="page-head">
+  <h1 class="page-title">{{ case.case_id }}</h1>
+  <p class="page-sub">{{ case.target }} · {{ case.category }}</p>
+  <span class="badge badge-{{ case.badge }}">{{ case.research_state }}</span>
+  <span class="badge badge-{{ case.badge }}">{{ case.evidence_state }}</span>
+</div>
+
+<div class="detail-grid">
+<div class="section-label">Timeline</div>
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Lifecycle timeline</h2></div>
+  <div class="panel-body">
+    {% if timeline %}
+    <ul class="timeline-list">
+      {% for entry in timeline %}
+      <li class="timeline-item">
+        <span class="timeline-stamp">tick {{ entry.tick }}</span>
+        <span class="timeline-actor">{{ entry.actor }}</span>
+        <span class="timeline-action">{{ entry.event }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    {{ empty_state('No transitions recorded.') }}
+    {% endif %}
+  </div>
+</section>
+
+<div class="section-label">Research History</div>
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Research plans</h2></div>
+  <div class="panel-body">
+    {% if research_history %}
+    <table class="data-table">
+      <thead><tr><th>Plan</th><th>Steps</th></tr></thead>
+      <tbody>
+        {% for plan in research_history %}
+        <tr><td>{{ plan.plan_id or '—' }}</td><td>{{ plan.step_count }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    {{ empty_state('No research plans recorded.') }}
+    {% endif %}
+  </div>
+</section>
+
+<div class="section-label">Evidence Artifacts</div>
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Evidence</h2></div>
+  <div class="panel-body">
+    {% if evidence_artifacts %}
+    <table class="data-table">
+      <thead><tr><th>Evidence ID</th><th>Level</th><th>Redaction</th><th>Source</th></tr></thead>
+      <tbody>
+        {% for artifact in evidence_artifacts %}
+        <tr>
+          <td>{{ artifact.evidence_id }}</td>
+          <td>{{ artifact.evidence_level }}</td>
+          <td>{{ artifact.redaction_status }}</td>
+          <td>{{ artifact.source }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    {{ empty_state('No evidence artifacts yet.') }}
+    {% endif %}
+  </div>
+</section>
+
+<div class="section-label">Authorization Status</div>
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Authorization</h2></div>
+  <div class="panel-body">
+    <p>State: <span class="badge badge-{{ case.badge }}">{{ authorization_status.state }}</span></p>
+    <p class="muted">Reference: {{ authorization_status.reference or '—' }}</p>
+    <p class="loading-note" data-aec-loading hidden>Loading…</p>
+    <p class="error-note" data-aec-error hidden>Could not load authorization status.</p>
+  </div>
+</section>
+
+<div class="section-label">Observation History</div>
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Observations</h2></div>
+  <div class="panel-body">
+    {% if observation_history %}
+    <table class="data-table">
+      <thead><tr><th>Request</th><th>Type</th><th>State</th><th>Evidence</th></tr></thead>
+      <tbody>
+        {% for row in observation_history %}
+        <tr>
+          <td>{{ row.request_id }}</td>
+          <td>{{ row.observation_type }}</td>
+          <td><span class="badge badge-{{ row.badge }}">{{ row.state }}</span></td>
+          <td>{{ row.evidence_id or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    {{ empty_state('No observations recorded.') }}
+    {% endif %}
+  </div>
+</section>
+
+<div class="section-label">Audit Events</div>
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Audit</h2></div>
+  <div class="panel-body">
+    {% if audit_events %}
+    <table class="data-table">
+      <thead><tr><th>Action</th><th>Result</th><th>Actor</th></tr></thead>
+      <tbody>
+        {% for event in audit_events %}
+        <tr>
+          <td>{{ event.action }}</td>
+          <td>{{ event.result }}</td>
+          <td>{{ event.actor }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    {{ empty_state('No audit events for this case.') }}
+    {% endif %}
+  </div>
+</section>
+</div>
+{% endif %}
+{% endblock %}

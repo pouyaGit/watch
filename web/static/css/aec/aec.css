@@ -1,0 +1,140 @@
+/* aec.css — AEC Command Center (EPIC8). Additive component styles on top
+   of the existing WATCH palette (custom.css variables are inherited). */
+
+/* KPI grid: six cards on wide screens, responsive down to one column. */
+.aec-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.aec-stat-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.aec-stat-label {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.aec-stat-value {
+  color: var(--text);
+  font-size: 26px;
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.aec-stat-value.warn { color: var(--warn); }
+.aec-stat-value.accent2 { color: var(--accent2); }
+
+/* Status badges reuse the dashboard badge vocabulary. */
+.aec-badge.ok    { background: rgba(63, 185, 80, 0.14);   color: var(--ok); }
+.aec-badge.warn  { background: rgba(210, 153, 34, 0.14);  color: var(--warn); }
+.aec-badge.err   { background: rgba(248, 81, 73, 0.14);   color: var(--err); }
+.aec-badge.muted { background: rgba(139, 148, 158, 0.14); color: var(--muted); }
+
+/* Pipeline stages as an ordered vertical flow. */
+.aec-pipeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 10px;
+}
+
+.aec-pipeline-stage {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  text-align: center;
+}
+
+.aec-pipeline-name {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.aec-pipeline-blocks {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.aec-pipeline-block {
+  color: var(--warn);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+/* Unified timeline. */
+.aec-timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-left: 1px solid var(--border);
+}
+
+.aec-timeline-item {
+  position: relative;
+  padding: 6px 0 6px 18px;
+  font-size: 13px;
+}
+
+.aec-timeline-item::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 12px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.aec-timeline-stamp { color: var(--muted); margin-right: 8px; }
+.aec-timeline-actor { color: var(--accent); margin-right: 8px; }
+.aec-timeline-action { color: var(--text); margin-right: 8px; }
+.aec-timeline-result { color: var(--muted); }
+
+/* Loading / error / empty states. */
+.aec-loading-note, .aec-error-note {
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-top: 12px;
+  background: var(--bg);
+}
+
+.aec-loading-note { color: var(--muted); }
+.aec-error-note {
+  color: var(--err);
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+/* Responsive: collapse to single column below the dashboard breakpoint. */
+@media (max-width: 1200px) {
+  .aec-kpi-grid { grid-template-columns: repeat(3, 1fr); }
+  .aec-pipeline-list { grid-template-columns: repeat(4, 1fr); }
+}
+
+@media (max-width: 768px) {
+  .aec-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .aec-pipeline-list { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 480px) {
+  .aec-kpi-grid { grid-template-columns: 1fr; }
+  .aec-pipeline-list { grid-template-columns: 1fr; }
+}

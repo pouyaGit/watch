@@ -1,0 +1,64 @@
+{# aec/observations.html — AEC Observation Center (EPIC8 Part 5).
+   Read-only dashboard: request id, case, target, type, state, times,
+   evidence id. No execution buttons, no controls. #}
+{% extends "base.html" %}
+{% block title %}WATCH &middot; AEC Observations{% endblock %}
+{% block page %}AEC Observations{% endblock %}
+
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/aec/aec.css">
+<script defer src="/static/js/aec/aec.js"></script>
+{% macro empty_state(message) -%}
+<div class="empty-state">
+  <div class="empty-title">{{ message }}</div>
+</div>
+{%- endmacro %}
+<div class="page-head">
+  <h1 class="page-title">AEC Observations</h1>
+  <p class="page-sub">Read-only observation center — states and evidence references</p>
+</div>
+
+<section class="panel mb-6">
+  <div class="panel-head"><h2>Observations <span class="badge-sm">{{ total }}</span></h2></div>
+  <div class="panel-body">
+    {% if observations %}
+    <div class="table-wrap flex-col">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Request ID</th>
+            <th>Case</th>
+            <th>Target</th>
+            <th>Type</th>
+            <th>State</th>
+            <th>Created</th>
+            <th>Completed</th>
+            <th>Evidence ID</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in observations %}
+          <tr>
+            <td>{{ row.request_id }}</td>
+            <td>{{ row.case_id }}</td>
+            <td>{{ row.target }}</td>
+            <td>{{ row.observation_type }}</td>
+            <td><span class="badge badge-{{ row.badge }}">{{ row.state }}</span></td>
+            <td>{{ row.created_time }}</td>
+            <td>{{ row.completed_time }}</td>
+            <td>{{ row.evidence_id or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    {{ empty_state('No observations recorded.') }}
+    {% endif %}
+  </div>
+</section>
+
+<div class="loading-note" data-aec-loading hidden>Loading…</div>
+<div class="error-note" data-aec-error hidden>Could not load observations.</div>
+{% endblock %}
