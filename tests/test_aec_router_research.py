@@ -166,16 +166,28 @@ class TestResearchHandlers(unittest.TestCase):
             (tuple(sorted(r.methods or ())), r.path)
             for r in aec.router.routes
             if r.path.startswith("/api/aec/research")
-            or r.path == "/api/aec/review"
+            or r.path in (
+                "/api/aec/review",
+                "/api/aec/execution-runs",
+                "/api/aec/research-jobs",
+                "/api/aec/specialists",
+                "/api/aec/evidence",
+                "/api/aec/execution-summary",
+            )
         )
         self.assertEqual(
             routes,
             [
+                (("GET",), "/api/aec/evidence"),
+                (("GET",), "/api/aec/execution-runs"),
+                (("GET",), "/api/aec/execution-summary"),
+                (("GET",), "/api/aec/research-jobs"),
                 (("GET",), "/api/aec/research-queue"),
                 (("GET",), "/api/aec/research-runs"),
                 (("GET",), "/api/aec/research-status"),
                 (("GET",), "/api/aec/research-summary"),
                 (("GET",), "/api/aec/review"),
+                (("GET",), "/api/aec/specialists"),
             ],
         )
 
@@ -404,13 +416,13 @@ class TestResearchHandlerDetails(unittest.TestCase):
             aec.get_status(), {"counts": {}, "versions": {"aec": aec.LAYER_VERSION}}
         )
 
-    def test_nine_routes_total(self):
+    def test_fourteen_routes_total(self):
         from backend.routers import aec
 
         paths = [
             r.path for r in aec.router.routes if hasattr(r, "methods")
         ]
-        self.assertEqual(len(paths), 9)
+        self.assertEqual(len(paths), 14)
 
 
 if __name__ == "__main__":

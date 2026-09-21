@@ -326,24 +326,182 @@ def get_research_summary() -> dict[str, Any]:
     return build_research_summary_view(_simulation_run())
 
 
+EXECUTION_KEYS = (
+    "run_id", "source_mode", "candidate_count", "case_count", "job_count",
+    "queued_count", "blocked_count", "waiting_authorization_count",
+    "observation_count", "evidence_count", "review_required_count",
+    "completed_count", "failed_count", "duration", "replay_identity",
+    "policy_version",
+)
+
+
+def _execution_run() -> dict[str, Any]:
+    """Run the committed fixture through the execution loop (pure, no I/O)."""
+    from aec.runtime import loop
+
+    records = list(_EXECUTION_FIXTURE)
+    authz = {record["id"]: {"status": "GRANTED", "expires_tick": 100}
+             for record in records}
+    return loop.run_execution(records, "fixture", authz=authz).to_dict()
+
+
+_EXECUTION_FIXTURE = (
+    {
+        "subdomain": "shop.example.com",
+        "url": "/orders?order_id=",
+        "endpoint": "/orders",
+        "parameter": "order_id",
+        "method": "GET",
+        "location": "query",
+        "technology": ["flask"],
+        "source": "watch",
+        "id": "srv-1",
+        "category": "IDOR_CANDIDATE",
+    },
+    {
+        "subdomain": "cdn.example.com",
+        "url": "/reflect?q=",
+        "endpoint": "/reflect",
+        "parameter": "q",
+        "method": "GET",
+        "location": "query",
+        "technology": ["nginx"],
+        "source": "watch",
+        "id": "srv-2",
+        "category": "XSS_CANDIDATE",
+    },
+)
+
+
+def build_execution_runs_view(runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Project execution runs to the public field set."""
+    if isinstance(runs, (str, bytes)) or not isinstance(runs, Sequence):
+        raise ValueError("runs must be a sequence of mappings")
+    projected: list[dict[str, Any]] = []
+    for run in runs:
+        if not isinstance(run, Mapping):
+            continue
+        run_id = _text(run.get("run_id"))
+        if not run_id:
+            continue
+        projected.append({
+            key: run.get(key) for key in EXECUTION_KEYS
+        })
+    return {"runs": projected, "total": len(projected)}
+
+
+def build_research_jobs_view(run: Mapping[str, Any]) -> dict[str, Any]:
+    """Project research jobs from one execution run."""
+    if not isinstance(run, Mapping):
+        raise ValueError("run must be a mapping")
+    jobs = run.get("jobs", [])
+    if not isinstance(jobs, (list, tuple)):
+        raise ValueError("jobs must be a sequence")
+    return {"jobs": [dict(job) for job in jobs], "total": len(jobs)}
+
+
+def build_specialists_view() -> dict[str, Any]:
+    """List declared specialist contracts (registry, not findings)."""
+    from aec.specialists import registry
+
+    profiles = registry.default_registry()
+    return {
+        "specialists": [profile.to_dict() for profile in profiles],
+        "total": len(profiles),
+    }
+
+
+def build_evidence_view(run: Mapping[str, Any]) -> dict[str, Any]:
+    """Project ingested evidence records from one execution run."""
+    if not isinstance(run, Mapping):
+        raise ValueError("run must be a mapping")
+    evidence = run.get("evidence", [])
+    if not isinstance(evidence, (list, tuple)):
+        raise ValueError("evidence must be a sequence")
+    return {"evidence": [dict(record) for record in evidence],
+            "total": len(evidence)}
+
+
+def build_execution_summary_view(run: Mapping[str, Any]) -> dict[str, Any]:
+    """Operational counters for one execution run (no conclusions)."""
+    if not isinstance(run, Mapping):
+        raise ValueError("run must be a mapping")
+    return {
+        "run_id": _text(run.get("run_id")),
+        "source_mode": _text(run.get("source_mode")),
+        "job_count": run.get("job_count", 0),
+        "blocked_count": run.get("blocked_count", 0),
+        "waiting_authorization_count": run.get(
+            "waiting_authorization_count", 0),
+        "observation_count": run.get("observation_count", 0),
+        "evidence_count": run.get("evidence_count", 0),
+        "review_required_count": run.get("review_required_count", 0),
+        "completed_count": run.get("completed_count", 0),
+        "failed_count": run.get("failed_count", 0),
+        "duration": run.get("duration", 0),
+        "replay_identity": _text(run.get("replay_identity")),
+        "versions": {"aec": LAYER_VERSION},
+    }
+
+
+@router.get("/api/aec/execution-runs")
+def get_execution_runs() -> dict[str, Any]:
+    """Latest execution run over the committed fixture (simulated)."""
+    return build_execution_runs_view([_execution_run()])
+
+
+@router.get("/api/aec/research-jobs")
+def get_research_jobs() -> dict[str, Any]:
+    """Research jobs from the execution simulation."""
+    return build_research_jobs_view(_execution_run())
+
+
+@router.get("/api/aec/specialists")
+def get_specialists() -> dict[str, Any]:
+    """Declared specialist contracts."""
+    return build_specialists_view()
+
+
+@router.get("/api/aec/evidence")
+def get_evidence() -> dict[str, Any]:
+    """Ingested evidence records from the execution simulation."""
+    return build_evidence_view(_execution_run())
+
+
+@router.get("/api/aec/execution-summary")
+def get_execution_summary() -> dict[str, Any]:
+    """Operational counters from the execution simulation."""
+    return build_execution_summary_view(_execution_run())
+
+
 __all__ = [
     "build_candidates_view",
     "build_cases_view",
+    "build_evidence_view",
+    "build_execution_runs_view",
+    "build_execution_summary_view",
     "build_queue_view",
+    "build_research_jobs_view",
     "build_research_queue_view",
     "build_research_runs_view",
     "build_research_status_view",
     "build_research_summary_view",
     "build_review_view",
+    "build_specialists_view",
     "build_status_view",
     "get_candidates",
     "get_cases",
+    "get_evidence",
+    "get_execution_runs",
+    "get_execution_summary",
     "get_queue",
+    "get_research_jobs",
     "get_research_queue",
     "get_research_runs",
     "get_research_summary",
     "get_review",
     "get_research_status",
+    "get_specialists",
     "get_status",
     "router",
 ]
