@@ -57,6 +57,13 @@ def _deny(*args, **kwargs):
 
 class TestNoNetwork(unittest.TestCase):
     def test_socket_primitives_are_denied_for_the_whole_suite(self):
+        # Pre-warm stdlib imports that build socket subclasses at import
+        # time (ssl.SSLSocket(socket)); the denial below is about runtime
+        # CALLS, not about breaking import machinery.
+        import ssl  # noqa: F401
+        import asyncio  # noqa: F401
+        import unittest.mock  # noqa: F401
+
         originals = {name: getattr(socket, name, None) for name in DENIED}
         stream = io.StringIO()
         try:

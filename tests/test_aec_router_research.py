@@ -416,13 +416,13 @@ class TestResearchHandlerDetails(unittest.TestCase):
             aec.get_status(), {"counts": {}, "versions": {"aec": aec.LAYER_VERSION}}
         )
 
-    def test_fourteen_routes_total(self):
+    def test_nineteen_routes_total(self):
         from backend.routers import aec
 
         paths = [
             r.path for r in aec.router.routes if hasattr(r, "methods")
         ]
-        self.assertEqual(len(paths), 14)
+        self.assertEqual(len(paths), 19)
 
 
 if __name__ == "__main__":

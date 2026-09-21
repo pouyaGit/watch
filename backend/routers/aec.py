@@ -474,6 +474,121 @@ def get_execution_summary() -> dict[str, Any]:
     return build_execution_summary_view(_execution_run())
 
 
+# ---------------------------------------------------------------------------
+# EPIC7 Part 18: Authorized Observation Runtime API (additive GET only).
+# The runtime is exposed as operational state over the committed fixture
+# simulation — DRY_RUN mode, zero network. Live observation stays behind
+# the authorization boundary and is never triggered by these endpoints.
+# ---------------------------------------------------------------------------
+
+def _runtime_request() -> dict[str, Any]:
+    """One deterministic fixture runtime request (DRY_RUN, no network)."""
+    return {
+        "request_id": "obsreq-f0f0f0f0f0f0",
+        "research_job_id": "job-deadbeef0001",
+        "case_id": "case-feedface0001",
+        "target_id": "tgt-000000000001",
+        "observation_type": "HTTP_METADATA",
+        "method": "GET",
+        "required_evidence_level": "PARTIAL",
+        "authorization_reference": "authz-fixture-001",
+        "policy_version": "v1",
+        "mode": "DRY_RUN",
+        "state": "AUTHORIZED",
+        "dry_run": True,
+        "executed": False,
+        "reason": "",
+    }
+
+
+def build_runtime_view() -> dict[str, Any]:
+    """Runtime overview: supported modes, current state, gating posture."""
+    return {
+        "modes": ["DRY_RUN", "LIVE_OBSERVATION"],
+        "mode": "DRY_RUN",
+        "state": "READY",
+        "observation_types": [
+            "HTTP_METADATA", "HTTP_HEADERS", "HTTP_STATUS",
+            "HTTP_BODY_METADATA"],
+        "authorization_gated": True,
+        "scope_enforced": True,
+        "versions": {"runtime": LAYER_VERSION},
+    }
+
+
+def build_runtime_requests_view() -> dict[str, Any]:
+    """Recent runtime requests from the fixture simulation (DRY_RUN)."""
+    return {
+        "total": 1,
+        "requests": [_runtime_request()],
+    }
+
+
+def build_runtime_audit_view() -> dict[str, Any]:
+    """Append-only audit trail snapshot for the simulated request."""
+    return {
+        "verified": True,
+        "entries": [{
+            "seq": 1,
+            "request_id": "obsreq-f0f0f0f0f0f0",
+            "decision": "AUTHORIZED",
+            "execution_state": "AUTHORIZED",
+            "mode": "DRY_RUN",
+        }],
+    }
+
+
+def build_runtime_limits_view() -> dict[str, int]:
+    """The policy's resource limits (EPIC7 Part 7)."""
+    limits = _runtime_limits()
+    return dict(limits.to_dict())
+
+
+def build_runtime_health_view() -> dict[str, Any]:
+    """Operational health: runtime ready and authorization-gated."""
+    return {
+        "status": "ready",
+        "mode": "DRY_RUN",
+        "authorization_boundary": "enforced",
+        "network": "disabled",
+    }
+
+
+def _runtime_limits():
+    from aec.runtime.policy.limits import default_limits
+    return default_limits()
+
+
+@router.get("/api/aec/runtime")
+def get_runtime() -> dict[str, Any]:
+    """Authorized Observation Runtime overview (simulated, DRY_RUN)."""
+    return build_runtime_view()
+
+
+@router.get("/api/aec/runtime/requests")
+def get_runtime_requests() -> dict[str, Any]:
+    """Runtime observation requests from the fixture simulation."""
+    return build_runtime_requests_view()
+
+
+@router.get("/api/aec/runtime/audit")
+def get_runtime_audit() -> dict[str, Any]:
+    """Audit trail snapshot (append-only, hash-chained in the runtime)."""
+    return build_runtime_audit_view()
+
+
+@router.get("/api/aec/runtime/limits")
+def get_runtime_limits() -> dict[str, Any]:
+    """Policy-driven resource limits."""
+    return build_runtime_limits_view()
+
+
+@router.get("/api/aec/runtime/health")
+def get_runtime_health() -> dict[str, Any]:
+    """Runtime health and gating posture."""
+    return build_runtime_health_view()
+
+
 __all__ = [
     "build_candidates_view",
     "build_cases_view",
@@ -487,6 +602,11 @@ __all__ = [
     "build_research_status_view",
     "build_research_summary_view",
     "build_review_view",
+    "build_runtime_audit_view",
+    "build_runtime_health_view",
+    "build_runtime_limits_view",
+    "build_runtime_requests_view",
+    "build_runtime_view",
     "build_specialists_view",
     "build_status_view",
     "get_candidates",
@@ -501,6 +621,11 @@ __all__ = [
     "get_research_summary",
     "get_review",
     "get_research_status",
+    "get_runtime",
+    "get_runtime_audit",
+    "get_runtime_health",
+    "get_runtime_limits",
+    "get_runtime_requests",
     "get_specialists",
     "get_status",
     "router",
