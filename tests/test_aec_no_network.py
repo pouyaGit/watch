@@ -23,6 +23,7 @@ SUITES_UNDER_DENIAL = (
     "tests.test_aec_selection",
     "tests.test_aec_redaction",
     "tests.test_aec_budget_ledger",
+    "tests.test_aec_case_compiler",
     "tests.test_aec_import_guard",
     "tests.test_aec_constants",
     "tests.test_aec_readonly_guard",
