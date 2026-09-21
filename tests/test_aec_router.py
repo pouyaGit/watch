@@ -122,7 +122,7 @@ class TestStatusView(unittest.TestCase):
 
 
 class TestRouteTable(unittest.TestCase):
-    def test_exactly_three_get_routes(self):
+    def test_exactly_five_get_routes(self):
         from backend.routers import aec
 
         routes = [
@@ -133,8 +133,10 @@ class TestRouteTable(unittest.TestCase):
         self.assertEqual(
             sorted(routes),
             [
+                (["GET"], "/api/aec/candidates"),
                 (["GET"], "/api/aec/cases"),
                 (["GET"], "/api/aec/queue"),
+                (["GET"], "/api/aec/research-status"),
                 (["GET"], "/api/aec/status"),
             ],
         )
@@ -248,6 +250,32 @@ class TestRouteTable(unittest.TestCase):
         view = aec.build_status_view({})
         self.assertEqual(view["counts"], {})
 
+    def test_endpoint_handlers_return_empty_views(self):
+        from backend.routers import aec
+
+        self.assertEqual(aec.get_candidates(), {"candidates": []})
+        self.assertEqual(
+            aec.get_research_status(),
+            {"bands": {}, "roles": {}, "versions": {"aec": aec.LAYER_VERSION}},
+        )
+        self.assertEqual(aec.get_cases(), {"cases": []})
+        self.assertEqual(
+            aec.get_queue(),
+            {"snapshot_id": "", "entries": [], "total": 0},
+        )
+        self.assertEqual(
+            aec.get_status(), {"counts": {}, "versions": {"aec": aec.LAYER_VERSION}}
+        )
+
+    def test_candidate_view_keys_constant(self):
+        from backend.routers import aec
+
+        self.assertEqual(
+            tuple(aec.CANDIDATE_VIEW_KEYS),
+            ("candidate_id", "asset", "endpoint", "research_category",
+             "band", "score", "role"),
+        )
+
     def test_queue_empty_entries_ok(self):
         from backend.routers import aec
 
@@ -271,6 +299,136 @@ class TestRouteTable(unittest.TestCase):
         self.assertEqual(view["cases"][0]["case_id"], "case-001")
         self.assertEqual(view["cases"][0]["state"], "SELECTED")
         self.assertEqual(view["cases"][0]["selection_order"], 2)
+
+
+class TestCandidatesView(unittest.TestCase):
+    def test_valid_items_projected(self):
+        from backend.routers import aec
+
+        view = aec.build_candidates_view([
+            {
+                "candidate_id": "rc-001",
+                "asset": "example.com",
+                "endpoint": "/admin",
+                "research_category": "idor",
+                "band": "HIGH",
+                "score": 70,
+                "role": "authorization-researcher",
+                "extra": "dropped",
+            }
+        ])
+        self.assertEqual(view["candidates"][0]["band"], "HIGH")
+        self.assertNotIn("extra", view["candidates"][0])
+        self.assertEqual(
+            sorted(view["candidates"][0]),
+            ["asset", "band", "candidate_id", "endpoint",
+             "research_category", "role", "score"],
+        )
+
+    def test_unknown_band_dropped(self):
+        from backend.routers import aec
+
+        view = aec.build_candidates_view([
+            {"candidate_id": "rc-001", "band": "URGENT"},
+            {"candidate_id": "rc-002", "band": "LOW"},
+        ])
+        self.assertEqual(
+            [c["candidate_id"] for c in view["candidates"]], ["rc-002"]
+        )
+
+    def test_unknown_role_defaults_general(self):
+        from backend.routers import aec
+
+        view = aec.build_candidates_view([
+            {"candidate_id": "rc-001", "band": "MEDIUM", "role": "ninja"}
+        ])
+        self.assertEqual(
+            view["candidates"][0]["role"], "general-researcher"
+        )
+
+    def test_non_mapping_items_skipped(self):
+        from backend.routers import aec
+
+        view = aec.build_candidates_view(["nope", {"candidate_id": "rc-1", "band": "LOW"}])
+        self.assertEqual(len(view["candidates"]), 1)
+
+    def test_non_sequence_rejected(self):
+        from backend.routers import aec
+
+        with self.assertRaises(ValueError):
+            aec.build_candidates_view("nope")
+        with self.assertRaises(ValueError):
+            aec.build_candidates_view({"candidate_id": "rc-1"})
+
+    def test_empty_view(self):
+        from backend.routers import aec
+
+        self.assertEqual(aec.build_candidates_view([]), {"candidates": []})
+
+
+class TestResearchStatusView(unittest.TestCase):
+    def test_valid_summary_aggregates(self):
+        from backend.routers import aec
+
+        view = aec.build_research_status_view({
+            "bands": {"HIGH": 2, "LOW": 1},
+            "roles": {"authorization-researcher": 3},
+        })
+        self.assertEqual(view["bands"], {"HIGH": 2, "LOW": 1})
+        self.assertIn("aec", view["versions"])
+
+    def test_unknown_band_rejected(self):
+        from backend.routers import aec
+
+        with self.assertRaises(ValueError):
+            aec.build_research_status_view(
+                {"bands": {"URGENT": 1}, "roles": {}})
+
+    def test_unknown_role_rejected(self):
+        from backend.routers import aec
+
+        with self.assertRaises(ValueError):
+            aec.build_research_status_view(
+                {"bands": {}, "roles": {"ninja": 1}})
+
+    def test_negative_and_bool_counts_rejected(self):
+        from backend.routers import aec
+
+        with self.assertRaises(ValueError):
+            aec.build_research_status_view(
+                {"bands": {"LOW": -1}, "roles": {}})
+        with self.assertRaises(ValueError):
+            aec.build_research_status_view(
+                {"bands": {}, "roles": {"input-researcher": True}})
+
+    def test_non_mapping_rejected(self):
+        from backend.routers import aec
+
+        with self.assertRaises(ValueError):
+            aec.build_research_status_view(["bands"])
+
+    def test_full_pipeline_renders(self):
+        from aec.assignment import rules
+        from aec.intelligence import scoring
+        from aec.surface import adapter
+        from backend.routers import aec
+
+        record = {
+            "program": "pilot", "subdomain": "example.com",
+            "url": "/admin/users?role=", "endpoint": "/admin/users",
+            "parameter": "role", "method": "GET", "location": "query",
+            "technology": ["php"], "source": "watch", "last_update": None,
+        }
+        draft = adapter.adapt_record(record, default_category="idor").draft
+        priority = scoring.prioritize(
+            draft.to_dict(), {"researched": False, "related_patterns": 0})
+        assignment = rules.assign(draft.to_dict())
+        rendered = dict(draft.to_dict())
+        rendered.update(priority.to_dict())
+        rendered.update(assignment.to_dict())
+        view = aec.build_candidates_view([rendered])
+        self.assertEqual(view["candidates"][0]["candidate_id"], draft.candidate_id)
+        self.assertEqual(view["candidates"][0]["role"], "authorization-researcher")
 
 
 if __name__ == "__main__":
