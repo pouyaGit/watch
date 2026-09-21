@@ -1,0 +1,27 @@
+{
+  "programs": {
+    "dell": {
+      "ooscopes": [
+        "educate.dell.com",
+        "console.dell.com",
+        "console-test.dell.com",
+        "salesproductivity.dell.com"
+      ],
+      "scopes": [
+        "dell.com",
+        "delltechnologies.com"
+      ]
+    },
+    "indeed": {
+      "ooscopes": [],
+      "scopes": [
+        "indeed.com",
+        "indeedflex.com",
+        "indeed.tech",
+        "indeed.net"
+      ]
+    }
+  },
+  "rule_version": "aec-scope-snapshot/v1",
+  "source": "watch.programs (read-only)"
+}
