@@ -122,7 +122,7 @@ class TestStatusView(unittest.TestCase):
 
 
 class TestRouteTable(unittest.TestCase):
-    def test_exactly_five_get_routes(self):
+    def test_exactly_nine_get_routes(self):
         from backend.routers import aec
 
         routes = [
@@ -136,7 +136,11 @@ class TestRouteTable(unittest.TestCase):
                 (["GET"], "/api/aec/candidates"),
                 (["GET"], "/api/aec/cases"),
                 (["GET"], "/api/aec/queue"),
+                (["GET"], "/api/aec/research-queue"),
+                (["GET"], "/api/aec/research-runs"),
                 (["GET"], "/api/aec/research-status"),
+                (["GET"], "/api/aec/research-summary"),
+                (["GET"], "/api/aec/review"),
                 (["GET"], "/api/aec/status"),
             ],
         )
