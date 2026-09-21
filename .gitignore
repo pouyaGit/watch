@@ -82,9 +82,13 @@ programs/*
 ai_data/raw/
 ai_data/research/
 ai_data/cve/
+ai_data/investigations/
 
 # Local tooling
 .commandcode/
+
+# AEC-1 pilot selection runtime output (input snapshot stays tracked)
+ai_data/aec/pilot-selection.json
 
 # Development worktrees (agent workspace; never part of the project)
 .worktrees/
