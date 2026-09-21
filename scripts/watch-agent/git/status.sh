@@ -26,7 +26,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 REPO="${GIT_AUTH_REPO:-$WATCH_WORKTREE_ROOT}"
 GIT_DIR_BIN="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-CHECK_AUTH="$GIT_DIR_BIN/check_auth.py"
+CHECK_AUTH="${GIT_AUTH_CHECKER:-$GIT_DIR_BIN/check_auth.py}"
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && command -v tput >/dev/null 2>&1 \
    && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
@@ -112,17 +112,42 @@ else
   esac
 fi
 
-section "Push capability (local readiness only)"
+section "Push capability"
+# The checker owns auth logic; status only renders its JSON verdict. Parsing
+# goes through a real JSON decoder and fails closed: anything unparsable (or
+# a missing checker) displays BLOCKED, never READY.
 if PYTHON="$(python_bin)" && [ -f "$CHECK_AUTH" ]; then
-  auth_out="$("$PYTHON" "$CHECK_AUTH" --repo "$REPO" 2>&1 || true)"
-  if printf '%s' "$auth_out" | grep -qm1 '^READY'; then
-    method="$(printf '%s' "$auth_out" | grep -m1 'method:' | sed 's/^ *method: //' || true)"
-    item "push" "ready via ${method:-unknown method}"
+  auth_json="$("$PYTHON" "$CHECK_AUTH" --repo "$REPO" --json 2>/dev/null || true)"
+  parsed="$(printf '%s' "$auth_json" | "$PYTHON" -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    print("PARSE_FAIL")
+    raise SystemExit
+verdict = doc.get("verdict", "")
+print(verdict)
+if verdict == "READY":
+    print(doc.get("method", ""))
+else:
+    reasons = doc.get("reasons", []) or []
+    first = reasons[0].get("code", "") if reasons else ""
+    print(first)
+    print(" ".join(str(r.get("code", "")) for r in reasons))
+' 2>/dev/null || true)"
+  parsed_verdict="$(printf '%s' "$parsed" | sed -n '1p')"
+  parsed_method="$(printf '%s' "$parsed" | sed -n '2p')"
+  parsed_reasons="$(printf '%s' "$parsed" | sed -n '3p')"
+  if [ "$parsed_verdict" = "READY" ] && [ -n "$parsed_method" ]; then
+    item "push" "READY"
+    item "method" "$parsed_method"
   else
-    item "push" "blocked — run git/check_auth.py for reasons"
+    item "push" "BLOCKED"
+    item "reason" "${parsed_method:-CHECKER_OUTPUT_UNPARSEABLE} ${parsed_reasons:-}"
   fi
 else
-  item "push" "unknown — checker unavailable"
+  item "push" "BLOCKED"
+  item "reason" "CHECKER_UNAVAILABLE"
 fi
 
 exit 0
