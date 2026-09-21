@@ -26,6 +26,7 @@ SUITES_UNDER_DENIAL = (
     "tests.test_aec_case_compiler",
     "tests.test_aec_observation_plan",
     "tests.test_aec_authorization_gate",
+    "tests.test_aec_evidence_layer",
     "tests.test_aec_import_guard",
     "tests.test_aec_constants",
     "tests.test_aec_readonly_guard",

@@ -121,7 +121,7 @@ def _target_text(target) -> str:
 
 
 def aec_modules():
-    return sorted(path for path in AEC_DIR.glob("*.py"))
+    return sorted(path for path in AEC_DIR.rglob("*.py"))
 
 
 class TestImportGuard(unittest.TestCase):
