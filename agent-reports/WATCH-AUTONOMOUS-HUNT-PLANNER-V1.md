@@ -490,6 +490,98 @@ read's budget); url-rows returned 0 new rows (already covered) and is
 recorded honestly as an ok observation with 0 new rows — never as a
 fabricated gain.
 
+============================================================
+REAL PRODUCTION JOBS (Phase 17) — all real state, real
+openrouter/free, real authorized observation runtime, real stores
+============================================================
+
+Scope for all jobs: watch:scope:dell/www.dell.com (program dell,
+subdomain www.dell.com), mode production, concurrency 1,
+`run --max-jobs 1 --llm OPENROUTER --model openrouter/free --hunt`
+with OPENROUTER_MODEL=openrouter/free exported (free-only, no fallback).
+
+--- JOB A1 (deterministic hunt pass, pre --llm wiring) -------------
+job-xss-1d9cb07e56 — COMPLETED, 3.7s wall.
+objective obj-4166d2685ddd (12 revisions) -> RESOLVED /
+sufficient_evidence ("evidence gate: evidence_rules_met; no satisfiable
+missing evidence remains").
+plans: plan-892c3d7841da v1, plan-b11def31a1b9 v2  <-- GENUINE RE-PLAN
+(hunt_replanned activity recorded), authorizations authz GRANTED x2,
+observations obs-2a4a1c3dda5b / obs-25116942141c / obs-17c009e1f0ad
+(3 iterations, 2 plans), gate: case created, 20 observation evidence.
+llm_advisory: 0 calls (deterministic run; llm not_configured).
+
+--- JOB A2 (real free-LLM analysis + hunt; found the 3 defects) ----
+job-xss-447203e643 — COMPLETED, 40.4s wall.
+objective obj-ac2d3a72d7d4 (12 revisions) -> RESOLVED /
+sufficient_evidence.
+plans: plan-ef64f7fca8f8 v1 [http-rows, parameter-rows], plan-53afef973839
+v2 [url-rows] <-- GENUINE RE-PLAN (hunt_replanned recorded); authz-8e3e1457bca9 /
+authz-5f2c710b8654 GRANTED; observations obs-362cf446b6d9 (http-rows, ok,
++1), obs-417099f357f2 (parameter-rows, ok, +22), obs-4c7f933f9584
+(url-rows, ok, +0).
+llm_advisory: 2 calls, BOTH rejected pre-flight (advisory_id schema —
+defect 1 above); loop degraded honestly to deterministic planning.
+FINAL analysis LLM: openrouter/free, xss-agent-analysis-v2, gate
+high -> case-cd39108f032c, 20 observation evidence.
+(rows_added contract bug = defect 3 above.)
+
+--- JOB A3 (XSS, final: live advisor) ------------------------------
+job-xss-6a5f98ba29 — COMPLETED, 15.3s wall, llm OPENROUTER.
+objective obj-52336f44ccbe (7 revisions) -> RESOLVED /
+sufficient_evidence, 2 iterations.
+plan plan-bb8c09b11a19 v1 [http-rows, parameter-rows, url-rows]
+planner=deterministic+llm_advisory, model_requested= ->
+model_resolved=openrouter/free, prompt=hunt-planner-advisor-v1,
+advisor notes: ["advisor_recommended:http-rows,parameter-rows,url-rows",
+"advisor_rejected:OBS_EVIDENCE_GAP->evidence-gap"]  <-- validator
+rejected the model's invented type; valid types kept.
+ADVISORY: calls=1, used=TRUE, errors=[], model openrouter/free,
+latency 3888 ms (hunt_lineage).
+authz GRANTED x1; observations obs-a8652b2d20ee (http-rows +1),
+obs-ed46c5dcc8bb (parameter-rows +22), obs-5ec2395236bb (url-rows +0);
+contract rows_added=23 (fix verified: == sum of observation records).
+FINAL analysis LLM: openrouter/free, gate high ->
+case-73b787bb57ef, 20 observation evidence.
+memory for job: 23 items across INFERRED / OBSERVED / RESEARCHED /
+VERIFIED (LLM suggestion persisted only as INFERRED; VERIFIED only
+from the case-creating gate).
+
+--- JOB B (CVE_RESEARCH, final) -----------------------------------
+job-cve_research-fd55753bd5 — COMPLETED, 25.3s wall, llm OPENROUTER.
+objective obj-9f55c99b552f (7 revisions) -> BLOCKED /
+no_authorized_observation_can_reduce_uncertainty ("remaining missing
+evidence has no allowed observation type that can still be read") —
+explicit, honest termination; NOT a fake completion.
+plan plan-12d5f52c5de1 v1 [http-rows, kb-rows]
+planner=deterministic+llm_advisory; advisor used TRUE, openrouter/free,
+latency 12501 ms; notes: advisor_recommended both types,
+advisor_rejected: OBS_MISSING_EVIDENCE->missing-evidence,
+OBS_TECH_GAP->tech-gap (two invented types rejected by validator).
+authz-d860585487d9 GRANTED; observations obs-ed35c5406ebc (http-rows,
+ok, +1 tech row), obs-9baf3695865c (kb-rows, ok, +0 new docs).
+FINAL analysis LLM: openrouter/free, cve-research-specialist-analysis-v2,
+confidence medium, gate: NO CASE
+(gate_not_claimed:confidence_below_threshold) — honest non-claim;
+5 recommendations; 3 evidence (1 observation + 2 knowledge).
+memory for job: 23 items across INFERRED / OBSERVED / REJECTED /
+RESEARCHED (REJECTED preserved; no VERIFIED without a case).
+
+--- Totals --------------------------------------------------------
+4 hunt loops executed in production (3 XSS + 1 CVE), 4 objectives,
+5 plans, 5 GRANTED authorizations, 9 observation executions,
+2 genuine re-plans (both with hunt_replanned activities),
+0 fabricated observations/evidence/findings, secret scans CLEAN on
+all hunt audit payloads. Production research memory: 127 items across
+ALL five states (OBSERVED 26, RESEARCHED 79, INFERRED 15, VERIFIED 4,
+REJECTED 3).
+LLM: every advisor + analysis call resolved to openrouter/free only
+(requested and resolved recorded per plan + hunt_lineage); no paid
+model, no fallback, no substitution. Latencies: advisor 3888 ms (A3),
+12501 ms (B); analysis wall 15.3s (A3) / 25.3s (B).
+Promotions: 1706 -> fc50d7e (code), 1720 -> 19594a8 (validation
+defect fixes), this report-only promotion closes the Epic.
+
 Delivery: work on agent/daily-development; explicit file staging
 (production 27 dirty entries untouched); check.sh gates; push via
 push_safe.sh; promotion request; STOP at Telegram APPROVE.
