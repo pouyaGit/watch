@@ -383,8 +383,12 @@ class TestLLMFailureSemantics(unittest.TestCase):
 
     # -- structured-output validation ------------------------------------
     def test_schema_failure_on_bad_item_shape(self):
+        # Canonical code key missing -> still rejected. Extra projection
+        # metadata keys (source_refs/research_only) are accepted: the
+        # provider validator enforces the exact upstream shape and the
+        # mapper extracts only canonical keys.
         bad = self._good_response()
-        bad["insights"] = [{"insight_code": "A", "text": "x", "extra": 1}]
+        bad["insights"] = [{"text": "x"}]
         f = self._factory(self._envelope(bad))
         with self.assertRaises(AnalysisUnavailable) as ctx:
             self._analyze(f)

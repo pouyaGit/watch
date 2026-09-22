@@ -30,6 +30,7 @@ from backend.research_agents.runtime import (
     FixtureObservations,
     RuntimeConfig,
     _advisory_request,
+    _map_advisory_response,
     deterministic_analysis,
     llm_analysis,
     prompt_version_for,
@@ -218,6 +219,43 @@ class TestAdvisoryContract(_EnvBase):
         self.assertIn("context", bundle)
         payload = json.dumps(req["sections"], sort_keys=True, default=str)
         self.assertLessEqual(len(payload), 4000 + 200)
+
+    def test_projection_items_with_metadata_keys_are_accepted(self):
+        cap = capability_for("XSS")
+        job = _job()
+        rows = _rows(3)
+        projection_response = {
+            "summary": "routed free model summary within bounds",
+            "insights": [
+                {"insight_code": "XSS_INPUT_PARAM", "text": "obs1 text",
+                 "source_refs": [], "research_only": True},
+                {"insight_code": "XSS_REFLECT_PARAM", "text": "obs2 text",
+                 "source_refs": [], "research_only": True},
+            ],
+            "recommendations": [
+                {"recommendation_code": "NEXT_OBSERVATION",
+                 "text": "collect response diff", "source_refs": [],
+                 "research_only": True},
+            ],
+        }
+        determin = deterministic_analysis(cap, job, rows, [])
+        analysis = _map_advisory_response(projection_response, cap, determin,
+                                          rows, "xss-an-a-v1.2")
+        # hypothesis is derived from the first LLM insight; summary is
+        # persisted as the reasoning text
+        self.assertEqual(analysis["hypothesis"], "obs1 text")
+        self.assertEqual(analysis["reasoning_summary"],
+                         "routed free model summary within bounds")
+        self.assertEqual(len(analysis["llm_insights"]), 2)
+        # canonical keys only in the stored analysis
+        self.assertEqual(set(analysis["llm_insights"][0]),
+                         {"insight_code", "text"})
+        self.assertIn(analysis["verdict"],
+                      {"evidence_sufficient_for_review",
+                       "needs_more_observation",
+                       "insufficient_evidence"})
+        # gate confidence stays deterministic (never the LLM's)
+        self.assertEqual(analysis["confidence"], determin["confidence"])
 
     def test_instruction_carries_numeric_contract_bounds(self):
         cap = capability_for("XSS")

@@ -201,3 +201,23 @@ smoke 95/95.
   worst-case length 389/400, regression-tested (version pins +
   skeleton-token assertions). Attempt 3 of the same job runs on v1.2
   after promotion.
+
+## Root cause of the repeated `shape invalid` failures (recorded)
+
+- After `job-xss-113d54a0e0` attempt 3 also ended
+  `schema_failure: insight_code item shape invalid` (TERMINAL, 3/3),
+  the message was traced to **our** `_map_advisory_response`
+  (`runtime.py`), not the provider validator: the R45 projection items
+  legitimately carry 4 keys (`insight_code`/`recommendation_code`,
+  `text`, plus projection metadata `source_refs`, `research_only`),
+  while the mapper demanded exactly `{code, text}` — so **3 of the 6
+  real attempts were false rejections of provider-valid replies**
+  (the other 3 were genuine provider rejects: envelope-contract bug,
+  `summary` > 400, non-JSON content).
+- Fix: the mapper now requires the canonical keys (non-empty code +
+  text), tolerates projection metadata, and stores only the canonical
+  pair — extraction, never repair (the provider validator remains the
+  strict upstream gate). Regression tests: projection-shaped items
+  accepted with canonical-only storage and deterministic gate values;
+  missing canonical code key still rejected. Battery: 198 OK, AEC
+  2149 OK, smoke 95/95.

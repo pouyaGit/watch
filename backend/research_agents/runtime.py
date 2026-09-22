@@ -714,14 +714,21 @@ def _map_advisory_response(response: Any,
             raise _schema_fail(f"{code_key} items are not a list")
         out: list[dict[str, str]] = []
         for item in value[:8]:
-            if not isinstance(item, dict) \
-                    or set(item.keys()) != {code_key, "text"}:
+            # The R45 projection items carry canonical keys plus
+            # projection metadata (source_refs, research_only); the
+            # provider already enforced the exact shape, so require the
+            # canonical keys and extract only those.
+            if not isinstance(item, dict) or code_key not in item \
+                    or "text" not in item:
                 raise _schema_fail(f"{code_key} item shape invalid")
+            code = item.get(code_key)
             text = item.get("text")
+            if not isinstance(code, str) or not code.strip():
+                raise _schema_fail(f"{code_key} code missing")
             if not isinstance(text, str) or not text.strip():
                 raise _schema_fail(f"{code_key} item text missing")
-            out.append({code_key: _bounded_text(item.get(code_key), 80),
-                        "text": _bounded_text(text, 400)})
+            out.append({code_key: _bounded_text(code.strip(), 80),
+                        "text": _bounded_text(text.strip(), 400)})
         return out
 
     llm_insights = _items(insights, "insight_code")
