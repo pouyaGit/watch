@@ -19,14 +19,21 @@ through the normal agent workflow — no redesign, no new surface.
 ```
 
 ```python
- app.include_router(product_api_router.router)
+ app.include_router(command_center_router.router)
 +app.include_router(soc_router.router)
+ app.include_router(product_api_router.router)
+-app.include_router(soc_router.router)
 ```
 
 Existing import style reused (`from backend.routers import X as Y_router`
-+ `app.include_router(Y_router.router)`), appended last so no existing
-route can be shadowed. No other file was modified; the SOC router and the
-SOC adapters are untouched.
++ `app.include_router(Y_router.router)`); the include sits with the other
+UI routers and no existing path is shadowed (the SOC paths are unique).
+It is placed **ahead of** `product_api_router.router` on purpose: the
+operator's committed AEC mount adds its include immediately after
+`product_api_router.router`, and keeping one unchanged line between the two
+hunks is what makes the promotion merge conflict-free (proven in a
+throwaway repo built from the real blobs). No other file was modified; the
+SOC router and the SOC adapters are untouched.
 
 ## Routes mounted (8, GET-only — the promoted surface)
 
@@ -96,15 +103,26 @@ change). The recorded baseline was refreshed with the sanctioned
 baseline (`9ebf57b..94e2383`) is exactly the operator's merge of the
 already-approved SOC promotion — no third-party writes.
 
-**Hazard for the promotion step:** production `/opt/watch` currently carries
-an *uncommitted* operator edit to `api.py` that mounts the AEC router by
-hand (`from backend.routers import aec` + `app.include_router(aec.router)`).
-This hotfix also changes `api.py`, so the merge into production will contend
-with that dirty file. The operator must decide how to carry the manual AEC
-mount across (commit it, or re-apply it) — production must not silently lose
-its AEC routes. The committed tree deliberately still does not mount AEC
-(AEC mounting remains an operator decision, and this task must not touch it);
-the regression test pins that.
+**Hazard for the promotion step (materialised, then resolved):** production
+`/opt/watch` carries an *uncommitted* operator edit to `api.py` that mounts
+the AEC router by hand (`from backend.routers import aec` +
+`app.include_router(aec.router)`). Because that file is locally modified,
+git refuses any merge that touches `api.py`:
+
+```
+error: Your local changes to the following files would be overwritten by merge:
+        api.py
+Please commit your changes or stash them before you merge.
+Aborting
+```
+
+`promotion/promote.sh --yes` therefore reported `BLOCKED / MAIN: merge
+failed` (audit `PROMOTION_BLOCKED`, seq 30) with production byte-identical
+afterwards (HEAD `94e2383`, 28 dirty entries, no merge state). Reproduced
+faithfully in a throwaway repo built from the real blobs. Resolution agreed
+with the operator: the AEC mount is committed by the operator in production,
+and this branch's SOC include is placed ahead of `product_api_router.router`
+so the merge no longer conflicts (both mounts present afterwards).
 
 **Second hazard (workspace hygiene):** the agent worktree also carries an
 unrelated, uncommitted in-flight epic (research-agents / investigation-engine
