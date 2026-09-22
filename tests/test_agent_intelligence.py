@@ -334,6 +334,89 @@ class TestXSSChainWithLLM(_EnvBase):
         self.assertEqual(used[0]["title"], "Reflected XSS parameter patterns")
         self.assertEqual(used[0]["document_id"], "kb-001")
 
+    def test_flat_success_projection_is_accepted(self):
+        """Regression: complete() returns the FLAT R45 projection on
+        success (attempt 1 of the first real LLM job proved it)."""
+
+        class Flat:
+            def complete(self, request):
+                return {
+                    "rule_version": "r45",
+                    "summary": "flat contract answer",
+                    "insights": [{"insight_code": "PARAM_INVENTORY",
+                                  "text": "observed parameter p"}],
+                    "recommendations": [
+                        {"recommendation_code": "NEXT_OBSERVATION",
+                         "text": "observe rendering"}],
+                    "provider_kind": "OPENROUTER",
+                    "limitations": [], "research_only": True,
+                    "deterministic": True,
+                }
+
+        def factory(kind, **opts):
+            return Flat()
+        with mock.patch("ai.providers.provider_registry.select_provider",
+                        side_effect=factory):
+            analysis, meta = llm_analysis(self._config(),
+                                          capability_for("XSS"), _job(),
+                                          _rows(2), [], None)
+        self.assertEqual(analysis["structured"]["reasoning_summary"],
+                         "flat contract answer")
+        self.assertEqual(meta["requested_model"], "openrouter/free")
+        self.assertEqual(analysis["confidence"],
+                         deterministic_analysis(capability_for("XSS"),
+                                                _job(), _rows(2),
+                                                [])["confidence"])
+
+    def test_complete_with_status_is_preferred_for_telemetry(self):
+        """The real provider exposes telemetry via complete_with_status;
+        complete() must not be called when it is available."""
+
+        calls = {"status": 0, "plain": 0}
+
+        class Statusful:
+            def complete(self, request):
+                calls["plain"] += 1
+                raise AssertionError("must not be used")
+
+            def complete_with_status(self, request):
+                calls["status"] += 1
+                return {"response": _good_response(), "error": None,
+                        "telemetry": {"attempts": 1, "success": True,
+                                      "response_chars": 123},
+                        "_exception": None}
+
+        def factory(kind, **opts):
+            return Statusful()
+        with mock.patch("ai.providers.provider_registry.select_provider",
+                        side_effect=factory):
+            analysis, meta = llm_analysis(self._config(),
+                                          capability_for("XSS"), _job(),
+                                          _rows(2), [], None)
+        self.assertEqual(calls, {"status": 1, "plain": 0})
+        self.assertEqual(meta["attempts"], 1)
+        self.assertTrue(analysis["structured"]["reasoning_summary"])
+
+    def test_reason_text_is_never_empty(self):
+        """Attempt 1 recorded an empty reason — any exception, even a bare
+        AssertionError, must yield a classed, non-empty reason."""
+
+        class Boom:
+            def complete(self, request):
+                raise AssertionError()
+
+        def factory(kind, **opts):
+            return Boom()
+        with mock.patch("ai.providers.provider_registry.select_provider",
+                        side_effect=factory):
+            with self.assertRaises(AnalysisUnavailable) as ctx:
+                llm_analysis(self._config(), capability_for("XSS"), _job(),
+                             _rows(2), [], None)
+        text = str(ctx.exception)
+        self.assertIn("llm_", text)
+        self.assertIn("AssertionError", text)
+        self.assertTrue(text.strip().endswith("AssertionError"))
+
     def test_llm_failure_keeps_retry_state_and_no_result(self):
         job = _job(status=JobStatus.QUEUED.value, execution_mode="fixture",
                    authorization_ref="fixture:p/t.example")

@@ -585,46 +585,99 @@ def _advisory_request(capability: SpecialistCapability,
     }
 
 
-def _classify_provider_error(err: Any, exc: Any = None) -> str:
-    """Map provider error plans to auditable runtime failure kinds."""
+def _classify_from_parts(*parts: Any) -> str:
+    """Deterministic classification from plan/exception fields (Phase 8)."""
 
-    parts: list[str] = []
-    if isinstance(err, dict):
-        parts.append(json.dumps(err, default=str))
-    elif err is not None:
-        parts.append(str(err))
-    if exc is not None:
-        parts.append(str(getattr(exc, "error_category", "") or ""))
-        parts.append(str(getattr(exc, "code", "") or ""))
-        parts.append(type(exc).__name__)
-    blob = " ".join(parts).lower()
-    if "timeout" in blob or "timed out" in blob:
+    blob = " ".join(str(p) for p in parts if p).upper()
+    if "TIMEOUT" in blob or "TIMED_OUT" in blob:
         return "timeout"
-    if "rate" in blob or "429" in blob:
+    if "RATE" in blob or "429" in blob:
         return "rate_limit"
-    if "auth" in blob or "credential" in blob or "401" in blob \
-            or "api_key" in blob:
+    if "AUTHENTICATION" in blob or "AUTHORIZATION" in blob \
+            or "INVALID_CREDENTIAL" in blob or "AUTHZ" in blob \
+            or "401" in blob or "403" in blob:
         return "auth"
-    if "empty" in blob:
-        return "empty_response"
-    if "safety" in blob or "context" in blob and "rejected" in blob:
-        return "context_rejected"
-    if "configur" in blob:
+    if "CONFIGURATION" in blob or "MISSING_CREDENTIAL" in blob \
+            or "MISSING_MODEL" in blob or "UNSUPPORTED_KIND" in blob:
         return "configuration"
-    if "invalid" in blob or "malformed" in blob or "unexpected" in blob \
-            or "missing" in blob or "schema" in blob:
+    if "EMPTY" in blob:
+        return "empty_response"
+    if "SAFETY" in blob or "UNSAFE" in blob or "CONTEXT_REJECTED" in blob:
+        return "context_rejected"
+    if "INVALID_RESPONSE" in blob or "INVALID_PROVIDER" in blob \
+            or "MALFORMED" in blob:
         return "schema_failure"
-    if "network" in blob or "connection" in blob or "unavailable" in blob \
+    if "NETWORK" in blob or "CONNECTION" in blob or "TRANSIENT" in blob \
             or "502" in blob or "503" in blob:
         return "provider_unavailable"
+    if "PROVIDER" in blob or "HTTP_ERROR" in blob or "REJECTED" in blob:
+        return "provider_error"
     return "provider_error"
 
 
-def _err_text(err: Any) -> str:
+def _classify_provider_error(err: Any, exc: Any = None) -> str:
+    """Map provider error plans/exceptions to auditable failure kinds."""
+
     if isinstance(err, dict):
-        return _no_secret(err.get("safe_message") or err.get("message")
-                          or err.get("error") or err.get("code") or err)
-    return _no_secret(err)
+        kind = _classify_from_parts(
+            err.get("error_category"), err.get("error_code"),
+            err.get("status_code"), json.dumps(err, default=str))
+        if kind != "provider_error":
+            return kind
+    if exc is not None:
+        kind = _classify_from_parts(
+            getattr(exc, "error_category", ""),
+            getattr(exc, "error_code", None)
+            or getattr(exc, "code", None),
+            getattr(exc, "status_code", None), type(exc).__name__)
+        if kind != "provider_error":
+            return kind
+        blob = " ".join(str(v) for v in (
+            getattr(exc, "error_category", ""),
+            str(exc), type(exc).__name__)).lower()
+        if "timeout" in blob:
+            return "timeout"
+        if "rate" in blob or "429" in blob:
+            return "rate_limit"
+        if "auth" in blob or "credential" in blob or "401" in blob:
+            return "auth"
+        if "empty" in blob:
+            return "empty_response"
+        if "invalid" in blob or "malformed" in blob or "missing" in blob:
+            return "schema_failure"
+        if "network" in blob or "connection" in blob or "unavailable" in blob:
+            return "provider_unavailable"
+        if "context" in blob or "safety" in blob or "rejected" in blob:
+            return "context_rejected"
+    if isinstance(err, dict):
+        kind = _classify_from_parts(json.dumps(err, default=str))
+        if kind != "provider_error":
+            return kind
+    return "provider_error"
+
+
+def _err_text(err: Any, exc: Any = None) -> str:
+    """Never-empty bounded reason text (Phase 8 auditability)."""
+
+    text = ""
+    if isinstance(err, dict):
+        text = str(err.get("safe_message") or err.get("message")
+                   or err.get("error") or err.get("error_code")
+                   or err.get("code") or "")
+        if not text:
+            try:
+                text = json.dumps(err, default=str)
+            except (TypeError, ValueError):
+                text = ""
+    elif err is not None:
+        text = str(err)
+    if not text and exc is not None:
+        text = str(getattr(exc, "safe_message", "") or "") or str(exc)
+    if not text and exc is not None:
+        text = type(exc).__name__
+    if not text:
+        text = "provider returned no usable response"
+    return _no_secret(text)
 
 
 def _map_advisory_response(response: Any,
@@ -762,23 +815,41 @@ def llm_analysis(config: RuntimeConfig, capability: SpecialistCapability,
 
     t0 = time.monotonic()
     try:
-        outcome = provider.complete(request)
+        # R51 contract: complete_with_status() returns the envelope
+        # {response, error, telemetry, _exception}; complete() returns the
+        # FLAT success projection and RAISES ProviderCallError on failure.
+        status_call = getattr(provider, "complete_with_status", None)
+        if callable(status_call):
+            outcome = status_call(request)
+        else:
+            outcome = provider.complete(request)
     except Exception as exc:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
         kind = _classify_provider_error(None, exc)
-        raise AnalysisUnavailable(f"llm_{kind}: {_no_secret(exc)}")
+        raise AnalysisUnavailable(
+            f"llm_{kind}: {_err_text(None, exc)}") from None
     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
     if not isinstance(outcome, dict):
         raise AnalysisUnavailable(
-            f"llm_provider_error: {_no_secret(type(outcome).__name__)}")
-    err = outcome.get("error")
-    response = outcome.get("response")
-    if err is not None or response is None:
-        kind = _classify_provider_error(err, outcome.get("_exception"))
-        raise AnalysisUnavailable(f"llm_{kind}: {_err_text(err)}")
+            "llm_provider_error: unexpected outcome type "
+            f"{type(outcome).__name__}")
 
-    telemetry = (outcome.get("telemetry")
-                 if isinstance(outcome.get("telemetry"), dict) else {})
+    if ("summary" in outcome or "insights" in outcome) \
+            and "response" not in outcome:
+        # flat success projection from complete()
+        response: Any = outcome
+        err: Any = None
+        telemetry: dict[str, Any] = {}
+    else:
+        err = outcome.get("error")
+        response = outcome.get("response")
+        telemetry = (outcome.get("telemetry")
+                     if isinstance(outcome.get("telemetry"), dict) else {})
+    if err is not None or response is None:
+        exc = outcome.get("_exception")
+        kind = _classify_provider_error(err, exc)
+        raise AnalysisUnavailable(f"llm_{kind}: {_err_text(err, exc)}")
     structured = _map_advisory_response(response, capability, determin,
                                         observations, prompt_version)
 
