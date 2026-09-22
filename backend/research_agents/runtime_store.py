@@ -132,7 +132,24 @@ class RuntimeStore:
             os.fsync(fh.fileno())
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
-    # -- audit / activity (read side) --------------------------------------
+    def record_audit_event(self, event: dict[str, Any]) -> None:
+        """Public append-only audit writer (intelligence stages, Phase 10).
+        Every string payload value is scrubbed so secrets can never enter
+        the audit chain (safety rule: secrets never in event payloads)."""
+        if not isinstance(event, dict) or not event.get("event"):
+            raise ValueError("audit event requires an 'event' key")
+        from backend.research_agents.intelligence.memory import scrub_text
+
+        safe_event = dict(event)
+        for key, value in list(safe_event.items()):
+            if isinstance(value, str):
+                safe_event[key] = scrub_text(value)
+            elif isinstance(value, list):
+                safe_event[key] = [scrub_text(v) if isinstance(v, str)
+                                   else v for v in value]
+        self._append_audit(safe_event)
+
+    # -- audit /activity (read side) --------------------------------------
 
     def audit_events(self, limit: int = 100) -> list[dict[str, Any]]:
         if not self.audit_path.exists():

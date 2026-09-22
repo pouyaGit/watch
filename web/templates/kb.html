@@ -57,6 +57,7 @@
         <th class="num">Confidence</th>
         <th>Tags</th>
         <th>Indexed</th>
+        <th class="num">Agent uses</th>
       </tr>
     </thead>
     <tbody>
@@ -77,9 +78,10 @@
           {% if not tags %}<span class="text-muted text-xs">—</span>{% endif %}
         </td>
         <td class="text-xs mono text-muted" title="{{ d.indexed_at or '' }}">{{ d.indexed_date or '—' }}</td>
+        <td class="num text-xs mono" title="{% if d.agent_specialists %}{{ d.agent_specialists | join(', ') }} · last {{ d.agent_last_used or '—' }}{% else %}never read by agent research{% endif %}">{{ d.agent_uses if d.agent_uses is defined and d.agent_uses else 0 }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="empty">
+      <tr><td colspan="10" class="empty">
         No knowledge documents match this filter.
         <div class="empty-hint">Documents appear here after research ingestion writes to the KnowledgeStore.</div>
       </td></tr>

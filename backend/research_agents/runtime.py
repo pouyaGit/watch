@@ -40,6 +40,37 @@ from backend.research_agents.capabilities import (
     SpecialistCapability,
     capability_for,
 )
+from backend.research_agents.intelligence.context import (
+    ContextLimits,
+    assemble as assemble_context,
+)
+from backend.research_agents.intelligence.knowledge_intel import (
+    KnowledgeUnavailable,
+    link_informed,
+    select_knowledge,
+)
+from backend.research_agents.intelligence.learning import (
+    learn as learn_from_job,
+    learn_from_failure,
+)
+from backend.research_agents.intelligence.lineage import (
+    audit_event as intelligence_audit_event,
+    build_lineage,
+)
+from backend.research_agents.intelligence.memory import (
+    MemoryStore,
+    MemoryUnavailable,
+    scrub_text,
+    should_append as _should_append_memory,
+)
+from backend.research_agents.intelligence.recommend import (
+    RecommendationUnsafe,
+    recommend as generate_recommendations,
+    to_memory_item as recommendation_to_memory,
+)
+from backend.research_agents.intelligence.similarity import (
+    find_related as find_related_research,
+)
 from backend.research_agents.llm_guard import (
     FREE_MODEL,
     FreeOnlyViolation,
@@ -64,7 +95,7 @@ SCHEMA_NAME = "structured-analysis-v1"
 def prompt_version_for(capability: SpecialistCapability) -> str:
     """Versioned prompt identifier persisted with every LLM analysis."""
 
-    return f"{capability.agent_name}-analysis-v1.2"
+    return f"{capability.agent_name}-analysis-v2"
 
 MODE_PRODUCTION = "production"
 MODE_FIXTURE = "fixture"
@@ -113,6 +144,14 @@ class RuntimeConfig:
     # Phase 4: outbound-context budget (the provider allowlist also caps
     # at 4000 chars before any prompt is built).
     context_max_chars: int = 4000
+    # Phase 6: bounded cross-job research intelligence (config-driven)
+    intelligence_memory_limit: int = 12
+    intelligence_related_limit: int = 5
+    intelligence_history_jobs: int = 4
+    intelligence_context_items: int = 24
+    intelligence_context_chars: int = 1600
+    intelligence_recommendation_limit: int = 6
+    intelligence_scan_limit: int = 60
 
     def resolved_worker_id(self) -> str:
         return self.worker_id or f"agent-worker-{os.getpid()}"
@@ -279,49 +318,81 @@ class AuthorizationChecker:
 
 # ---------------------------------------------------------- knowledge
 class KnowledgeLoader:
-    """Loads relevant knowledge and records every real read (Phase 7)."""
+    """Phase 4: relevance-aware bounded knowledge selection.
+
+    Reuses the existing knowledge-base API (``research_data.list_kb``);
+    every SELECTED document is recorded with its relevance reasons, a
+    failing knowledge store degrades honestly (activity row, empty
+    selection) and never fabricates a document.
+    """
 
     def __init__(self, limit: int = 5):
         self.limit = int(limit)
 
     def load(self, store: RuntimeStore, job: ResearchJob,
-             capability: SpecialistCapability) -> list[dict[str, Any]]:
+             capability: SpecialistCapability,
+             observations: list[dict[str, Any]] | None = None,
+             memory_hits: list[Any] | None = None) -> list[dict[str, Any]]:
+        def _note(detail: str, **extra: Any) -> None:
+            try:
+                store.record_activity({
+                    "job_id": job.id, "agent": job.assigned_agent,
+                    "category": job.agent_category,
+                    "action": "knowledge_selected",
+                    "detail": _bounded_text(detail, 300),
+                    "mode": job.execution_mode, **extra})
+            except Exception:  # noqa: BLE001 - note must not fail a job
+                pass
+
         try:
             from backend import research_data as rd
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            _note(f"unavailable: research_data import "
+                  f"{exc.__class__.__name__}")
             return []
-        docs: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for topic in capability.knowledge_requirements[:3]:
-            if len(docs) >= self.limit:
-                break
+        try:
+            selection = select_knowledge(
+                capability=capability, job=job,
+                observations=list(observations or []),
+                memory_hits=list(memory_hits or []),
+                list_kb=rd.list_kb, limit=self.limit)
+        except KnowledgeUnavailable as exc:
+            _note(f"unavailable: {exc}")
+            return []
+        except Exception as exc:  # noqa: BLE001 - honest bounded degrade
+            _note(f"unavailable: {exc.__class__.__name__}")
+            return []
+        docs = selection.docs
+        for doc in docs:
+            rel = doc.get("relevance") or {}
+            # a source counts as read only when the runtime records it
             try:
-                payload = rd.list_kb(q=topic, limit=self.limit)
-            except Exception:
-                continue
-            for item in (payload or {}).get("items", []) or []:
-                if len(docs) >= self.limit:
-                    break
-                doc_id = _bounded_text(item.get("knowledge_id")
-                                       or item.get("id") or item.get("title"), 80)
-                if not doc_id or doc_id in seen:
-                    continue
-                seen.add(doc_id)
-                title = _bounded_text(item.get("title"), 160)
-                docs.append({"id": doc_id, "title": title,
-                             "topic": topic,
-                             "summary": _bounded_text(item.get("summary"),
-                                                        400)})
-                # a source counts as read only when the runtime records it
                 store.record_knowledge_use({
                     "job_id": job.id,
                     "agent": job.assigned_agent,
                     "category": job.agent_category,
-                    "document_id": doc_id,
-                    "title": title,
-                    "topic": topic,
+                    "document_id": doc.get("id"),
+                    "title": doc.get("title"),
+                    "topic": doc.get("topic"),
                     "mode": job.execution_mode,
+                    "relevance_score": int(rel.get("score") or 0),
+                    "reasons": [str(x) for x in
+                                (rel.get("reasons") or [])][:6],
                 })
+            except Exception:  # noqa: BLE001
+                pass
+        _note(f"{len(docs)} of {selection.considered} candidates selected "
+              f"(queries {','.join(selection.queries)[:100]})"
+              + (" | " + "; ".join(selection.notes)
+                 if selection.notes else ""),
+              selected_ids=[str(d.get("id")) for d in docs])
+        try:
+            store.record_audit_event(intelligence_audit_event(
+                "knowledge_selected", job_id=job.id,
+                ids=[str(d.get("id")) for d in docs],
+                considered=selection.considered))
+        except Exception:  # noqa: BLE001
+            pass
         return docs
 
 
@@ -511,7 +582,8 @@ def _advisory_request(capability: SpecialistCapability,
                       observations: list[dict[str, Any]],
                       knowledge: list[dict[str, Any]],
                       determin: dict[str, Any],
-                      prompt_version: str) -> dict[str, Any]:
+                      prompt_version: str,
+                      intel: dict[str, Any] | None = None) -> dict[str, Any]:
     """Allowlist-shaped advisory request (R51 contract), Phase 4/5/7.
 
     Carries ONLY the authorized bounded context: specialization, mission,
@@ -530,8 +602,8 @@ def _advisory_request(capability: SpecialistCapability,
         '"insights":[{"insight_code":"UPPER_SNAKE_CASE","text":"<=200"}],'
         '"recommendations":[{"recommendation_code":"UPPER_SNAKE_CASE",'
         '"text":"<=200"}]}'
-        " only these keys, max 6+6. Never confirm vulns; give the next "
-        "authorized observation. No payloads or credentials."
+        " only these keys, max 6+6. NEG_/MISSING_/PRIOR_ codes where "
+        "relevant. No payloads or credentials."
     )[:400]
 
     signals: list[dict[str, Any]] = []
@@ -563,6 +635,12 @@ def _advisory_request(capability: SpecialistCapability,
             "research_only": True,
         })
 
+    intel_sections: list[dict[str, Any]] = []
+    intel_stats: dict[str, Any] = {}
+    if isinstance(intel, dict):
+        intel_sections = [s for s in (intel.get("sections") or [])
+                          if isinstance(s, dict)][:24]
+        intel_stats = dict(intel.get("stats") or {})
     sections: dict[str, Any] = {
         "research_context": {
             "research_question": _bounded_text(
@@ -575,7 +653,14 @@ def _advisory_request(capability: SpecialistCapability,
             "source_layers": "MULTI",
             "research_only": True,
         },
-        "learning_signals": signals[:8],
+        # R51 caps learning signals at 8: with intelligence available,
+        # 2 observation facts + up to 6 prioritized intel sections
+        # (knowledge "why" rides its intel section); otherwise the
+        # legacy observation/knowledge signals (<=7).
+        "learning_signals": (
+            (signals[:2] + intel_sections[:6]) if intel_sections
+            else signals[:7]
+        )[:8],
     }
     return {
         "advisory_id": "",
@@ -593,8 +678,10 @@ def _classify_from_parts(*parts: Any) -> str:
     """Deterministic classification from plan/exception fields (Phase 8)."""
 
     blob = " ".join(str(p) for p in parts if p).upper()
-    if "TIMEOUT" in blob or "TIMED_OUT" in blob:
+    if "TIMEOUT" in blob or "TIMED_OUT" in blob or "TIMED OUT" in blob:
         return "timeout"
+    if "SCHEMA FAILURE" in blob or "SCHEMA_FAILURE" in blob:
+        return "schema_failure"
     if "RATE" in blob or "429" in blob:
         return "rate_limit"
     if "AUTHENTICATION" in blob or "AUTHORIZATION" in blob \
@@ -639,7 +726,7 @@ def _classify_provider_error(err: Any, exc: Any = None) -> str:
         blob = " ".join(str(v) for v in (
             getattr(exc, "error_category", ""),
             str(exc), type(exc).__name__)).lower()
-        if "timeout" in blob:
+        if "timeout" in blob or "timed out" in blob:
             return "timeout"
         if "rate" in blob or "429" in blob:
             return "rate_limit"
@@ -682,6 +769,16 @@ def _err_text(err: Any, exc: Any = None) -> str:
     if not text:
         text = "provider returned no usable response"
     return _no_secret(text)
+
+
+def _verdict_state(gate_conf: str, evidence_count: int,
+                   observation_count: int) -> str:
+    """Deterministic verdict semantics (shared by mapper + contract v2)."""
+    if gate_conf == "high" and evidence_count >= 2:
+        return "evidence_sufficient_for_review"
+    if observation_count:
+        return "needs_more_observation"
+    return "insufficient_evidence"
 
 
 def _map_advisory_response(response: Any,
@@ -744,12 +841,7 @@ def _map_advisory_response(response: Any,
         for r in observations[:8]
     ]
     gate_conf = str(determin.get("confidence", "insufficient"))
-    if gate_conf == "high" and len(evidence_refs) >= 2:
-        verdict = "evidence_sufficient_for_review"
-    elif obs_refs:
-        verdict = "needs_more_observation"
-    else:
-        verdict = "insufficient_evidence"
+    verdict = _verdict_state(gate_conf, len(evidence_refs), len(obs_refs))
 
     return {
         "schema": SCHEMA_NAME,
@@ -778,7 +870,8 @@ def _map_advisory_response(response: Any,
 def llm_analysis(config: RuntimeConfig, capability: SpecialistCapability,
                  job: ResearchJob, observations: list[dict[str, Any]],
                  knowledge: list[dict[str, Any]],
-                 determin: dict[str, Any] | None = None
+                 determin: dict[str, Any] | None = None,
+                 intel: dict[str, Any] | None = None,
                  ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Free-only LLM analysis through the existing provider abstraction.
 
@@ -805,7 +898,7 @@ def llm_analysis(config: RuntimeConfig, capability: SpecialistCapability,
     merged_base = dict(determin)
     prompt_version = prompt_version_for(capability)
     request = _advisory_request(capability, job, observations, knowledge,
-                                determin, prompt_version)
+                                determin, prompt_version, intel=intel)
     payload = json.dumps(request.get("sections", {}), sort_keys=True,
                           default=str)
     if len(payload) > int(config.context_max_chars):
@@ -958,6 +1051,146 @@ def evaluate_case_creation(capability: SpecialistCapability,
     return CaseDecision(True, "evidence_rules_met", case)
 
 
+# --------------------------------------------- research contract v2 (Phase 7)
+def attach_research_contract(
+    analysis: dict[str, Any],
+    *,
+    capability: SpecialistCapability,
+    job: ResearchJob,
+    intel: dict[str, Any],
+    decision: CaseDecision | None = None,
+    recommendations: list[Any] | None = None,
+    observations: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Persisted ``structured-research-v2`` expansion (Phase 7).
+
+    Deterministic expansion of the validated R45 response plus runtime
+    intelligence state.  The LLM contributes reasoning TEXT only:
+    confidence, verdict, gate linkage, evidence presence/absence and all
+    provenance fields are derived from deterministic state — malformed or
+    missing model output can never fabricate them.
+    """
+    structured = dict(analysis.get("structured") or {})
+    knowledge = list(intel.get("knowledge") or [])
+    related = list(intel.get("related") or [])
+    memory_hits = list(intel.get("memory") or [])
+    intel_errors = [str(e) for e in (intel.get("errors") or [])]
+    recommendations = list(recommendations or [])
+    observations = list(observations or [])
+
+    gate_conf = str(analysis.get("confidence", "insufficient"))
+    hypotheses_src = list(analysis.get("hypotheses") or [])
+    if not hypotheses_src and structured.get("hypothesis"):
+        hypotheses_src = [{"hypothesis": structured.get("hypothesis")}]
+
+    candidates = list(analysis.get("evidence_candidates") or [])
+    present_types = {str(c.get("type") or "") for c in candidates}
+    required = [str(t) for t in (
+        structured.get("evidence_required")
+        or capability.evidence_requirements.required_types)]
+    evidence_missing = [t for t in required if t not in present_types]
+
+    negative = [_bounded_text(b, 160)
+                for b in (analysis.get("blockers") or [])[:6]]
+    for item in memory_hits:
+        if item.state == "REJECTED":
+            negative.append(_bounded_text(item.text, 160))
+    if decision is not None and not decision.create:
+        negative.append(f"gate_not_claimed:{decision.reason}")
+
+    if "summary" not in structured:
+        structured["summary"] = _bounded_text(analysis.get("summary"), 400)
+    structured.setdefault(
+        "vulnerability_class", f"{capability.category}-class patterns")
+    if "observations_considered" not in structured:
+        structured["observations_considered"] = [
+            (f"urls:{r.get('_id')}" if r.get("_id")
+             else _bounded_text(r.get("url") or r.get("ref"), 120))
+            for r in observations[:8]
+        ]
+    structured["evidence_required"] = required
+    structured.setdefault("evidence_present", [
+        _bounded_text(str(c.get("ref") or c.get("type") or ""), 120)
+        for c in candidates[:10]
+    ])
+    structured["evidence_missing"] = evidence_missing
+    structured["negative_evidence"] = negative[:8]
+    structured.setdefault("confidence", gate_conf)
+    structured.setdefault("blockers",
+                          [_bounded_text(b, 120)
+                           for b in (analysis.get("blockers") or [])[:8]])
+    structured.setdefault("reasoning_summary",
+                          _bounded_text(structured.get("summary"), 400))
+    structured.setdefault(
+        "verdict",
+        _verdict_state(gate_conf, len(structured.get("evidence_present")
+                                      or []), len(observations)))
+    seen_hypotheses: set[str] = set()
+    unique_hypotheses: list[dict[str, Any]] = []
+    for h in hypotheses_src[:6]:
+        text = _bounded_text(h.get("hypothesis"), 300)
+        if text and text not in seen_hypotheses:
+            seen_hypotheses.add(text)
+            unique_hypotheses.append({
+                "hypothesis": text,
+                "source": ("llm_advisory"
+                           if analysis.get("analysis_via") == "llm"
+                           else "deterministic"),
+                "state": "INFERRED",
+                "confidence": "advisory",
+            })
+    structured["hypotheses"] = unique_hypotheses[:4]
+    structured["prior_research_considered"] = [
+        {"kind": r.kind, "ref": r.ref, "score": int(r.score),
+         "reasons": list(r.reasons[:4]), "limitations": r.limitations}
+        for r in related[:5]
+    ]
+    structured["memory_considered"] = [
+        {"id": i.id, "state": i.state, "kind": i.kind,
+         "text": _bounded_text(i.text, 160),
+         "provenance_job": str(i.provenance.get("job_id") or "")}
+        for i in memory_hits[:8]
+    ]
+    linked = link_informed(
+        [dict(d) for d in knowledge],
+        list(structured.get("llm_insights") or []),
+        list(structured.get("llm_recommendations") or []),
+    )
+    structured["knowledge_considered"] = [
+        {"id": d.get("id"), "title": d.get("title"),
+         "topic": d.get("topic"),
+         "why": ((d.get("relevance") or {}).get("why")
+                 or _bounded_text(d.get("title"), 80)),
+         "informed": list(d.get("informed") or ["prompt_context"])}
+        for d in linked[:8]
+    ]
+    structured["research_recommendations"] = [
+        r.to_dict() for r in recommendations
+    ]
+    if not structured.get("recommended_next_observation"):
+        for rec in recommendations:
+            if rec.type in ("acquire_evidence", "analyze_pattern"):
+                structured["recommended_next_observation"] = rec.text[:300]
+                break
+        else:
+            structured.setdefault("recommended_next_observation", "")
+    structured["evidence_gate"] = {
+        "reason": (str(getattr(decision, "reason", "")) or "not_evaluated"),
+        "created_case": bool(getattr(decision, "create", False)),
+        "confidence": gate_conf,
+        "authoritative": True,
+    }
+    structured["contract"] = "structured-research-v2"
+    structured["specialist"] = str(capability.agent_name)
+    structured.setdefault("prompt_version",
+                          str(analysis.get("prompt_version") or "")
+                          or "deterministic")
+    structured["context_stats"] = dict(intel.get("stats") or {})
+    structured["intelligence_errors"] = intel_errors[:8]
+    analysis["structured"] = structured
+    return analysis
+
+
 # ------------------------------------------------------------- worker
 class AgentWorker:
     """Bounded worker: claim → verify → observe → analyze → persist."""
@@ -1051,8 +1284,6 @@ class AgentWorker:
         if capability is None:
             raise NoCapability(f"no_capability:{job.agent_category}")
 
-        knowledge = self.knowledge.load(self.store, job, capability)
-        check_deadline()
         rows = self.observations.observe(job)
         self.store.record_activity({
             "job_id": job.id, "agent": job.assigned_agent,
@@ -1065,6 +1296,100 @@ class AgentWorker:
         self.store.heartbeat(job.id, self.worker_id,
                              lease_seconds=cfg.lease_seconds)
         check_deadline()
+
+        # ---- shared research intelligence (Phases 1/4/5/6) --------------
+        intel: dict[str, Any] = {"sections": [], "stats": {}, "memory": [],
+                                  "related": [], "knowledge": [],
+                                  "errors": []}
+        memory_store = MemoryStore(self.store.base)
+        memory_hits: list[Any] = []
+        try:
+            memory_hits = memory_store.query(
+                category=job.agent_category, target=job.subdomain or "",
+                program=job.program or "",
+                limit=cfg.intelligence_memory_limit)
+            intel["memory"] = memory_hits
+            self._intel_activity(
+                job, "memory_retrieved",
+                f"{len(memory_hits)} items "
+                f"(states {sorted({i.state for i in memory_hits}) or ['none']},"
+                f" limit {cfg.intelligence_memory_limit})")
+            self.store.record_audit_event(intelligence_audit_event(
+                "memory_retrieved", job_id=job.id,
+                ids=[i.id for i in memory_hits],
+                states=sorted({i.state for i in memory_hits})))
+        except Exception as exc:  # noqa: BLE001 - honest degrade
+            intel["errors"].append(
+                f"memory_retrieved:{_bounded_text(str(exc), 80)}")
+            self._intel_activity(job, "memory_retrieved",
+                                 f"unavailable: {_bounded_text(str(exc), 140)}")
+            memory_hits = []
+
+        knowledge = self.knowledge.load(self.store, job, capability,
+                                        observations=rows,
+                                        memory_hits=memory_hits)
+        intel["knowledge"] = knowledge
+        check_deadline()
+
+        related: list[Any] = []
+        try:
+            history = [j for j in self.store.list_jobs()
+                       if j.id != job.id][-cfg.intelligence_scan_limit:]
+            related = find_related_research(
+                job=job, capability=capability, history_jobs=history,
+                cases=self.store.list_cases(), memory_hits=memory_hits,
+                limit=cfg.intelligence_related_limit,
+                scan=cfg.intelligence_scan_limit)
+            intel["related"] = related
+            self._intel_activity(
+                job, "prior_research_matched",
+                f"{len(related)} records "
+                f"(kinds {sorted({r.kind for r in related}) or ['none']}, "
+                f"limit {cfg.intelligence_related_limit})")
+            self.store.record_audit_event(intelligence_audit_event(
+                "prior_research_matched", job_id=job.id,
+                ids=[r.ref for r in related],
+                kinds=sorted({r.kind for r in related})))
+        except Exception as exc:  # noqa: BLE001 - honest degrade
+            intel["errors"].append(
+                f"prior_research:{_bounded_text(exc.__class__.__name__, 60)}")
+            self._intel_activity(
+                job, "prior_research_matched",
+                f"unavailable: {_bounded_text(exc.__class__.__name__, 80)}")
+            related = []
+
+        prior_recs = [i.text for i in memory_hits
+                      if i.kind == "research_recommendation"][
+                          :cfg.intelligence_recommendation_limit]
+        try:
+            completed = [j for j in self.store.list_jobs()
+                         if j.id != job.id
+                         and j.status == JobStatus.COMPLETED.value]
+            ctx = assemble_context(
+                job=job, related=related, memory_hits=memory_hits,
+                knowledge=knowledge, prior_recommendations=prior_recs,
+                history_jobs=completed,
+                limits=ContextLimits(
+                    max_items=cfg.intelligence_context_items,
+                    max_chars=min(cfg.intelligence_context_chars,
+                                  cfg.context_max_chars),
+                    max_history_jobs=cfg.intelligence_history_jobs,
+                    max_related_cases=cfg.intelligence_related_limit,
+                    max_knowledge=cfg.knowledge_limit,
+                    max_memory_items=cfg.intelligence_memory_limit,
+                    max_recommendations=cfg.intelligence_recommendation_limit))
+            intel["sections"] = ctx["sections"]
+            intel["stats"] = ctx["stats"]
+            self.store.record_audit_event(intelligence_audit_event(
+                "context_assembled", job_id=job.id,
+                items=ctx["stats"].get("items"),
+                dropped=ctx["stats"].get("dropped"),
+                chars=ctx["stats"].get("chars")))
+        except Exception as exc:  # noqa: BLE001 - honest degrade
+            intel["errors"].append(
+                f"context:{_bounded_text(exc.__class__.__name__, 60)}")
+            intel["sections"] = []
+            intel["stats"] = {}
 
         analysis = deterministic_analysis(capability, job, rows, knowledge)
         provider_kind, model, prompt_version = "", "", ""
@@ -1079,7 +1404,8 @@ class AgentWorker:
                 "llm": FREE_MODEL, "mode": job.execution_mode})
             try:
                 analysis, llm_meta = llm_analysis(
-                    cfg, capability, job, rows, knowledge, analysis)
+                    cfg, capability, job, rows, knowledge, analysis,
+                    intel=intel)
             except AnalysisUnavailable as exc:
                 self.store.record_activity({
                     "job_id": job.id, "agent": job.assigned_agent,
@@ -1140,12 +1466,104 @@ class AgentWorker:
         if decision.create and decision.case:
             case_id = self.store.record_case(decision.case)
 
+        # ---- Phase 2/3: learning + recommendations (post-gate) ----------
+        learned: dict[str, Any] = {"appended": 0, "ids": [], "states": [],
+                                   "extracted": 0}
+        try:
+            learned = learn_from_job(
+                memory_store, job=job, capability=capability,
+                decision=decision, analysis=analysis,
+                observations=rows, knowledge=knowledge, case_id=case_id)
+            self._intel_activity(
+                job, "memory_learned",
+                f"{learned['appended']} items appended "
+                f"(states {learned['states']}, "
+                f"extracted {learned['extracted']})")
+            self.store.record_audit_event(intelligence_audit_event(
+                "memory_learned", job_id=job.id, ids=learned["ids"],
+                states=learned["states"], case_id=case_id or "none",
+                gate_reason=decision.reason))
+        except Exception as exc:  # noqa: BLE001 - honest degrade
+            intel["errors"].append(
+                f"memory_learned:{_bounded_text(str(exc), 80)}")
+            self._intel_activity(job, "memory_learned",
+                                 f"failed: {_bounded_text(str(exc), 140)}")
+        recs: list[Any] = []
+        try:
+            recs = generate_recommendations(
+                job=job, capability=capability, analysis=analysis,
+                related=related, memory_hits=memory_hits,
+                knowledge=knowledge, decision=decision,
+                limit=cfg.intelligence_recommendation_limit)
+            self._intel_activity(
+                job, "recommendation_generated",
+                f"{len(recs)} recommendations (types "
+                f"{[r.type for r in recs]})")
+            self.store.record_audit_event(intelligence_audit_event(
+                "recommendation_generated", job_id=job.id,
+                ids=[r.id for r in recs], types=[r.type for r in recs]))
+            try:
+                rec_items = [recommendation_to_memory(job, r)
+                             for r in recs]
+                heads = {i.id: i for i in memory_store.heads()}
+                fresh = [i for i in rec_items
+                         if _should_append_memory(heads.get(i.id), i)]
+                if fresh:
+                    memory_store.append(fresh)
+            except Exception as exc:  # noqa: BLE001 - honest degrade
+                intel["errors"].append(
+                    f"recommendation_memory:{_bounded_text(str(exc), 80)}")
+                self._intel_activity(
+                    job, "memory_learned",
+                    f"recommendation memory failed: "
+                    f"{_bounded_text(str(exc), 100)}")
+        except RecommendationUnsafe as exc:
+            intel["errors"].append(f"recommendation:{_bounded_text(exc, 80)}")
+            self._intel_activity(
+                job, "recommendation_generated",
+                f"rejected unsafe recommendation: {_bounded_text(exc, 120)}")
+            recs = []
+        except Exception as exc:  # noqa: BLE001 - honest degrade
+            intel["errors"].append(
+                f"recommendation:{_bounded_text(exc.__class__.__name__, 60)}")
+            self._intel_activity(
+                job, "recommendation_generated",
+                f"failed: {_bounded_text(exc.__class__.__name__, 80)}")
+            recs = []
+
+        analysis = attach_research_contract(
+            analysis, capability=capability, job=job, intel=intel,
+            decision=decision, recommendations=recs, observations=rows)
+
         findings = tuple(_bounded_text(h.get("hypothesis"), 200)
                          for h in (analysis.get("hypotheses") or [])[:10])
         blockers = tuple(_bounded_text(b, 120)
                          for b in (analysis.get("blockers") or [])[:10])
         signals = tuple(_bounded_text(s, 120)
                         for s in (analysis.get("signals") or [])[:20])
+        # ---- Phase 10: research lineage embedded in the result ----------
+        structured_payload = dict(analysis.get("structured") or {})
+        structured_payload["research_lineage"] = build_lineage(
+            job_id=job.id,
+            knowledge_ids=[str(d.get("id") or "") for d in knowledge],
+            memory_ids=[str(i.id) for i in memory_hits],
+            related_ids=[str(r.ref) for r in related],
+            prompt_version=str(structured_payload.get("prompt_version")
+                               or prompt_version or "deterministic"),
+            provider=provider_kind or "not_configured",
+            model=model or "not_configured",
+            gate_reason=str(decision.reason),
+            gate_confidence=str(analysis.get("confidence", "unknown")),
+            case_id=case_id,
+            learned_ids=[str(i) for i in learned["ids"]],
+            recommendation_ids=[str(r.id) for r in recs],
+            context_stats=intel.get("stats") or {},
+            intelligence_errors=intel.get("errors") or [])
+        analysis["structured"] = structured_payload
+        self.store.record_audit_event(intelligence_audit_event(
+            "lineage_recorded", job_id=job.id,
+            digest=structured_payload["research_lineage"]["digest"],
+            case_id=case_id or "none"))
         result = ResearchResult(
             job_id=job.id,
             agent_name=job.assigned_agent,
@@ -1191,6 +1609,19 @@ class AgentWorker:
     def _transition(self, job_id: str, status: str, **kw: Any) -> None:
         self.store.transition(job_id, status, worker=self.worker_id, **kw)
 
+    def _intel_activity(self, job: ResearchJob, action: str,
+                        detail: str) -> None:
+        """Phase 9: emit one research-intelligence activity row."""
+        try:
+            self.store.record_activity({
+                "job_id": job.id, "agent": job.assigned_agent,
+                "category": job.agent_category, "action": action,
+                "detail": scrub_text(_bounded_text(detail, 300)),
+                "mode": job.execution_mode,
+            })
+        except Exception:  # noqa: BLE001 - activity is best-effort
+            pass
+
     def _retryable_failure(self, job: ResearchJob, error: str,
                            started: float) -> ResearchJob:
         current = self.store.get(job.id) or job
@@ -1209,6 +1640,22 @@ class AgentWorker:
                 pass
         outcome = self.store.retry_or_terminal(current.id, error=error[:300],
                                                worker=self.worker_id)
+        if "TERMINAL" in str(outcome).upper():
+            fail_cap = capability_for(current.agent_category)
+            if fail_cap is not None:
+                try:
+                    fail_learned = learn_from_failure(
+                        MemoryStore(self.store.base), job=current,
+                        capability=fail_cap, error=error)
+                    self._intel_activity(
+                        current, "memory_learned",
+                        f"failure memory recorded "
+                        f"(appended {fail_learned['appended']})")
+                except Exception as exc:  # noqa: BLE001 - honest degrade
+                    self._intel_activity(
+                        current, "memory_learned",
+                        f"failure memory failed: "
+                        f"{_bounded_text(exc.__class__.__name__, 80)}")
         self.store.record_activity({
             "job_id": current.id, "agent": current.assigned_agent,
             "category": current.agent_category, "action": "job_failed",

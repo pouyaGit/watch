@@ -43,6 +43,37 @@
   </div>
 </div>
 
+{% if doc.agent_usage or doc.research_contexts or doc.memory_references %}
+<div class="panel mb-6">
+  <div class="panel-head"><h2>Agent research usage</h2>
+    <span class="badge-sm">read-only runtime records</span></div>
+  <div class="panel-body text-sm">
+    <div class="detail-meta">
+      <span class="dm-item"><span class="dm-k">Uses</span>{{ doc.agent_usage.uses or 0 }}</span>
+      <span class="dm-item"><span class="dm-k">Last used</span>{{ doc.agent_usage.last_used or 'never' }}</span>
+      <span class="dm-item"><span class="dm-k">Specialists</span>{{ (doc.agent_usage.agents or []) | join(', ') if doc.agent_usage.agents else '—' }}</span>
+      <span class="dm-item"><span class="dm-k">Topics</span>{{ (doc.agent_usage.specialist_topics or []) | join(', ') if doc.agent_usage.specialist_topics else '—' }}</span>
+    </div>
+    {% if doc.research_contexts %}
+    <div class="section-label mt-3">Research contexts where this document contributed</div>
+    <ul class="text-sm list-disc pl-5">
+      {% for c in doc.research_contexts %}
+      <li><span class="font-mono">{{ c.job_id }}</span>{% if c.agent %} · {{ c.agent }}{% endif %}{% if c.category %} · {{ c.category }}{% endif %}{% if c.topic %} · topic {{ c.topic }}{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if doc.memory_references %}
+    <div class="section-label mt-3">Referenced by research memory</div>
+    <ul class="text-sm list-disc pl-5">
+      {% for m in doc.memory_references %}
+      <li><span class="font-mono">{{ m.id }}</span> · {{ m.state }} — {{ m.text }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <div class="detail-grid">
 
   <section class="panel">

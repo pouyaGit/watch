@@ -1164,7 +1164,21 @@ def ui_kb(
     except ResearchDataError:
         return _error_page(request, "kb", 400, "Invalid filter",
                            "The search/filter values are malformed.")
+    # Phase 9: real agent-research usage (read-only runtime records)
+    usage_map: dict = {}
+    try:
+        from backend.research_agents.intelligence.knowledge_intel import (
+            usage_index,
+        )
+        from backend.research_agents.runtime_store import default_store
+        usage_map = usage_index(default_store().list_knowledge_use())
+    except Exception:  # noqa: BLE001 - usage is optional enrichment
+        usage_map = {}
     for item in data["items"]:
+        u = usage_map.get(item["knowledge_id"]) or {}
+        item["agent_uses"] = int(u.get("uses") or 0)
+        item["agent_last_used"] = str(u.get("last_used") or "")
+        item["agent_specialists"] = list(u.get("agents") or [])[:4]
         item["detail_url"] = build_url(f"/ui/kb/{item['knowledge_id']}")
         item["indexed_date"] = str(item.get("indexed_at") or "").split("T")[0] or None
         item["cve"] = next(
@@ -1223,6 +1237,45 @@ def ui_kb_detail(request: Request, kid: str):
         if doc["cve"] and rdata.CVE_RE.match(doc["cve"])
         else None
     )
+    # Phase 9: usage count, last used, contributing research contexts
+    doc["agent_usage"] = {}
+    doc["research_contexts"] = []
+    doc["memory_references"] = []
+    try:
+        from backend.research_agents.intelligence.knowledge_intel import (
+            usage_index,
+        )
+        from backend.research_agents.intelligence.memory import MemoryStore
+        from backend.research_agents.runtime_store import default_store
+        store = default_store()
+        use_rows = store.list_knowledge_use()
+        entry = usage_index(use_rows).get(doc.get("knowledge_id")) or {}
+        doc["agent_usage"] = entry
+        by_job: dict[str, dict[str, str]] = {}
+        for row in use_rows:
+            jid = str(row.get("job_id") or "")
+            if jid and jid not in by_job:
+                by_job[jid] = {
+                    "agent": str(row.get("agent") or ""),
+                    "category": str(row.get("category") or ""),
+                    "topic": str(row.get("topic") or ""),
+                }
+        doc["research_contexts"] = [
+            {"job_id": jid, **by_job.get(jid, {})}
+            for jid in list(entry.get("jobs") or [])[:8]
+            if jid
+        ]
+        try:
+            doc["memory_references"] = [
+                {"id": m.id, "state": m.state, "text": m.text[:200]}
+                for m in MemoryStore(store.base).heads()
+                if doc.get("knowledge_id") in
+                [str(x) for x in (m.provenance.get("refs") or [])]
+            ][:6]
+        except Exception:  # noqa: BLE001 - memory optional here
+            doc["memory_references"] = []
+    except Exception:  # noqa: BLE001 - usage is optional enrichment
+        doc["agent_usage"] = {}
     return templates.TemplateResponse(
         request,
         "kb_detail.html",

@@ -122,6 +122,64 @@
   </section>
 
   <section class="panel p-4 mb-6">
+    <h2 class="text-base font-semibold mb-2">Research intelligence</h2>
+    {% if runtime_records is defined and runtime_records.intelligence is defined
+           and runtime_records.intelligence.available %}
+      <p class="text-slate-500 text-xs mb-3">Persistent research memory,
+        knowledge relevance and intelligence activity for this specialist —
+        memory states are preserved distinctly; similarity is never proof.</p>
+      <div class="flex flex-wrap gap-1 mb-3">
+        {% for state, n in runtime_records.intelligence.memory_by_state.items() %}
+          {% if state != 'total' %}<span class="badge-sm">{{ state }}: {{ n }}</span>{% endif %}
+        {% endfor %}
+        <span class="badge-sm">total: {{ runtime_records.intelligence.memory_by_state.total or 0 }}</span>
+      </div>
+      <div class="grid md:grid-cols-2 gap-4 text-sm">
+        <div>
+          <div class="text-slate-400 mb-1">Previous hypotheses (INFERRED — advisory)</div>
+          <ul class="list-disc pl-5">{% for h in runtime_records.intelligence.hypotheses %}
+            <li>{{ h.text }} <span class="text-slate-500">({{ h.job_id or '—' }}, {{ h.created_at }})</span></li>
+            {% else %}<li class="text-slate-500">No hypothesis memory recorded.</li>{% endfor %}</ul>
+          <div class="text-slate-400 mt-2 mb-1">Rejected hypotheses (gate — negative memory)</div>
+          <ul class="list-disc pl-5">{% for h in runtime_records.intelligence.rejected_hypotheses %}
+            <li>{{ h.text }} <span class="text-slate-500">({{ h.source }}, {{ h.job_id or '—' }})</span></li>
+            {% else %}<li class="text-slate-500">No rejected hypotheses recorded.</li>{% endfor %}</ul>
+        </div>
+        <div>
+          <div class="text-slate-400 mb-1">Research recommendations</div>
+          <ul class="list-disc pl-5">{% for r in runtime_records.intelligence.recommendations %}
+            <li>{{ r.text }}</li>
+            {% else %}<li class="text-slate-500">No recommendations recorded.</li>{% endfor %}</ul>
+          <div class="text-slate-400 mt-2 mb-1">Related cases (similarity — not proof)</div>
+          <ul class="list-disc pl-5">{% for c in runtime_records.intelligence.related_cases %}
+            <li><span class="font-mono">{{ c.id }}</span> · {{ c.target }} · {{ c.confidence or '—' }}</li>
+            {% else %}<li class="text-slate-500">No related cases recorded.</li>{% endfor %}</ul>
+        </div>
+      </div>
+      <div class="text-slate-400 text-xs mt-3 mb-1">Recent knowledge relevance</div>
+      <ul class="text-sm list-disc pl-5 mb-2">{% for k in runtime_records.intelligence.knowledge_recent %}
+        <li>{{ k.title }} <span class="text-slate-500">({{ k.topic }}{{ ', ' + (k.reasons | join('; ')) if k.reasons else '' }}, {{ k.at }})</span></li>
+        {% else %}<li class="text-slate-500">No knowledge selections recorded.</li>{% endfor %}</ul>
+      <div class="text-slate-400 text-xs mb-1">Recent research activity</div>
+      <ul class="text-sm list-disc pl-5 mb-2">{% for a in runtime_records.intelligence.recent_research_activity %}
+        <li><span class="font-mono">{{ a.action }}</span> — {{ a.detail }} <span class="text-slate-500">({{ a.job_id }}, {{ a.at }})</span></li>
+        {% else %}<li class="text-slate-500">No intelligence activity recorded.</li>{% endfor %}</ul>
+      {% if runtime_records.intelligence.intelligence_errors %}
+      <div class="text-amber-600 text-xs">Intelligence degradations (honest):
+        {{ runtime_records.intelligence.intelligence_errors | join(' · ') }}</div>
+      {% endif %}
+      {% if runtime_records.intelligence.lineage_digest %}
+      <div class="text-slate-500 text-xs mt-1">Lineage digest:
+        <span class="font-mono">{{ runtime_records.intelligence.lineage_digest }}</span>
+        · contract {{ runtime_records.intelligence.contract or '—' }}</div>
+      {% endif %}
+    {% else %}
+      <p class="text-slate-500 text-sm">No research intelligence state exists
+        for this specialist yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel p-4 mb-6">
     <div class="panel-head"><h2>Capability</h2></div>
     <p class="text-sm text-slate-400 mb-3">{{ capability.now }}</p>
     <div class="text-slate-400 mb-1">Declared capabilities (configuration — not recorded execution)</div>

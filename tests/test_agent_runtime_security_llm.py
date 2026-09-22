@@ -284,7 +284,7 @@ class TestLLMFailureSemantics(unittest.TestCase):
         self.assertEqual(meta["provider"], "OPENROUTER")
         self.assertEqual(meta["requested_model"], "openrouter/free")
         self.assertEqual(meta["prompt_version"],
-                         "xss-agent-analysis-v1.2")
+                         "xss-agent-analysis-v2")
         self.assertGreaterEqual(meta["analysis_ms"], 0)
         self.assertIsNone(meta["usage"])
         # provider is always built with the free model explicitly
@@ -301,7 +301,7 @@ class TestLLMFailureSemantics(unittest.TestCase):
                          "reflected parameter context observed")
         self.assertEqual(analysis["summary"], st["reasoning_summary"])
         self.assertEqual(analysis["prompt_version"],
-                         "xss-agent-analysis-v1.2")
+                         "xss-agent-analysis-v2")
         # the gate value stays deterministic — LLM is input only
         self.assertEqual(analysis["confidence"], determin["confidence"])
         self.assertEqual(st["confidence"], determin["confidence"])
