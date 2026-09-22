@@ -102,6 +102,18 @@ def _runtime_status(tracked: bool, stats: Mapping[str, Any]) -> tuple[str, str]:
     return STATUS_PLANNED, MEANING_PLANNED_REGISTERED
 
 
+def _llm_indicator_safely() -> dict[str, Any]:
+    """Free-only LLM configuration indicator (never a secret)."""
+
+    try:
+        from backend.research_agents.llm_guard import llm_indicator
+        return llm_indicator()
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"enabled": False, "provider_label": "",
+                "requested_model": "", "key_configured": False,
+                "reason": f"indicator_unavailable: {type(exc).__name__}"}
+
+
 def _runtime_block(deployed: bool) -> dict[str, Any]:
     """Page-level runtime banner (real, or an explicit absence)."""
     if deployed:
@@ -110,12 +122,14 @@ def _runtime_block(deployed: bool) -> dict[str, Any]:
             "source": _RUNTIME_SOURCE,
             "meaning": "queue, active-job and job counters come from "
                        f"{_RUNTIME_SOURCE}",
+            "llm": _llm_indicator_safely(),
         }
     return {
         "deployed": False,
         "source": "",
         "meaning": "No agent runtime is deployed in this environment — queue, "
                    "active jobs and total jobs are not tracked for any agent",
+        "llm": {},
     }
 
 
@@ -628,7 +642,8 @@ def _runtime_agent_records(agent_key: str,
     is synthesized.
     """
     empty = {"source_available": False, "jobs": [], "knowledge_used": [],
-             "cases": [], "evidence_count": 0, "worker": {}}
+             "cases": [], "evidence_count": 0, "worker": {},
+             "llm_last": {}}
     try:
         from backend.research_agents.capabilities import capability_for
         from backend.research_agents.runtime import runtime_snapshot
@@ -687,6 +702,29 @@ def _runtime_agent_records(agent_key: str,
                  or _text(c.get("specialist")).lower() == agent_name.lower()]
         evidence = [e for e in store.list_evidence()
                     if _text(e.get("category")).upper() == cat.upper()]
+        llm_last: dict[str, Any] = {}
+        for row in job_rows:
+            res = store.get_result(row["id"])
+            if res is None or llm_last:
+                continue
+            st = res.structured if isinstance(res.structured, dict) else {}
+            if not (res.prompt_version or st):
+                continue
+            llm_last = {
+                "job_id": _text(row["id"]),
+                "job_status": _text(row["status"]),
+                "provider": _text(res.provider),
+                "requested_model": _text(res.model),
+                "resolved_model": (_text(st.get("resolved_model"))
+                                   or "not_exposed_by_contract"),
+                "prompt_version": _text(res.prompt_version),
+                "latency_ms": int(res.analysis_ms or 0),
+                "usage": st.get("usage") or {},
+                "confidence": _text(res.confidence),
+                "verdict": _text(st.get("verdict")),
+                "hypothesis": _text(st.get("hypothesis")),
+                "reasoning_summary": _text(st.get("reasoning_summary")),
+            }
         return {
             "source_available": True,
             "jobs": job_rows,
@@ -709,6 +747,7 @@ def _runtime_agent_records(agent_key: str,
             "evidence_count": len(evidence),
             "worker": (snap.get("worker") or {})
             if isinstance(snap.get("worker"), Mapping) else {},
+            "llm_last": llm_last,
         }
     except Exception:
         return empty

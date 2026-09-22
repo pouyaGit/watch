@@ -39,6 +39,12 @@
         <div class="flex gap-2"><dt class="w-40 text-slate-400">Active jobs</dt><dd>{{ runtime.active_jobs }}</dd></div>
         <div class="flex gap-2"><dt class="w-40 text-slate-400">Total jobs</dt><dd>{{ runtime.job_count }}</dd></div>
         <div class="flex gap-2"><dt class="w-40 text-slate-400">Accepting work</dt><dd>{{ 'yes' if runtime.available else 'no' }}</dd></div>
+        {% if runtime.llm is defined and runtime.llm %}
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">LLM</dt>
+          <dd>{{ runtime.llm.provider_label }} · model {{ runtime.llm.requested_model }}
+            · key {{ 'configured' if runtime.llm.key_configured else 'missing' }}
+            {% if not runtime.llm.enabled %}({{ runtime.llm.reason }}){% endif %}</dd></div>
+        {% endif %}
         {% if runtime.worker is defined and runtime.worker %}
         <div class="flex gap-2"><dt class="w-40 text-slate-400">Worker</dt>
           <dd>{{ 'alive' if runtime.worker.alive else 'not running' }} — {{ runtime.worker.reason }}</dd></div>
@@ -53,6 +59,67 @@
       {% endif %}
     </section>
   </div>
+
+  <section class="panel p-4 mb-6">
+    <h2 class="text-base font-semibold mb-2">Agent research runtime</h2>
+    {% if runtime_records is defined and runtime_records.source_available %}
+      <p class="text-slate-500 text-xs mb-3">Real records from the agent
+        runtime store — jobs this agent executed, knowledge documents its
+        jobs actually read, and the latest structured LLM analysis.</p>
+      {% if runtime_records.llm_last %}
+      <dl class="text-sm space-y-1 mb-3">
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Last analysis</dt>
+          <dd>{{ runtime_records.llm_last.prompt_version }}
+            · provider {{ runtime_records.llm_last.provider }}
+            · model {{ runtime_records.llm_last.requested_model }}
+            · resolved {{ runtime_records.llm_last.resolved_model }}
+            · {{ runtime_records.llm_last.latency_ms }} ms
+            · confidence {{ runtime_records.llm_last.confidence or '—' }}
+            · verdict {{ runtime_records.llm_last.verdict or '—' }}
+            · job {{ runtime_records.llm_last.job_status }}</dd></div>
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Hypothesis</dt>
+          <dd>{{ runtime_records.llm_last.hypothesis or '—' }}</dd></div>
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Reasoning</dt>
+          <dd>{{ runtime_records.llm_last.reasoning_summary or '—' }}</dd></div>
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Usage</dt>
+          <dd>{{ runtime_records.llm_last.usage if runtime_records.llm_last.usage else 'not reported by provider' }}</dd></div>
+      </dl>
+      {% else %}
+      <p class="text-slate-500 text-sm mb-3">No LLM analysis is recorded for
+        this agent yet.</p>
+      {% endif %}
+      <div class="text-slate-400 text-xs mb-1">Research jobs
+        ({{ runtime_records.jobs|length }})</div>
+      <ul class="text-sm list-disc pl-5 mb-3">
+        {% for j in runtime_records.jobs %}
+        <li><span class="font-mono">{{ j.id }}</span> · {{ j.status }}
+          · confidence {{ j.confidence or '—' }}
+          {% if j.case_ref %}· case {{ j.case_ref }}{% endif %}
+          <span class="text-slate-500">{{ j.completed_at or j.created_at }}</span></li>
+        {% else %}
+        <li class="text-slate-500">No jobs recorded.</li>
+        {% endfor %}
+      </ul>
+      <div class="text-slate-400 text-xs mb-1">Knowledge used
+        ({{ runtime_records.knowledge_used|length }})</div>
+      <ul class="text-sm list-disc pl-5">
+        {% for k in runtime_records.knowledge_used %}
+        <li>{{ k.title }} <span class="text-slate-500">({{ k.topic }},
+            {{ k.at }})</span></li>
+        {% else %}
+        <li class="text-slate-500">No knowledge documents have been read for
+          this agent's jobs.</li>
+        {% endfor %}
+      </ul>
+      <p class="text-slate-500 text-xs mt-2">Cases:
+        {{ runtime_records.cases|length }} · evidence:
+        {{ runtime_records.evidence_count }}</p>
+    {% else %}
+      <p class="empty">No agent runtime store is available in this
+        environment — jobs, knowledge usage and LLM analysis are not shown
+        rather than rendered as empty facts.</p>
+    {% endif %}
+  </section>
 
   <section class="panel p-4 mb-6">
     <div class="panel-head"><h2>Capability</h2></div>

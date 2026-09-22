@@ -360,6 +360,12 @@ class ResearchResult:
     prompt_version: str = ""
     analysis_ms: int = 0
     execution_mode: str = "production"
+    # Phase 3: validated structured analysis (LLM output is INPUT only)
+    structured: dict = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.structured is None:
+            object.__setattr__(self, "structured", {})
 
     def to_dict(self) -> dict:
         return {
@@ -378,6 +384,7 @@ class ResearchResult:
             "prompt_version": self.prompt_version,
             "analysis_ms": int(self.analysis_ms),
             "execution_mode": self.execution_mode,
+            "structured": dict(self.structured or {}),
         }
 
 

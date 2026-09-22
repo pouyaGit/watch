@@ -28,6 +28,7 @@ production execution.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import uuid
@@ -38,6 +39,11 @@ from backend.research_agents.capabilities import (
     CAPABILITIES,
     SpecialistCapability,
     capability_for,
+)
+from backend.research_agents.llm_guard import (
+    FREE_MODEL,
+    FreeOnlyViolation,
+    resolve_free_config,
 )
 from backend.research_agents.models import (
     JobStatus,
@@ -52,7 +58,13 @@ from backend.research_agents.runtime_store import (
 )
 
 RUNTIME_RULE_VERSION = "agent-runtime-v1-worker"
-PROMPT_VERSION = "agent-runtime-v1-analyst-1"
+SCHEMA_NAME = "structured-analysis-v1"
+
+
+def prompt_version_for(capability: SpecialistCapability) -> str:
+    """Versioned prompt identifier persisted with every LLM analysis."""
+
+    return f"{capability.agent_name}-analysis-v1"
 
 MODE_PRODUCTION = "production"
 MODE_FIXTURE = "fixture"
@@ -98,6 +110,9 @@ class RuntimeConfig:
     llm_provider_kind: str = ""
     llm_model: str = ""
     llm_timeout: int = 30
+    # Phase 4: outbound-context budget (the provider allowlist also caps
+    # at 4000 chars before any prompt is built).
+    context_max_chars: int = 4000
 
     def resolved_worker_id(self) -> str:
         return self.worker_id or f"agent-worker-{os.getpid()}"
@@ -294,7 +309,9 @@ class KnowledgeLoader:
                 seen.add(doc_id)
                 title = _bounded_text(item.get("title"), 160)
                 docs.append({"id": doc_id, "title": title,
-                             "topic": topic})
+                             "topic": topic,
+                             "summary": _bounded_text(item.get("summary"),
+                                                        400)})
                 # a source counts as read only when the runtime records it
                 store.record_knowledge_use({
                     "job_id": job.id,
@@ -479,112 +496,332 @@ def deterministic_analysis(capability: SpecialistCapability,
     }
 
 
-def _project_llm_context(capability: SpecialistCapability,
-                         job: ResearchJob,
-                         observations: list[dict[str, Any]],
-                         knowledge: list[dict[str, Any]]) -> dict[str, Any]:
-    """Minimum authorized context — bounded, secret-free by construction."""
+def _no_secret(value: object) -> str:
+    """Bounded text with the OpenRouter key redacted if it ever appears."""
+
+    text = _bounded_text(value, 200)
+    key = str(os.environ.get("OPENROUTER_API_KEY", "") or "")
+    if key and key in text:
+        text = text.replace(key, "***")
+    return text
+
+
+def _advisory_request(capability: SpecialistCapability,
+                      job: ResearchJob,
+                      observations: list[dict[str, Any]],
+                      knowledge: list[dict[str, Any]],
+                      determin: dict[str, Any],
+                      prompt_version: str) -> dict[str, Any]:
+    """Allowlist-shaped advisory request (R51 contract), Phase 4/5/7.
+
+    Carries ONLY the authorized bounded context: specialization, mission,
+    relevant observations, knowledge excerpts already read, and the
+    deterministic state.  Structural/secret validation is enforced by
+    ``ai.providers.context_allowlist.sanitize_provider_context`` inside
+    the provider — credentials can never ride along.
+    """
+
+    instruction = (
+        f"{prompt_version}: agent {capability.agent_name}, category "
+        f"{capability.category}. Mission: {_bounded_text(job.mission, 120)}. "
+        "Advisory-only analysis of this authorized research state: insights "
+        "describe what the observations indicate (never confirmed "
+        "vulnerabilities); recommendations name the single next authorized "
+        "observation. No payloads, no execution steps, no credentials."
+    )[:400]
+
+    signals: list[dict[str, Any]] = []
+    for row in observations[:4]:
+        # No URL may leave the boundary (R45 rule: never repeat URLs) —
+        # carry only structural facts: internal ref, parameter names,
+        # status code.
+        params = ", ".join(_bounded_text(p, 40)
+                           for p in (row.get("params") or [])[:6])
+        subject = _bounded_text(
+            f"ref={row.get('ref') or row.get('_id') or 'n/a'} "
+            f"params=[{params}] status={row.get('status') or 'n/a'}", 200)
+        signals.append({
+            "signal_type": "AUTHORIZED_OBSERVATION",
+            "subject": subject,
+            "source_agent": capability.agent_name,
+            "source_classification": capability.category,
+            "confidence": "not_evaluated",
+            "research_only": True,
+        })
+    for doc in knowledge[:3]:
+        signals.append({
+            "signal_type": "KNOWLEDGE_REFERENCE",
+            "subject": _bounded_text(doc.get("title"), 200),
+            "source_agent": capability.agent_name,
+            "source_classification": "knowledge",
+            "recommendation": _bounded_text(doc.get("summary"), 400),
+            "confidence": "not_evaluated",
+            "research_only": True,
+        })
+
+    sections: dict[str, Any] = {
+        "research_context": {
+            "research_question": _bounded_text(
+                f"{capability.category} structural review of the "
+                "authorized in-scope target", 240),
+            "research_focus": _bounded_text(
+                ", ".join(capability.output_schema[:3]) or capability.category,
+                240),
+            "context_fact_count": int(len(observations) + len(knowledge)),
+            "source_layers": "MULTI",
+            "research_only": True,
+        },
+        "learning_signals": signals[:8],
+    }
+    return {
+        "advisory_id": "",
+        "advisory_mode": "EXPLANATION",
+        "provider_kind": "OPENROUTER",
+        "source_layer": "MULTI",
+        "instruction": instruction,
+        "sections": sections,
+        "research_only": True,
+        "deterministic": True,
+    }
+
+
+def _classify_provider_error(err: Any, exc: Any = None) -> str:
+    """Map provider error plans to auditable runtime failure kinds."""
+
+    parts: list[str] = []
+    if isinstance(err, dict):
+        parts.append(json.dumps(err, default=str))
+    elif err is not None:
+        parts.append(str(err))
+    if exc is not None:
+        parts.append(str(getattr(exc, "error_category", "") or ""))
+        parts.append(str(getattr(exc, "code", "") or ""))
+        parts.append(type(exc).__name__)
+    blob = " ".join(parts).lower()
+    if "timeout" in blob or "timed out" in blob:
+        return "timeout"
+    if "rate" in blob or "429" in blob:
+        return "rate_limit"
+    if "auth" in blob or "credential" in blob or "401" in blob \
+            or "api_key" in blob:
+        return "auth"
+    if "empty" in blob:
+        return "empty_response"
+    if "safety" in blob or "context" in blob and "rejected" in blob:
+        return "context_rejected"
+    if "configur" in blob:
+        return "configuration"
+    if "invalid" in blob or "malformed" in blob or "unexpected" in blob \
+            or "missing" in blob or "schema" in blob:
+        return "schema_failure"
+    if "network" in blob or "connection" in blob or "unavailable" in blob \
+            or "502" in blob or "503" in blob:
+        return "provider_unavailable"
+    return "provider_error"
+
+
+def _err_text(err: Any) -> str:
+    if isinstance(err, dict):
+        return _no_secret(err.get("safe_message") or err.get("message")
+                          or err.get("error") or err.get("code") or err)
+    return _no_secret(err)
+
+
+def _map_advisory_response(response: Any,
+                           capability: SpecialistCapability,
+                           determin: dict[str, Any],
+                           observations: list[dict[str, Any]],
+                           prompt_version: str) -> dict[str, Any]:
+    """Validate the provider's structured response (Phase 3).
+
+    The R45/R51 response contract is the project's structured-output
+    convention: ``{summary, insights[{insight_code,text}],
+    recommendations[{recommendation_code,text}]}``, strictly validated.
+    The mapping into the specialist analysis schema is deterministic; the
+    LLM never supplies gate fields.
+    """
+
+    def _schema_fail(reason: str) -> AnalysisUnavailable:
+        return AnalysisUnavailable(f"schema_failure: {reason}")
+
+    if not isinstance(response, dict):
+        raise _schema_fail("response is not an object")
+    summary = response.get("summary")
+    insights = response.get("insights")
+    recommendations = response.get("recommendations")
+    if not isinstance(summary, str) or not summary.strip():
+        raise _schema_fail("summary missing")
+
+    def _items(value: Any, code_key: str) -> list[dict[str, str]]:
+        if not isinstance(value, list):
+            raise _schema_fail(f"{code_key} items are not a list")
+        out: list[dict[str, str]] = []
+        for item in value[:8]:
+            if not isinstance(item, dict) \
+                    or set(item.keys()) != {code_key, "text"}:
+                raise _schema_fail(f"{code_key} item shape invalid")
+            text = item.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise _schema_fail(f"{code_key} item text missing")
+            out.append({code_key: _bounded_text(item.get(code_key), 80),
+                        "text": _bounded_text(text, 400)})
+        return out
+
+    llm_insights = _items(insights, "insight_code")
+    llm_recs = _items(recommendations, "recommendation_code")
+
+    evidence_refs = [
+        _bounded_text(c.get("observation_ref"), 120)
+        for c in (determin.get("evidence_candidates") or [])
+    ]
+    obs_refs = [
+        (f"urls:{r.get('_id')}" if r.get("_id")
+         else _bounded_text(r.get("url") or r.get("ref"), 120))
+        for r in observations[:8]
+    ]
+    gate_conf = str(determin.get("confidence", "insufficient"))
+    if gate_conf == "high" and len(evidence_refs) >= 2:
+        verdict = "evidence_sufficient_for_review"
+    elif obs_refs:
+        verdict = "needs_more_observation"
+    else:
+        verdict = "insufficient_evidence"
 
     return {
-        "mission": _bounded_text(job.mission, 300),
-        "category": capability.category,
-        "scope": {"program": job.program, "subdomain": job.subdomain},
-        "observations": [
-            {k: v for k, v in _clean_row(row).items()
-             if k in ("url", "method", "status", "params", "title")}
-            for row in observations[:20]
-        ],
-        "knowledge_titles": [d["title"] for d in knowledge[:5]],
-        "output_schema": list(capability.output_schema),
-        "confidence_semantics": ["low", "medium", "high", "insufficient"],
+        "schema": SCHEMA_NAME,
+        "prompt_version": prompt_version,
+        "hypothesis": (_bounded_text(llm_insights[0]["text"], 400)
+                       if llm_insights else ""),
+        "vulnerability_class": f"{capability.category}-class patterns",
+        "observations_considered": obs_refs,
+        "evidence_required":
+            list(capability.evidence_requirements.required_types),
+        "evidence_present": evidence_refs[:8],
+        # deterministic gate value: the LLM cannot set confidence
+        "confidence": gate_conf,
+        "blockers": [_bounded_text(b, 120)
+                     for b in (determin.get("blockers") or [])[:8]],
+        "reasoning_summary": _bounded_text(summary, 400),
+        "recommended_next_observation": (
+            _bounded_text(llm_recs[0]["text"], 400) if llm_recs else ""),
+        "verdict": verdict,
+        "llm_insights": llm_insights,
+        "llm_recommendations": llm_recs,
+        "requested_model": FREE_MODEL,
     }
 
 
 def llm_analysis(config: RuntimeConfig, capability: SpecialistCapability,
                  job: ResearchJob, observations: list[dict[str, Any]],
-                 knowledge: list[dict[str, Any]]) -> tuple[dict, str, str]:
-    """LLM-corroborated analysis via the existing provider abstraction.
+                 knowledge: list[dict[str, Any]],
+                 determin: dict[str, Any] | None = None
+                 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Free-only LLM analysis through the existing provider abstraction.
 
-    Returns (analysis_dict, provider_kind, model).  Raises
-    :class:`AnalysisUnavailable` on any provider/shape failure — the job
-    then fails or retries; analysis is never faked.
+    Phase 1 cost guard: only ``OPENROUTER`` + ``openrouter/free`` is ever
+    accepted; any other model/provider/key/mode configuration fails closed
+    with :class:`AnalysisUnavailable` — there is no fallback branch, paid
+    or otherwise.  Returns ``(merged_analysis, llm_meta)``.  The LLM output
+    is INPUT: confidence, blockers and evidence candidates stay
+    deterministic, so the case gate remains authoritative (Phase 12).
     """
 
     from ai.providers.provider_registry import select_provider
-    from ai.research_agent.llm_reliability import (
-        LLM_SUCCESS,
-        call_llm,
-        sanitize_llm_error,
-    )
 
-    options: dict[str, Any] = {"timeout": int(config.llm_timeout)}
-    if config.llm_model:
-        options["model"] = config.llm_model
     try:
-        provider = select_provider(config.llm_provider_kind, **options)
+        guard = resolve_free_config(config.llm_provider_kind,
+                                    config.llm_model,
+                                    int(config.llm_timeout))
+    except FreeOnlyViolation as exc:
+        raise AnalysisUnavailable(f"free_only: {exc.reason}")
+
+    if determin is None:
+        determin = deterministic_analysis(capability, job,
+                                          observations, knowledge)
+    merged_base = dict(determin)
+    prompt_version = prompt_version_for(capability)
+    request = _advisory_request(capability, job, observations, knowledge,
+                                determin, prompt_version)
+    payload = json.dumps(request.get("sections", {}), sort_keys=True,
+                          default=str)
+    if len(payload) > int(config.context_max_chars):
+        raise AnalysisUnavailable(
+            f"context_too_large: outbound context exceeds "
+            f"{int(config.context_max_chars)} chars")
+
+    try:
+        provider = select_provider(
+            guard["provider_kind"],
+            model=guard["requested_model"],
+            timeout_seconds=guard["timeout_seconds"],
+            max_retries=0,
+            retry_backoff_seconds=0,
+        )
     except Exception as exc:
-        raise AnalysisUnavailable(
-            f"provider_configuration: {sanitize_llm_error(exc)}")
+        raise AnalysisUnavailable(f"provider_configuration: {_no_secret(exc)}")
 
-    import json as _json_pre
-    context_text = _bounded_text(_json_pre.dumps(
-        _project_llm_context(capability, job, observations, knowledge),
-        sort_keys=True), 6000)
-    prompt = (
-        "You are a bounded security research analyst. You receive ONLY "
-        "authorized observations (no credentials, no secrets). Analyze and "
-        "reply with ONE JSON object matching exactly this schema: "
-        "{\"summary\": str, \"hypotheses\": [{\"endpoint\": str, "
-        "\"hypothesis\": str}], \"confidence\": \"low|medium|high|"
-        "insufficient\", \"insufficient_evidence\": bool, \"blockers\": [str], "
-        "\"evidence_indices\": [int]}. Never invent observations; index "
-        "evidence_indices against the provided observation list.\n"
-        f"CONTEXT:\n{context_text}"
-    )
-    outcome = call_llm(provider, prompt)
-    if outcome.kind != LLM_SUCCESS:
-        raise AnalysisUnavailable(
-            f"llm_{outcome.kind.lower()}: "
-            f"{sanitize_llm_error(outcome.error or outcome.kind)}")
-
-    import json as _json
+    t0 = time.monotonic()
     try:
-        parsed = _json.loads(outcome.content)
-    except (ValueError, TypeError):
-        raise AnalysisUnavailable("llm_malformed_response: not valid JSON")
-    if not isinstance(parsed, dict):
-        raise AnalysisUnavailable("llm_malformed_response: not an object")
+        outcome = provider.complete(request)
+    except Exception as exc:
+        kind = _classify_provider_error(None, exc)
+        raise AnalysisUnavailable(f"llm_{kind}: {_no_secret(exc)}")
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
 
-    confidence = str(parsed.get("confidence", "insufficient")).lower()
-    if confidence not in ("low", "medium", "high", "insufficient"):
-        raise AnalysisUnavailable("llm_malformed_response: bad confidence")
-    determin = deterministic_analysis(capability, job, observations, knowledge)
-    merged = dict(determin)
-    merged.update({
-        "summary": _bounded_text(parsed.get("summary") or determin["summary"],
-                                 400),
-        "hypotheses": [
-            {"endpoint": _bounded_text(h.get("endpoint"), 300),
-             "hypothesis": _bounded_text(h.get("hypothesis"), 300)}
-            for h in (parsed.get("hypotheses") or [])[:10]
-            if isinstance(h, dict)
-        ] or determin["hypotheses"],
-        "confidence": confidence,
-        "insufficient_evidence": bool(parsed.get("insufficient_evidence",
-                                                  confidence == "insufficient")),
-        "blockers": [_bounded_text(b, 120)
-                     for b in (parsed.get("blockers") or [])[:8]]
-        or determin["blockers"],
-        "analysis_via": "llm",
-    })
-    if confidence != "insufficient" and determin["confidence"] == "insufficient":
-        # an LLM cannot upgrade evidence that does not exist
-        merged["confidence"] = "insufficient"
-        merged["insufficient_evidence"] = True
-        merged["blockers"] = sorted(set(
-            determin["blockers"] + ["llm_cannot_upgrade_missing_evidence"]))
-    return merged, str(config.llm_provider_kind), str(
-        outcome.model or config.llm_model or "")
+    if not isinstance(outcome, dict):
+        raise AnalysisUnavailable(
+            f"llm_provider_error: {_no_secret(type(outcome).__name__)}")
+    err = outcome.get("error")
+    response = outcome.get("response")
+    if err is not None or response is None:
+        kind = _classify_provider_error(err, outcome.get("_exception"))
+        raise AnalysisUnavailable(f"llm_{kind}: {_err_text(err)}")
+
+    telemetry = (outcome.get("telemetry")
+                 if isinstance(outcome.get("telemetry"), dict) else {})
+    structured = _map_advisory_response(response, capability, determin,
+                                        observations, prompt_version)
+
+    usage = telemetry.get("usage") if isinstance(
+        telemetry.get("usage"), dict) else None
+    resolved = _bounded_text(telemetry.get("model")
+                             or (response.get("model")
+                                 if isinstance(response, dict) else ""),
+                             80) or "not_exposed_by_contract"
+    meta: dict[str, Any] = {
+        "provider": "OPENROUTER",
+        "provider_label": guard["provider_label"],
+        "requested_model": guard["requested_model"],
+        "resolved_model": resolved,
+        "prompt_version": prompt_version,
+        "schema": SCHEMA_NAME,
+        "analysis_ms": elapsed_ms,
+        "usage": usage,
+        "request_id": _bounded_text(telemetry.get("request_id"), 64) or None,
+        "attempts": int(telemetry.get("attempts") or 1),
+        "free_only_rule": guard["rule_version"],
+    }
+    structured["resolved_model"] = resolved
+    structured["usage"] = usage
+    structured["latency_ms"] = elapsed_ms
+
+    # Merge: LLM supplies reasoning TEXT only.  Confidence, blockers and
+    # evidence candidates remain deterministic (Phase 12 — an LLM
+    # hypothesis is not a finding and cannot move the gate).
+    merged = merged_base
+    if structured.get("reasoning_summary"):
+        merged["summary"] = _bounded_text(structured["reasoning_summary"], 400)
+    hypothesis = structured.get("hypothesis") or ""
+    if hypothesis:
+        merged["hypotheses"] = [
+            {"endpoint": capability.category,
+             "hypothesis": _bounded_text(hypothesis, 300)}
+        ] + list(determin.get("hypotheses") or [])
+    merged["structured"] = structured
+    merged["llm"] = meta
+    merged["prompt_version"] = prompt_version
+    merged["analysis_via"] = "llm"
+    return merged, meta
 
 
 # ------------------------------------------------- case creation gate
@@ -735,6 +972,11 @@ class AgentWorker:
         knowledge = self.knowledge.load(self.store, job, capability)
         check_deadline()
         rows = self.observations.observe(job)
+        self.store.record_activity({
+            "job_id": job.id, "agent": job.assigned_agent,
+            "category": job.agent_category, "action": "observations_loaded",
+            "detail": f"{len(rows)} authorized observations",
+            "mode": job.execution_mode})
         if not rows and job.execution_mode == MODE_PRODUCTION:
             # honest empty-input completion handled below via analysis
             pass
@@ -746,11 +988,37 @@ class AgentWorker:
         provider_kind, model, prompt_version = "", "", ""
         analysis_ms = 0
         if self.llm_enabled:
-            t0 = time.monotonic()
-            analysis, provider_kind, model = llm_analysis(
-                cfg, capability, job, rows, knowledge)
-            analysis_ms = int((time.monotonic() - t0) * 1000)
-            prompt_version = PROMPT_VERSION
+            prompt_version = prompt_version_for(capability)
+            self.store.record_activity({
+                "job_id": job.id, "agent": job.assigned_agent,
+                "category": job.agent_category,
+                "action": "llm_analysis_started",
+                "detail": f"OpenRouter {FREE_MODEL} {prompt_version}",
+                "llm": FREE_MODEL, "mode": job.execution_mode})
+            try:
+                analysis, llm_meta = llm_analysis(
+                    cfg, capability, job, rows, knowledge, analysis)
+            except AnalysisUnavailable as exc:
+                self.store.record_activity({
+                    "job_id": job.id, "agent": job.assigned_agent,
+                    "category": job.agent_category,
+                    "action": "llm_analysis_failed",
+                    "detail": _bounded_text(str(exc), 200),
+                    "llm": FREE_MODEL, "mode": job.execution_mode})
+                raise
+            provider_kind = str(llm_meta.get("provider") or "")
+            model = str(llm_meta.get("requested_model") or "")
+            prompt_version = str(llm_meta.get("prompt_version") or "")
+            analysis_ms = int(llm_meta.get("analysis_ms") or 0)
+            self.store.record_activity({
+                "job_id": job.id, "agent": job.assigned_agent,
+                "category": job.agent_category,
+                "action": "llm_analysis_completed",
+                "detail": (f"resolved={llm_meta.get('resolved_model', '')} "
+                           f"latency_ms={analysis_ms} "
+                           f"usage={'yes' if llm_meta.get('usage') else 'n/a'} "
+                           f"prompt={prompt_version}"),
+                "llm": model, "mode": job.execution_mode})
             check_deadline()
 
         # evidence (Phase 8): candidates become recorded evidence rows
@@ -776,6 +1044,16 @@ class AgentWorker:
 
         decision = evaluate_case_creation(capability, job, analysis,
                                           evidence_rows)
+        self.store.record_activity({
+            "job_id": job.id, "agent": job.assigned_agent,
+            "category": job.agent_category,
+            "action": "evidence_gate_evaluated",
+            "detail": (f"decision={'case' if decision.create else 'no_case'} "
+                       f"reason={decision.reason} "
+                       f"gate_confidence={analysis.get('confidence')}"),
+            "case_reason": decision.reason,
+            "llm": provider_kind or "not_configured",
+            "mode": job.execution_mode})
         case_id = ""
         if decision.create and decision.case:
             case_id = self.store.record_case(decision.case)
@@ -801,6 +1079,7 @@ class AgentWorker:
             prompt_version=prompt_version,
             analysis_ms=analysis_ms,
             execution_mode=job.execution_mode,
+            structured=analysis.get("structured") or {},
         )
         self.store.put_result(result)
         self.store.record_activity({

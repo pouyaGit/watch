@@ -16,6 +16,12 @@
     ({{ runtime.worker.worker_id }}){% endif %}{% if runtime.worker.last_heartbeat %},
     last heartbeat {{ runtime.worker.last_heartbeat }}{% endif %}{% if runtime.worker.mode %},
     mode {{ runtime.worker.mode }}{% endif %}.</p>
+  {% if runtime.llm is defined and runtime.llm %}
+  <p class="text-slate-500 text-xs mb-6">LLM: {{ runtime.llm.provider_label }}
+    · model {{ runtime.llm.requested_model }}
+    · key {{ 'configured' if runtime.llm.key_configured else 'missing' }}
+    {% if not runtime.llm.enabled %}({{ runtime.llm.reason }}){% endif %}.</p>
+  {% endif %}
   {% endif %}
   {% else %}
   <p class="text-slate-400 text-sm mb-6">No registered specialist agents are
