@@ -171,6 +171,15 @@ class ReadStoreObservations:
         self.limit = int(limit)
 
     def observe(self, job: ResearchJob) -> list[dict[str, Any]]:
+        """Read the models that actually hold each row shape.
+
+        Field mapping follows the deployed schema: ``Http`` carries
+        ``status_code``/``title``/``tech``/``headers`` (no params field);
+        parameter rows come from ``Urls.params`` and ``Endpoints.params``
+        (the capability's declared ``parameter-rows`` observation type).
+        No method column exists in any of these models, so no method is
+        claimed for a row.
+        """
         try:
             from database import db
         except Exception as exc:  # pragma: no cover - env dependent
@@ -182,25 +191,41 @@ class ReadStoreObservations:
             raise ObservationUnavailable("no subdomain scope on job")
         rows: list[dict[str, Any]] = []
         try:
-            for doc in db.Http.objects(subdomain=scope)[: self.limit]:
+            for doc in db.Urls.objects(subdomain=scope)[: self.limit]:
+                rows.append(_clean_row({
+                    "source": "urls",
+                    "ref": str(doc.id),
+                    "url": getattr(doc, "url", ""),
+                    "path": getattr(doc, "path", ""),
+                    "status": getattr(doc, "status_code", 0) or 0,
+                    "params": list(getattr(doc, "params", None) or [])[:40],
+                }))
+            for doc in db.Endpoints.objects(subdomain=scope)[
+                    : max(0, self.limit - len(rows))]:
+                rows.append(_clean_row({
+                    "source": "endpoints",
+                    "ref": str(doc.id),
+                    "url": (getattr(doc, "example_url", "")
+                            or getattr(doc, "path", "")),
+                    "path": getattr(doc, "path", ""),
+                    "params": list(getattr(doc, "params", None) or [])[:40],
+                }))
+            for doc in db.Http.objects(subdomain=scope)[
+                    : max(0, self.limit - len(rows))]:
+                headers = getattr(doc, "headers", None)
+                snippet = ""
+                if isinstance(headers, dict) and headers:
+                    snippet = " | ".join(
+                        f"{k}: {v}" for k, v in list(headers.items())[:12])
                 rows.append(_clean_row({
                     "source": "http",
                     "ref": str(doc.id),
                     "url": getattr(doc, "url", ""),
-                    "method": getattr(doc, "method", "GET") or "GET",
-                    "status": getattr(doc, "status", 0) or 0,
+                    "status": getattr(doc, "status_code", 0) or 0,
                     "title": getattr(doc, "title", ""),
-                    "params": list(getattr(doc, "params", None) or [])[:40],
-                    "headers_snippet": getattr(doc, "headers_snippet", ""),
+                    "tech": getattr(doc, "tech", ""),
+                    "headers_snippet": snippet,
                 }))
-            if len(rows) < self.limit:
-                for doc in db.Urls.objects(subdomain=scope)[
-                        : self.limit - len(rows)]:
-                    rows.append(_clean_row({
-                        "source": "urls",
-                        "ref": str(doc.id),
-                        "url": getattr(doc, "url", ""),
-                    }))
         except Exception as exc:
             raise ObservationUnavailable(
                 f"observation read failed: {exc.__class__.__name__}"

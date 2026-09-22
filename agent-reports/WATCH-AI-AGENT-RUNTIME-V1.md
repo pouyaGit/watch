@@ -101,6 +101,28 @@ mapping; every component marked EXISTING vs NEW.
 - AEC plan-level `authorization_gate` object is not wired per-plan yet;
   v1 enforces scope-reference + read-only observation provider + audit.
 
+## Post-deploy defect found in pre-flight (fixed before the first run)
+The production observation provider mapped fields the deployed schema
+does not have: it read `status`/`params`/`method`/`headers_snippet` from
+`Http`, whose real columns are `status_code`/`headers`/`tech` (no params,
+no method column anywhere). Real parameter rows live on
+`Urls.params` and `Endpoints.params` — the capability's declared
+``parameter-rows`` observation type — and were never read. Effect: every
+observation carried status 0 and no parameters, so analysis could only
+ever return ``insufficient_evidence`` on real data.
+
+Fix (commit `af3ce41`, one file, +38/−13): `ReadStoreObservations` now
+reads `Urls.params` + `Endpoints.params` (parameter rows) and
+`Http.status_code`/`title`/`tech`/redacted-`headers` lines; no method is
+claimed for rows because no model records one. Regression after fix:
+runtime suites **68 OK**, `test_research_agents` **46 OK**.
+
+First-run target selected read-only from production data:
+**www.dell.com (program `dell`)** — 16,5022 Url rows and 6,167
+Endpoints rows carrying real parameters, authorized Watch scope
+`watch:scope:dell/www.dell.com`.
+
 ## Git
-- commit: `<filled after commit>` · branch `agent/daily-development`
-- push: via `push_safe.sh` · promotion request: generated, STOP at APPROVE
+- commits: `11e43ff` (epic) + observation-provider fix (see log)
+- branch `agent/daily-development` · push via `push_safe.sh`
+- promotion request: regenerated after this report update, STOP at APPROVE
