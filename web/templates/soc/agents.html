@@ -4,9 +4,16 @@
 {% block content %}
 <div class="p-6">
   <h1 class="page-title mb-2">AI Agents</h1>
+  {% if count %}
   <p class="text-slate-400 text-sm mb-6">{{ count }} registered specialist
     agents. Each agent page shows identity, knowledge, research history and
     target cases.</p>
+  {% else %}
+  <p class="text-slate-400 text-sm mb-6">No registered specialist agents are
+    declared by the agent registries available to this runtime. Nothing is
+    fabricated for display — the list appears as soon as a registry with agent
+    definitions is deployed.</p>
+  {% endif %}
 
   <div class="table-wrap">
     <table class="tbl">
@@ -32,7 +39,8 @@
     </table>
   </div>
   {% if not agents %}
-    <p class="empty">No agents registered.</p>
+    <p class="empty">No registered agents — no agent definitions are
+      available to this runtime.</p>
   {% endif %}
 </div>
 {% endblock %}

@@ -1,11 +1,16 @@
 """backend/soc/agents.py — SOC-2 AI agent intelligence adapters (read-only).
 
-Builds per-agent pages from the real research-agent registry, the
-investigation memory store, the knowledge base, research loop records
-(CVEs analyzed) and the AEC case explorer.
+Builds per-agent pages from the real agent registries, the investigation
+memory store, the knowledge base, research loop records (CVEs analyzed) and
+the AEC case explorer.
 
-Nothing here writes, executes, or fabricates.  When a source is absent
-the block is simply empty.
+Identity sources are layered and all of them are optional: the
+research-agent registry is used when that runtime is deployed, otherwise
+the engine's own deterministic specialist registry
+(``ai.knowledge.specialist_registry``) supplies the declared agents, and an
+environment with neither renders an explicit empty state.  Nothing here
+writes, executes, or fabricates: every value is projected from a declared
+field, and when a source is absent the block is simply empty.
 """
 
 from __future__ import annotations
@@ -28,13 +33,78 @@ _CASES_LIMIT = 12
 _KB_HARVEST_LIMIT = 40
 
 
-def _registry_agents() -> list[dict[str, Any]]:
-    """Registered specialist agents (real definitions)."""
-    from backend.research_agents.registry import build_default_registry
+def _deployed_registry_agents() -> list[dict[str, Any]]:
+    """Agent definitions from the optional research-agent runtime."""
 
-    return [
-        a.to_dict() for a in build_default_registry().list_agents()
-    ]
+    try:
+        from backend.research_agents.registry import build_default_registry
+
+        rows: list[dict[str, Any]] = []
+        for agent in build_default_registry().list_agents():
+            declared = agent.to_dict()
+            if isinstance(declared, Mapping):
+                rows.append(dict(declared))
+        return rows
+    except Exception:
+        return []
+
+
+def _engine_specialist_agents() -> list[dict[str, Any]]:
+    """Declared agents from the engine's own specialist registry.
+
+    Real, deterministic identities (``ai.knowledge.specialist_registry``)
+    projected into the shape the SOC agent views consume:
+
+      * ``evidence_types`` <- the agent's declared supported contexts
+      * ``strategy``       <- the agent's declared supported capabilities
+
+    No name, status, description or counter is invented; entries without a
+    declared name are skipped rather than filled in.
+    """
+
+    try:
+        from ai.knowledge import specialist_registry as sr
+    except Exception:
+        return []
+
+    try:
+        categories = tuple(sr.CANONICAL_SPECIALIST_ORDER)
+    except Exception:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for category in categories:
+        key = _text(category).lower()
+        if not key:
+            continue
+        try:
+            identity = sr.specialist_identity(category) or {}
+        except Exception:
+            continue
+        if not isinstance(identity, Mapping):
+            continue
+        name = _text(identity.get("agent_name"))
+        if not name:
+            continue
+        rows.append({
+            "key": key,
+            "name": name,
+            "category": key,
+            "status": _text(identity.get("lifecycle_state")),
+            "description": _text(identity.get("description")),
+            "evidence_types": list(_as_list(identity.get("supported_contexts"))),
+            "strategy": list(_as_list(identity.get("supported_capabilities"))),
+        })
+    return rows
+
+
+def _registry_agents() -> list[dict[str, Any]]:
+    """Registered specialist agents — first available real source wins."""
+
+    rows = _deployed_registry_agents()
+    if rows:
+        return rows
+    return _engine_specialist_agents()
 
 
 def _service_counts() -> dict[str, dict[str, int]]:
@@ -119,15 +189,25 @@ def _case_rows() -> list[dict[str, Any]]:
 
 
 def agents_index() -> dict[str, Any]:
-    """All registered AI agents with identity + live counters."""
+    """All registered AI agents with identity + live counters.
+
+    Degrades to an empty index (never raises) when no identity source is
+    available, so the page can render an explicit empty state.
+    """
+    try:
+        declared = _registry_agents()
+    except Exception:
+        declared = []
     agents: list[dict[str, Any]] = []
     counts = _service_counts()
-    for agent in _registry_agents():
+    for agent in declared:
+        if not isinstance(agent, Mapping):
+            continue
         key = _text(agent.get("key")).lower()
         stats = counts.get(key) or counts.get(_text(agent.get("category"))) or {}  # noqa: E501
         agents.append({
-            "slug": _slug(_text(agent.get("key"))),
-            "key": _text(agent.get("key")),
+            "slug": _slug(key),
+            "key": key,
             "name": _text(agent.get("name")),
             "purpose": _text(agent.get("description")),
             "role": _text(agent.get("category")),
@@ -151,15 +231,17 @@ def _agent_knowledge(agent_key: str, agent_name: str) -> dict[str, list[str]]:
     """
     declared: dict[str, Any] = {}
     for agent in _registry_agents():
+        if not isinstance(agent, Mapping):
+            continue
         if _text(agent.get("key")).lower() == agent_key.lower():
-            declared = agent
+            declared = dict(agent)
             break
 
     areas: list[str] = []
     for item in _as_list(declared.get("evidence_types")):
         if _text(item):
             areas.append(_text(item).lower())
-    if not areas:
+    if not areas and agent_key:
         areas = [agent_key]
 
     techniques: list[str] = []
@@ -167,7 +249,8 @@ def _agent_knowledge(agent_key: str, agent_name: str) -> dict[str, list[str]]:
         if _text(item):
             techniques.append(_text(item))
     if not techniques:
-        techniques = [_text(declared.get("description"))]
+        description = _text(declared.get("description"))
+        techniques = [description] if description else []
 
     frameworks: list[str] = []
     for doc in _kb_documents():
@@ -263,8 +346,14 @@ def agent_detail(slug: str) -> dict[str, Any] | None:
     key = _key_from_slug(slug)
     if not key:
         return None
+    try:
+        declared = _registry_agents()
+    except Exception:
+        declared = []
     found = None
-    for agent in _registry_agents():
+    for agent in declared:
+        if not isinstance(agent, Mapping):
+            continue
         if _text(agent.get("key")).lower() == key:
             found = agent
             break

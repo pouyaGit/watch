@@ -33,6 +33,22 @@ def _reports() -> list[dict[str, Any]]:
         return []
 
 
+def _source_available() -> bool:
+    """Whether the investigation-report source is deployed in this runtime.
+
+    Reported to the page so an empty handoff list can say *why* it is empty
+    (source not deployed vs. no packages produced yet).  Purely
+    observational: nothing is read, written or synthesised.
+    """
+
+    try:
+        from backend.investigation_engine import service as inv  # noqa: F401
+
+        return True
+    except Exception:
+        return False
+
+
 def _report_document(job_id: str) -> dict | None:
     try:
         from backend.investigation_engine import service as inv
@@ -63,7 +79,8 @@ def handoff_index() -> dict[str, Any]:
             "generated_at": _text(report.get("generated_at")),
             "view_url": f"/ui/soc/handoff/{job_id}",
         })
-    return {"count": len(reports), "reports": _bounded(reports, _INDEX_LIMIT)}
+    return {"count": len(reports), "reports": _bounded(reports, _INDEX_LIMIT),
+            "source_available": _source_available()}
 
 
 def _safe_suggestions(report: Mapping) -> list[dict[str, str]]:

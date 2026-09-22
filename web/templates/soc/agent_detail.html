@@ -6,7 +6,12 @@
   <div class="mb-6">
     <a class="link text-sm" href="/ui/soc/agents{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">← all agents</a>
     <h1 class="page-title mb-1">{{ identity.name }}</h1>
+    {% if identity.purpose %}
     <p class="text-slate-400 text-sm">{{ identity.purpose }}</p>
+    {% else %}
+    <p class="text-slate-400 text-sm">No description is declared for this
+      agent by the registry that supplies it.</p>
+    {% endif %}
   </div>
 
   <div class="grid md:grid-cols-2 gap-6 mb-6">

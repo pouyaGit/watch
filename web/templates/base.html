@@ -69,7 +69,9 @@
       <a class="side-link{{ ' active' if active == 'soc-handoff' }}" href="/ui/soc/handoff{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
         <span class="side-ico">⇪</span>Handoff</a>
 
-      <p class="nav-group">Legacy / Engineering</p>
+      <details class="nav-legacy">
+        <summary class="nav-group nav-legacy-head">Legacy / Engineering</summary>
+
       <p class="nav-group">Overview</p>
       <a class="side-link{{ ' active' if active == 'command' }}" href="{{ command_url }}" @click="navOpen = false">
         <span class="side-ico">⌂</span>Command Center</a>
@@ -133,6 +135,7 @@
         <span class="side-ico">✎</span>Tasks</a>
       <a class="side-link{{ ' active' if active == 'docs' }}" href="{{ docs_url }}" @click="navOpen = false">
         <span class="side-ico">⌘</span>API docs</a>
+      </details>
     </nav>
 
     <div class="sidebar-foot">
