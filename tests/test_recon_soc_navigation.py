@@ -62,6 +62,7 @@ RECON_LINKS = [
 SOC_LINKS = [
     ("Overview", "/ui/soc/"),
     ("Agents", "/ui/soc/agents"),
+    ("Campaigns", "/ui/soc/campaigns"),
     ("Missions / Activity", "/ui/soc/activity"),
     ("Cases", "/ui/soc/cases"),
     ("Evidence", "/ui/soc/cases"),

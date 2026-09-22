@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}WATCH &middot; Objective {{ objective.objective_id }}{% endblock %}
+{% block page %}Campaign Objective{% endblock %}
+{% block content %}
+<div class="p-6">
+  <div class="flex items-center justify-between mb-2">
+    <h1 class="page-title">Objective <span class="mono text-[14px]">{{ objective.objective_id }}</span></h1>
+    <span class="badge {% if objective.state == 'RESOLVED' %}badge-ok{% elif objective.state in ('BLOCKED', 'FAILED') %}badge-bad{% elif objective.state == 'RUNNING' %}badge-run{% else %}badge-neutral{% endif %}">{{ objective.state }}</span>
+  </div>
+  <p class="text-slate-500 text-xs mb-6">
+    campaign <a class="mono" href="/ui/soc/campaigns/{{ campaign_id }}">{{ campaign_id }}</a>
+    ({{ campaign_state }}) · {{ objective.category }} ·
+    specialist {{ objective.specialist }} ·
+    priority {{ objective.priority }} ·
+    attempts {{ objective.attempts }} ·
+    scope <span class="mono">{{ objective.scope_ref }}</span> ·
+    created {{ objective.created_at }} · updated {{ objective.updated_at }}</p>
+
+  <div class="panel mb-4">
+    <p class="panel-title">Research question</p>
+    <p class="text-sm">{{ objective.research_question }}</p>
+    <p class="panel-title mt-3">Hypothesis</p>
+    <p class="text-sm">{{ objective.hypothesis or "—" }}</p>
+    {% if objective.evidence_requirements %}
+    <p class="panel-title mt-3">Evidence requirements</p>
+    <p class="text-xs mono">{{ objective.evidence_requirements }}</p>
+    {% endif %}
+    {% if objective.termination_reason %}
+    <p class="panel-title mt-3">Termination</p>
+    <p class="text-sm">{{ objective.termination_reason }}</p>
+    <p class="text-slate-400 text-xs">{{ objective.termination_detail }}</p>
+    {% endif %}
+  </div>
+
+  <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+    <div class="panel"><p class="panel-title">Job</p>
+      <p class="mono text-[12px]">{{ objective.job_id or "not enqueued" }}</p>
+      {% if evidence.job_status %}<p class="text-slate-500 text-xs">status {{ evidence.job_status }}</p>{% endif %}</div>
+    <div class="panel"><p class="panel-title">Evidence state</p>
+      {% if evidence.evidence_rows %}
+      <p class="text-sm">{{ evidence.evidence_rows }} rows · {{ evidence.confidence or "n/a" }}</p>
+      <p class="text-slate-500 text-xs mono">{{ evidence.gate_reason or "—" }}</p>
+      {% else %}<p class="text-slate-400 text-sm">no evidence rows</p>{% endif %}</div>
+    <div class="panel"><p class="panel-title">Case</p>
+      {% if evidence.case_id %}
+      <a class="mono text-[12px]" href="/ui/soc/cases/{{ evidence.case_id }}">{{ evidence.case_id }}</a>
+      {% else %}<p class="text-slate-400 text-sm">Evidence Gate did not create a case</p>{% endif %}</div>
+  </div>
+
+  <h2 class="section-title mb-2">Dependencies</h2>
+  {% if dependencies %}
+  <div class="table-wrap mb-6">
+    <table class="tbl">
+      <thead><tr><th>Depends on</th><th>Type</th><th>State</th>
+        <th>Question</th></tr></thead>
+      <tbody>
+        {% for d in dependencies %}
+        <tr>
+          <td class="mono text-[11px]">{{ d.depends_on }}</td>
+          <td class="text-xs">{{ d.kind }}</td>
+          <td><span class="badge {% if d.dep_state == 'RESOLVED' %}badge-ok{% elif d.dep_state in ('BLOCKED', 'FAILED') %}badge-bad{% else %}badge-neutral{% endif %}">{{ d.dep_state }}</span></td>
+          <td class="text-xs">{{ d.dep_question or "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-slate-400 text-sm mb-6">No dependencies.</p>
+  {% endif %}
+
+  <h2 class="section-title mb-2">Hunt Planner</h2>
+  <p class="text-slate-500 text-xs mb-2">hunt objective
+    <span class="mono">{{ hunt.objective_id or "—" }}</span> ·
+    state {{ hunt.state or "—" }} ·
+    {{ hunt.termination_reason or "—"}} ·
+    rows added {{ hunt.rows_added }}</p>
+  {% if plans %}
+  <div class="table-wrap mb-6">
+    <table class="tbl">
+      <thead><tr><th>Plan</th><th>Version</th><th>State</th>
+        <th>Observations requested</th><th>Reason</th></tr></thead>
+      <tbody>
+        {% for p in plans %}
+        <tr>
+          <td class="mono text-[11px]">{{ p.plan_id }}</td>
+          <td>{{ p.version }}</td>
+          <td>{{ p.state or "—" }}</td>
+          <td class="text-xs">{{ p.types|join(", ") }}</td>
+          <td class="text-xs">{{ p.reason }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-slate-400 text-sm mb-6">No Hunt Plans recorded for this objective.</p>
+  {% endif %}
+
+  {% if hunt.llm_advisory %}
+  <p class="text-slate-500 text-xs mb-6">LLM advisory (advisory only):
+    requested {{ hunt.llm_advisory.get("requested_model", "—") }} ·
+    resolved {{ hunt.llm_advisory.get("resolved_model", "—") }} ·
+    calls {{ hunt.llm_advisory.get("calls", 0) }} ·
+    accepted {{ hunt.llm_advisory.get("accepted", 0) }} ·
+    rejected {{ hunt.llm_advisory.get("rejected", 0) }} ·
+    {{ hunt.llm_advisory.get("status", "—") }}</p>
+  {% endif %}
+
+  <h2 class="section-title mb-2">Authorizations</h2>
+  {% if authorizations %}
+  <div class="table-wrap mb-6">
+    <table class="tbl">
+      <thead><tr><th>Authorization</th><th>Status</th><th>Scope</th></tr></thead>
+      <tbody>
+        {% for a in authorizations %}
+        <tr>
+          <td class="mono text-[11px]">{{ a.auth_id }}</td>
+          <td><span class="badge {% if a.status == 'GRANTED' %}badge-ok{% else %}badge-bad{% endif %}">{{ a.status }}</span></td>
+          <td class="mono text-[11px]">{{ a.scope_ref }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-slate-400 text-sm mb-6">No authorization records yet.</p>
+  {% endif %}
+
+  <h2 class="section-title mb-2">Observations</h2>
+  {% if observations %}
+  <div class="table-wrap mb-6">
+    <table class="tbl">
+      <thead><tr><th>Observation</th><th>Types</th><th>Outcome</th>
+        <th>New rows</th><th>Authorization</th></tr></thead>
+      <tbody>
+        {% for o in observations %}
+        <tr>
+          <td class="mono text-[11px]">{{ o.observation_id }}</td>
+          <td class="text-xs">{{ o.types|join(", ") }}</td>
+          <td><span class="badge {% if o.outcome == 'ok' %}badge-ok{% elif o.outcome == 'partial' %}badge-neutral{% else %}badge-bad{% endif %}">{{ o.outcome }}</span></td>
+          <td>{{ o.new_rows }}</td>
+          <td class="mono text-[11px]">{{ o.authorization_id }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-slate-400 text-sm mb-6">No observations executed for this objective.</p>
+  {% endif %}
+
+  <h2 class="section-title mb-2">Cases</h2>
+  {% if cases %}
+  <div class="table-wrap mb-6">
+    <table class="tbl">
+      <thead><tr><th>Case</th><th>Confidence</th><th>Hypothesis</th></tr></thead>
+      <tbody>
+        {% for c in cases %}
+        <tr>
+          <td><a class="mono text-[12px]" href="/ui/soc/cases/{{ c.case_id }}">{{ c.case_id }}</a></td>
+          <td>{{ c.confidence }}</td>
+          <td class="text-xs">{{ c.hypothesis }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-slate-400 text-sm mb-6">No cases from this objective (the Evidence Gate decides, never this page).</p>
+  {% endif %}
+
+  <h2 class="section-title mb-2">Memory learned</h2>
+  {% if memory %}
+  <div class="table-wrap mb-6">
+    <table class="tbl">
+      <thead><tr><th>Item</th><th>Kind</th><th>State</th><th>Text</th></tr></thead>
+      <tbody>
+        {% for m in memory %}
+        <tr>
+          <td class="mono text-[11px]">{{ m.id }}</td>
+          <td class="text-xs">{{ m.kind }}</td>
+          <td><span class="badge {% if m.state == 'VERIFIED' %}badge-ok{% elif m.state == 'REJECTED' %}badge-bad{% else %}badge-neutral{% endif %}">{{ m.state }}</span></td>
+          <td class="text-xs">{{ m.text }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-slate-400 text-sm mb-6">No research memory recorded for this objective yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

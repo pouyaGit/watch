@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}WATCH &middot; Campaign {{ campaign.campaign_id }}{% endblock %}
+{% block page %}Campaign{% endblock %}
+{% block content %}
+<div class="p-6">
+  <div class="flex items-center justify-between mb-2">
+    <h1 class="page-title">Campaign <span class="mono text-[14px]">{{ campaign.campaign_id }}</span></h1>
+    <span class="badge {% if campaign.state == 'RUNNING' %}badge-run{% elif campaign.state == 'COMPLETED' %}badge-ok{% elif campaign.state in ('FAILED', 'BLOCKED', 'BUDGET_EXHAUSTED') %}badge-bad{% else %}badge-neutral{% endif %}">{{ campaign.state }}</span>
+  </div>
+  <p class="text-slate-400 text-sm mb-1">{{ campaign.objective }}</p>
+  <p class="text-slate-500 text-xs mb-6">program {{ campaign.program }} ·
+    scope <span class="mono">{{ campaign.scope_ref }}</span> ·
+    priority {{ campaign.priority }} ·
+    created {{ campaign.created_at }} · updated {{ campaign.updated_at }} ·
+    {{ campaign.lease }}</p>
+
+  {% if campaign.is_terminal and campaign.termination_reason %}
+  <div class="panel mb-6">
+    <p class="panel-title">Termination</p>
+    <p class="text-sm">{{ campaign.termination_reason }}</p>
+    {% if campaign.termination_detail %}
+    <p class="text-slate-400 text-xs mt-1">{{ campaign.termination_detail }}</p>
+    {% endif %}
+    {% if campaign.termination_record %}
+    <p class="text-slate-500 text-xs mt-1 mono">{{ campaign.termination_record }}</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+    <div class="panel"><p class="panel-title">Objectives</p>
+      <p class="text-xl">{{ objective_total }}</p>
+      <p class="text-slate-500 text-xs">
+        {% for st, n in counts.items() %}{{ st }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</p></div>
+    <div class="panel"><p class="panel-title">Active objective</p>
+      {% if active_objective %}
+      <p class="mono text-[12px]"><a href="{{ active_objective.detail_url }}">{{ active_objective.objective_id }}</a></p>
+      <p class="text-slate-500 text-xs">{{ active_objective.category }} · {{ active_objective.specialist }}</p>
+      {% else %}<p class="text-slate-400 text-sm">none running</p>{% endif %}</div>
+    <div class="panel"><p class="panel-title">Completed / blocked</p>
+      <p class="text-xl">{{ completed_objectives }} / {{ blocked_objectives }}</p>
+      <p class="text-slate-500 text-xs">rejected {{ rejected_objectives }} ·
+        remaining {{ remaining_objectives }}</p></div>
+    <div class="panel"><p class="panel-title">Next objective</p>
+      {% if next_objective %}
+      <p class="mono text-[12px]"><a href="/ui/soc/campaigns/{{ campaign.campaign_id }}/objectives/{{ next_objective.objective_id }}">{{ next_objective.objective_id }}</a></p>
+      <p class="text-slate-500 text-xs">prio {{ next_objective.priority }} ·
+        {{ next_objective.state }} · deterministic priority preview</p>
+      {% else %}<p class="text-slate-400 text-sm">none queued</p>{% endif %}</div>
+  </div>
+
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+    <div class="panel"><p class="panel-title">Current specialist</p>
+      <p class="text-sm">{{ current_specialist or "—" }}</p></div>
+    <div class="panel"><p class="panel-title">Current Hunt Plan</p>
+      <p class="mono text-[12px]">{{ current_hunt_plan or "—" }}</p></div>
+    <div class="panel"><p class="panel-title">Latest evidence</p>
+      {% if latest_evidence %}
+      <p class="text-sm">{{ latest_evidence.rows }} rows ·
+        {{ latest_evidence.confidence or "n/a" }}</p>
+      <p class="text-slate-500 text-xs mono">{{ latest_evidence.gate_reason or "—" }}</p>
+      {% else %}<p class="text-slate-400 text-sm">no evidence yet</p>{% endif %}</div>
+    <div class="panel"><p class="panel-title">Cross-objective context</p>
+      <p class="text-sm">{{ context|length }} items</p>
+      <p class="text-slate-500 text-xs">research context only — never evidence</p></div>
+  </div>
+
+  <h2 class="section-title mb-2">Objectives</h2>
+  {% if empty_objectives %}
+  <p class="text-slate-400 text-sm mb-6">No objectives in this campaign yet.</p>
+  {% else %}
+  <div class="table-wrap mb-6">
+    <table class="tbl">
+      <thead>
+        <tr><th>Objective</th><th>State</th><th>Specialist</th>
+          <th>Priority</th><th>Dependencies</th><th>Evidence</th>
+          <th>Jobs</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for o in objectives %}
+        <tr>
+          <td>
+            <a class="mono text-[12px]" href="{{ o.detail_url }}">{{ o.objective_id }}</a>
+            <div class="text-slate-400 text-xs">{{ o.research_question }}</div>
+            <div class="text-slate-500 text-xs">{{ o.category }}</div>
+          </td>
+          <td><span class="badge {% if o.state == 'RESOLVED' %}badge-ok{% elif o.state in ('BLOCKED', 'FAILED') %}badge-bad{% elif o.state == 'RUNNING' %}badge-run{% else %}badge-neutral{% endif %}">{{ o.state }}</span>
+            {% if o.termination_reason %}
+            <div class="text-slate-500 text-xs">{{ o.termination_reason }}</div>
+            {% endif %}</td>
+          <td class="text-xs">{{ o.specialist }}</td>
+          <td>{{ o.priority }} <span class="text-slate-500 text-xs">(try {{ o.attempts }})</span></td>
+          <td class="text-xs">
+            {% for d in o.dependencies %}
+            <div>{{ d.depends_on[:14] }}… : {{ d.kind }} → {{ d.dep_state }}</div>
+            {% else %}<span class="text-slate-500">none</span>{% endfor %}
+          </td>
+          <td class="text-xs">
+            {% if o.evidence_rows %}
+            <div>{{ o.evidence_rows }} rows</div>
+            <div class="text-slate-500 mono">{{ o.gate_reason or "—" }}</div>
+            {% if o.case_id %}<div class="text-slate-500 mono">{{ o.case_id }}</div>{% endif %}
+            {% else %}<span class="text-slate-500">—</span>{% endif %}
+          </td>
+          <td class="mono text-[11px]">{{ o.job_id or "—" }}</td>
+          <td><a class="btn" href="{{ o.detail_url }}">open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <h2 class="section-title mb-2">Cumulative budget</h2>
+  <div class="table-wrap mb-6">
+    <table class="tbl">
+      <thead><tr><th>Resource</th><th>Used</th><th>Limit</th>
+        <th>Remaining</th></tr></thead>
+      <tbody>
+        {% for b in budget_rows %}
+        <tr>
+          <td>{{ b.resource }}</td>
+          <td>{{ b.used }}</td>
+          <td>{{ b.limit }}</td>
+          <td>{% if b.remaining == "" %}—{% else %}{{ b.remaining }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="text-slate-500 text-xs mb-6">Budget is cumulative across the
+    campaign — consumption is never reset per objective.</p>
+
+  <h2 class="section-title mb-2">Campaign activity</h2>
+  {% if activity %}
+  <div class="table-wrap mb-6">
+    <table class="tbl">
+      <thead><tr><th>Time</th><th>Action</th><th>Detail</th>
+        <th>Objective</th></tr></thead>
+      <tbody>
+        {% for a in activity %}
+        <tr>
+          <td class="text-xs">{{ a.at }}</td>
+          <td class="text-xs mono">{{ a.action }}</td>
+          <td class="text-xs">{{ a.detail }}</td>
+          <td class="mono text-[11px]">{{ a.objective_id or a.job_id or "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-slate-400 text-sm mb-6">No campaign activity recorded yet.</p>
+  {% endif %}
+
+  {% if context %}
+  <h2 class="section-title mb-2">Cross-objective context</h2>
+  <div class="table-wrap mb-6">
+    <table class="tbl">
+      <thead><tr><th>Time</th><th>Source objective</th><th>Context</th>
+        <th>Confidence</th></tr></thead>
+      <tbody>
+        {% for c in context %}
+        <tr>
+          <td class="text-xs">{{ c.at }}</td>
+          <td class="mono text-[11px]">{{ c.source_objective_id }}</td>
+          <td class="text-xs">{{ c.text }}</td>
+          <td class="text-xs">{{ c.confidence }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

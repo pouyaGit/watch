@@ -80,6 +80,8 @@
         <span class="side-ico">◈</span>Overview</a>
       <a class="side-link{{ ' active' if active == 'soc-agents' }}" href="/ui/soc/agents{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
         <span class="side-ico">✦</span>Agents</a>
+      <a class="side-link{{ ' active' if active == 'soc-campaigns' }}" href="/ui/soc/campaigns{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">◉</span>Campaigns</a>
       <a class="side-link{{ ' active' if active == 'soc-activity' }}" href="/ui/soc/activity{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
         <span class="side-ico">↻</span>Missions / Activity</a>
       <a class="side-link{{ ' active' if active == 'soc-cases' }}" href="/ui/soc/cases{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">

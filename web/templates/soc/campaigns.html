@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}WATCH &middot; Campaigns{% endblock %}
+{% block page %}Campaigns{% endblock %}
+{% block content %}
+<div class="p-6">
+  <h1 class="page-title mb-2">Security Campaigns</h1>
+  <p class="text-slate-400 text-sm mb-6">Bounded campaign coordinations
+    over the existing research runtime: objectives, dependencies,
+    cumulative budget and termination are read from the campaign store —
+    nothing on this page is fabricated.</p>
+
+  {% if count %}
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>Campaign</th><th>State</th><th>Scope</th>
+          <th>Objectives</th><th>Active</th><th>Resolved</th>
+          <th>Blocked</th><th>Remaining budget</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in campaigns %}
+        <tr>
+          <td>
+            <a href="{{ c.detail_url }}" class="mono text-[12px]">{{ c.campaign_id }}</a>
+            <div class="text-slate-400 text-xs">{{ c.objective }}</div>
+            <div class="text-slate-500 text-xs">program {{ c.program }} ·
+              priority {{ c.priority }}</div>
+          </td>
+          <td>
+            <span class="badge {% if c.state == 'RUNNING' %}badge-run{% elif c.state in ('COMPLETED',) %}badge-ok{% elif c.state in ('FAILED', 'BLOCKED', 'BUDGET_EXHAUSTED') %}badge-bad{% else %}badge-neutral{% endif %}">{{ c.state }}</span>
+            {% if c.termination_reason %}
+            <div class="text-slate-500 text-xs">{{ c.termination_reason }}</div>
+            {% endif %}
+          </td>
+          <td class="mono text-[11px]">{{ c.scope_ref }}</td>
+          <td>
+            {{ c.terminal }}/{{ c.objective_total }} terminal
+            <div class="text-slate-500 text-xs">
+              {% for st, n in c.objective_counts.items() %}{{ st }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}
+            </div>
+          </td>
+          <td>{{ c.active }}</td>
+          <td>{{ c.resolved }}</td>
+          <td>{{ c.blocked }}</td>
+          <td class="text-xs">
+            {% if c.budget_remaining %}
+              {% for k, v in c.budget_remaining.items() %}
+              <div>{{ k }}: {{ v }}</div>
+              {% endfor %}
+            {% else %}<span class="text-slate-500">—</span>{% endif %}
+          </td>
+          <td><a class="btn" href="{{ c.detail_url }}">open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-slate-400 text-sm">{{ empty_reason or "No campaigns recorded yet." }}
+    Campaigns appear here as soon as one is created through the agent
+    runtime — no example or placeholder campaigns are ever rendered.</p>
+  {% endif %}
+</div>
+{% endblock %}
