@@ -360,6 +360,7 @@ def execute_hunt(  # noqa: C901, PLR0915 - bounded by HuntLimits
     iterations = 0
     consecutive_obs_failures = 0
     parent_plan_id = ""
+    rows_new_total = 0  # accumulates across every executed plan
     termination = ""
     termination_detail = ""
     final_state = ""
@@ -685,7 +686,6 @@ def execute_hunt(  # noqa: C901, PLR0915 - bounded by HuntLimits
         errors: list[str] = []
         new_refs_all: list[str] = []
         source_counts: dict[str, int] = {}
-        rows_new_total = 0
 
         for req in plan.observations_requested:
             otype = str(req.get("observation_type") or "")

@@ -673,6 +673,64 @@ class ScoringAndPlannerTests(unittest.TestCase):
         self.assertIn("plan_scope_differs_from_authorization", reasons)
         self.assertIn("plan_scope_differs_from_job_authorization", reasons)
 
+    def test_advisory_id_satisfies_provider_schema(self):
+        """Production defect (job-xss-447203e643): advisory_id built by
+        the hunt advisor must match ADVISORY_ID_RE ^adv-[0-9a-f]{16}$ or
+        the provider rejects the request before any LLM call."""
+        import re
+        from ai.schemas.llm_advisory_input import ADVISORY_ID_RE
+        obj = _objective()
+        job = make_job()
+        cap = capability_for("XSS")
+        req = advisor_request(
+            objective=obj, missing_items=[], candidates=[],
+            capability=cap, allowed_types=cap.allowed_observation_types,
+            observed_types=(), job=job)
+        self.assertIsNotNone(
+            ADVISORY_ID_RE.match(req["advisory_id"]),
+            req["advisory_id"])
+        # the ENTIRE request must survive the provider structural
+        # validator (mode/layer/source_refs/limitations enums +
+        # MAX_CONTEXT_CHARS) — this is exactly what failed in
+        # production job-xss-447203e643 before this fix
+        from ai.providers.context_allowlist import (
+            MAX_CONTEXT_CHARS, sanitize_provider_context,
+        )
+        sanitize_provider_context(req)   # raises on any violation
+        import json as _json
+        canonical = _json.dumps(req, sort_keys=True, separators=(",", ":"),
+                                ensure_ascii=True)
+        self.assertLessEqual(len(canonical), MAX_CONTEXT_CHARS,
+                             len(canonical))
+
+    def test_rows_added_accumulates_across_plans(self):
+        """Production defect (job-xss-447203e643): contract rows_added
+        was reset by every executed plan and reported only the last
+        plan's additions; it must equal the total new rows."""
+        from tests.hunt_fixtures import SplitFixture
+        outcome, job, cap, hs, store = run_hunt_fixture(
+            typed={
+                "http-rows": [{"source": "http", "ref": "h9",
+                               "url": "https://shop.test/n1", "status": 200,
+                               "title": "n1", "tech": "nginx",
+                               "headers_snippet": "server: nginx"}],
+                "parameter-rows": [
+                    {"source": "urls", "ref": "p9",
+                     "url": "https://shop.test/n2", "status": 200,
+                     "params": ["tok"]},
+                    {"source": "endpoints", "ref": "p10",
+                     "url": "https://shop.test/n3", "status": 200,
+                     "params": ["ref"]}],
+                "url-rows": [{"source": "urls", "ref": "u9",
+                              "url": "https://shop.test/n4",
+                              "status": 200, "params": []}],
+            })
+        recorded = sum(o.new_rows for o in
+                       hs.observations_for_job(job.id))
+        self.assertGreater(recorded, 0)
+        self.assertEqual(outcome.rows_added, recorded)
+        self.assertEqual(outcome.to_dict()["rows_added"], recorded)
+
     def test_advisor_request_is_allowlist_shaped(self):
         obj = _objective()
         job = make_job()
