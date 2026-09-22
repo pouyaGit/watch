@@ -1,6 +1,8 @@
 # AUTONOMOUS RESEARCH INTELLIGENCE v1
 
-Status: implementation delivered, promoted pending Telegram APPROVE.
+Status: **COMPLETE through Phase 13** — promoted (main `a7a68bc`),
+both real production jobs run and verified; this amendment (report-only)
+is the closing promotion.
 Epic scope: turn the deployed AI Agent Runtime from "execute one bounded
 analysis job" into a research-capable intelligence system — persistent
 research memory, a gate-authoritative learning loop, a bounded
@@ -33,10 +35,12 @@ free-only LLM rule (`openrouter/free`, no paid fallback).
   failures (identical on production `main`, see §16); AEC 2149 OK;
   committed smoke 95/95; runtime E2E smoke OK with the full intelligence
   audit chain.
-- **Real production jobs (Phase 13): PENDING** — two bounded
-  production-mode jobs (XSS + CVE_RESEARCH) run immediately after this
-  promotion and restart, per the standing workflow; this report is
-  amended with exact job IDs before Epic closure.
+- **Phase 13 COMPLETE** — two bounded real production-mode jobs, both
+  COMPLETED on attempt 1 with the full verified chain:
+  **`job-xss-096f2b6161`** (XSS → case `case-8abe5a725d57`, 6 evidence)
+  and **`job-cve_research-f118fdf314`** (CVE_RESEARCH → honest gate
+  non-claim `insufficient_evidence`, no case). Both resolved model
+  `openrouter/free` only; secret scan CLEAN; exact chains in §14.
 
 ## 2. Architecture changes
 
@@ -223,16 +227,53 @@ exception instead of failing the job.
 
 ## 14. Real production jobs
 
-**PENDING — runs immediately after promotion + watch-api restart** (Phase
-13):
-- Job A: XSS specialist, production mode, real dell observations, real
-  Knowledge, real OpenRouter `openrouter/free`, prompt v2.
-- Job B: CVE_RESEARCH specialist, same constraints.
-Both must demonstrate authorization → observations → intelligence →
-knowledge → real LLM → schema validation → evidence gate → result →
-learning → recommendation → SOC visibility → audit lineage. Exact job IDs
-and resource metrics are appended here before Epic closure; success is
-never claimed without persisted evidence.
+Both ran against production state from deployed `main a7a68bc`
+(`watch-api` restarted first, openapi 200 / soc 401), one bounded
+`--max-jobs 1` run each, key sourced from `.env` (never echoed), model
+pinned `openrouter/free`, concurrency 1.
+
+**Job A — `job-xss-096f2b6161` (XSS, production, COMPLETED, attempt 1):**
+authorization `watch:scope:dell/www.dell.com` → 50 authorized
+observations → memory_retrieved 0 items (first-ever run, honestly empty)
+→ knowledge_selected **5 of 7 candidates** with relevance reasons
+(specialist_topic/class_match/hint_match stored|dom) →
+prior_research_matched **5** real records (cases `case-3c80c0ab076f`,
+`case-6ccc0f2569bd` + prior jobs) → context 8 items / 1515 chars
+(dropped 4, all limits visible) → **real LLM** `xss-agent-analysis-v2`,
+`llm_analysis_completed resolved=openrouter/free latency_ms=3320` →
+schema PASSED → **evidence gate authoritative** `case /
+evidence_rules_met / high` → learning appended **12 memories across
+INFERRED/OBSERVED/RESEARCHED/VERIFIED** → **5 recommendations**
+(acquire_evidence ×2, reference_prior_verified, consult_knowledge ×2) →
+result persisted (`structured-research-v2`, `intelligence_errors: []`) →
+**case `case-8abe5a725d57` + 6 evidence** (3 observation + 3 knowledge)
+→ lineage digest `cf1f33c0db1208520b9c34f2` → audit chain complete
+(enqueued→…→`intelligence_lineage_recorded`→`job_completed`).
+
+**Job B — `job-cve_research-f118fdf314` (CVE_RESEARCH, production,
+COMPLETED, attempt 1):** scope `watch:scope:dell/www.dell.com` → 50
+observations → memory_retrieved 0 (no CVE-category memory existed yet —
+category-scoped retrieval, honest) → knowledge_selected **5 of 11**
+(CVE topics + version/technology/correlation hints) →
+prior_research_matched **5** including **Job A's job id and case
+`case-8abe5a725d57`** (cross-job context proven on real data) → context
+9 items / 1589 chars → **real LLM** `cve-research-specialist-analysis-v2`,
+`resolved=openrouter/free latency_ms=6172` → schema PASSED →
+**evidence gate: `no_case / insufficient_evidence / insufficient`** —
+authoritative NON-claim despite LLM input (CVE knowledge-evidence rules
+unmet: 2 evidence) → learning **12 memories incl. REJECTED, zero
+VERIFIED** (the exact hypothesis/gate distinction) → **6
+recommendations**: `research_negative_result (gate_insufficient_evidence)`,
+`missing_evidence_type:observation`, `missing_signal_evidence:version`,
+`missing_signal_evidence:technology`, `reference_prior_verified
+(same_target_scope)`, `consult_knowledge` → **no case created (honest,
+nothing fabricated)** → lineage digest `954852a95bf3daab3147ae61`.
+
+Post-run verification (deployed modules): SOC agent intelligence blocks
+live for both specialists (XSS: 16 memories incl. 1 VERIFIED; CVE: 18
+memories incl. 1 REJECTED), case-detail research intel renders lineage
+`cf1f33…`, KB usage index live (top doc 10 uses), **secret scan CLEAN**
+(no key value, no `sk-or-v1-` literal in any runtime file).
 
 ## 15. Resource usage
 
@@ -241,8 +282,13 @@ payload), intel context ≤1600 chars / 24 items, memory query ≤12,
 related ≤5, history jobs ≤4, knowledge ≤5 docs, recommendations ≤6,
 similarity scan ≤60, concurrency 1, no persistent worker, no systemd
 change, HTTP-layer retries 0 (job policy = 3 attempts). Fixture E2E
-smoke: job completes sub-second, full audit chain written. Real-job
-wall/CPU/RSS numbers: see §14 after Phase 13 (measured with /usr/bin/time).
+smoke: job completes sub-second, full audit chain written. Real jobs
+(`/usr/bin/time -v`): Job A **5.42 s wall, 1.45 s CPU, 65 808 kB peak
+RSS, 1 LLM call (3 320 ms)**; Job B **7.86 s wall, 1.50 s CPU, 65 876 kB
+peak RSS, 1 LLM call (6 172 ms)**. Context: A 8 items/1515 chars, B 9
+items/1589 chars (limit 24/1600). Knowledge: 5 docs each. Related prior
+records: 5 each. Concurrency 1; attempts 1 each (no retries, no
+degradations).
 
 ## 16. Test matrix
 
@@ -258,8 +304,12 @@ wall/CPU/RSS numbers: see §14 after Phase 13 (measured with /usr/bin/time).
   security_llm (v1.2 → v2), llm-off structured expectations now assert
   the v2 contract (strengthened, not weakened).
 - AEC: 2149 OK. Committed smoke: 95/95 PASS. Runtime E2E smoke: OK
-  (full intelligence audit chain observed). Delivery check + diff guard:
-  see §18.
+  (full intelligence audit chain observed). Delivery check: READY FOR
+  PROMOTION pre-merge (all 6 gates PASS, PATH_GUARD secret-clean);
+  post-merge PRODUCTION PASS (`a7a68bc`, 27 dirty).
+- Phase 13 real runs: 2/2 COMPLETED attempt 1 (see §14) — both real
+  free-router calls schema-valid, zero retries, zero degradations
+  (`intelligence_errors: []` on both).
 
 ## 17. Documentation
 
@@ -276,9 +326,13 @@ Staged EXPLICITLY (unrelated pre-existing dirty files untouched):
 intelligence package (8 files), runtime.py, runtime_store.py,
 capabilities.py, soc/agents.py, soc/cases.py, routers/research_pages.py,
 4 templates, 4 new test files, 2 updated test files, this report.
-Delivery: check.sh + report.sh + diff_guard + push_safe + promotion
-request — run in the delivery step; results recorded in the promotion
-request artifact.
+Delivery executed: check.sh **READY FOR PROMOTION** (BRANCH/COMMIT/
+TESTS/PATH_GUARD/REPORT/PRODUCTION all PASS), report.sh wrote
+DELIVERY-REPORT-2026-09-22, push_safe `a80f7ec..cc77a20`,
+request **PROMOTION-REQUEST-20260922-1407** → APPROVE → promote
+**main `a7a68bc`** → baseline refresh → PRODUCTION PASS → `watch-api`
+restarted (openapi 200) → Phase 13 jobs (§14) → this report amendment
+(closing promotion request, see §21).
 
 ## 19. Known limitations (honest)
 
@@ -299,15 +353,17 @@ request artifact.
 
 ## 20. Exact production commit(s)
 
-This delivery = one commit on `agent/daily-development` (implementation
-+ tests + report). Production `main` gains it on promotion (post-APPROVE
-hash appended in the promotion record). Current production baseline:
-**main = f8f8707** (unchanged until APPROVE).
+Implementation commit **`cc77a20`** promoted to production main =
+**`a7a68bc`** (APPROVE 1407). Production baseline at time of this
+amendment: **`a7a68bc`**, 27 dirty entries untouched, `api.py`
+untouched. The report-only amendment commit gains `main` on the closing
+APPROVE.
 
 ## 21. Promotion request ID
 
-`agent-reports/promotions/PROMOTION-REQUEST-20260922-<HHMM>.md`
-(exact timestamp recorded when the request artifact is created in the
-delivery step; the request references this report).
+1. `PROMOTION-REQUEST-20260922-1407` (implementation, commit `cc77a20`)
+   → APPROVED → promoted → main `a7a68bc`.
+2. Closing request for THIS report amendment: recorded below when
+   created by the delivery step.
 
 READY TO PUSH: YES
