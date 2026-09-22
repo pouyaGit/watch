@@ -72,6 +72,9 @@ class SpecialistCapability:
     unsupported_operations: tuple[str, ...] = field(
         default=UNIVERSAL_UNSUPPORTED
     )
+    # Phase 4 edge: extra bounded knowledge/recommendation query hints
+    # for the shared intelligence layer (specialist-specific, declared).
+    intelligence_hints: tuple[str, ...] = field(default=())
 
     @property
     def identity(self) -> dict[str, str]:
@@ -101,6 +104,7 @@ class SpecialistCapability:
             "case_creation_conditions": list(self.case_creation_conditions),
             "knowledge_requirements": list(self.knowledge_requirements),
             "unsupported_operations": list(self.unsupported_operations),
+            "intelligence_hints": list(self.intelligence_hints),
         }
 
 
@@ -145,6 +149,7 @@ _CAPABILITIES: tuple[SpecialistCapability, ...] = (
             "a hypothesis that names a concrete endpoint and parameter",
         ),
         knowledge_requirements=("XSS", "cross-site scripting", "reflection"),
+        intelligence_hints=("reflection", "dom", "stored"),
     ),
     SpecialistCapability(
         category="SSRF",
@@ -321,6 +326,7 @@ _CAPABILITIES: tuple[SpecialistCapability, ...] = (
             "high confidence",
         ),
         knowledge_requirements=("CVE", "technology"),
+        intelligence_hints=("version", "technology", "correlation"),
     ),
 )
 

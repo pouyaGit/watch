@@ -102,7 +102,37 @@ def _runtime_case_detail(case_id: str) -> dict[str, Any] | None:
         chain.append({"step": "evidence", "ref": _text(row.get("id")),
                       "signal": _text(row.get("signal")),
                       "type": _text(row.get("type"))})
+    research_intel: dict[str, Any] = {}
+    if result is not None and isinstance(result.structured, dict):
+        st = result.structured
+        research_intel = {
+            "contract": _text(st.get("contract")),
+            "prompt_version": _text(st.get("prompt_version")),
+            "knowledge_considered": list(st.get("knowledge_considered")
+                                         or [])[:8],
+            "prior_research_considered": list(
+                st.get("prior_research_considered") or [])[:5],
+            "memory_considered": list(st.get("memory_considered") or [])[:8],
+            "hypotheses": list(st.get("hypotheses") or [])[:4],
+            "evidence_missing": list(st.get("evidence_missing") or [])[:6],
+            "negative_evidence": list(st.get("negative_evidence") or [])[:8],
+            "recommended_next_observation": _text(
+                st.get("recommended_next_observation"), 300),
+            "research_recommendations": list(
+                st.get("research_recommendations") or [])[:6],
+            "evidence_gate": (st.get("evidence_gate")
+                              if isinstance(st.get("evidence_gate"), dict)
+                              else {}),
+            "context_stats": (st.get("context_stats")
+                              if isinstance(st.get("context_stats"), dict)
+                              else {}),
+            "intelligence_errors": list(
+                st.get("intelligence_errors") or [])[:8],
+            "lineage_digest": _text(
+                (st.get("research_lineage") or {}).get("digest")),
+        }
     return {
+        "research_intel": research_intel,
         "case": {
             "case_id": _text(case.get("id")),
             "target": _text(case.get("target")),
@@ -207,6 +237,9 @@ def case_detail(case_id: str) -> dict[str, Any] | None:
 
     return {
         "case_id": case_id,
+        "research_intel": (detail.get("research_intel")
+                           if isinstance(detail.get("research_intel"), Mapping)
+                           else {}),
         "agent_chain": (detail.get("agent_chain")
                         if isinstance(detail.get("agent_chain"), Mapping)
                         else None),

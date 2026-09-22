@@ -633,6 +633,95 @@ def agent_detail(slug: str) -> dict[str, Any] | None:
     }
 
 
+_INTEL_ACTIONS = (
+    "memory_retrieved", "knowledge_selected", "prior_research_matched",
+    "memory_learned", "recommendation_generated",
+)
+
+
+def _agent_intelligence(store: Any, cat: str,
+                        agent_name: str) -> dict[str, Any]:
+    """Phase 9: research intelligence exposure (memory / knowledge /
+    activity).  Reads only persisted intelligence state; failures return
+    an honest ``available: false`` block."""
+    out: dict[str, Any] = {
+        "available": False, "reason": "", "memory_by_state": {},
+        "memory_recent": [], "hypotheses": [], "rejected_hypotheses": [],
+        "recommendations": [], "knowledge_recent": [], "related_cases": [],
+        "recent_research_activity": [], "intelligence_errors": [],
+        "lineage_digest": "",
+    }
+    try:
+        from backend.research_agents.intelligence.memory import (
+            MEMORY_STATES, MemoryStore,
+        )
+        mem = MemoryStore(store.base).query(category=cat, limit=40)
+        out["available"] = True
+        counts = {s: 0 for s in MEMORY_STATES}
+        for item in mem:
+            if item.state in counts:
+                counts[item.state] += 1
+        counts["total"] = len(mem)
+        out["memory_by_state"] = counts
+
+        def slim(item: Any) -> dict[str, Any]:
+            return {"id": item.id, "kind": item.kind, "state": item.state,
+                    "text": _text(item.text), "created_at": item.created_at,
+                    "job_id": _text(item.provenance.get("job_id")),
+                    "source": _text(item.provenance.get("source"))}
+
+        out["memory_recent"] = [slim(i) for i in mem[:8]]
+        out["hypotheses"] = [slim(i) for i in mem
+                             if i.kind == "hypothesis"][:6]
+        out["rejected_hypotheses"] = [slim(i) for i in mem
+                                      if i.state == "REJECTED"][:6]
+        out["recommendations"] = [slim(i) for i in mem
+                                  if i.kind == "research_recommendation"][:6]
+        knowledge = store.list_knowledge_use()
+        out["knowledge_recent"] = [
+            {"document_id": _text(k.get("document_id")),
+             "title": _text(k.get("title")),
+             "topic": _text(k.get("topic")),
+             "at": _text(k.get("created_at")),
+             "reasons": list(k.get("reasons") or [])[:4]}
+            for k in knowledge
+            if _text(k.get("category")).upper() == cat.upper()
+        ][-6:]
+        out["related_cases"] = [
+            {"id": _text(c.get("id")), "target": _text(c.get("target")),
+             "confidence": _text(c.get("confidence")),
+             "created_at": _text(c.get("created_at"))}
+            for c in store.list_cases()
+            if _text(c.get("category")).upper() == cat.upper()
+        ][-5:]
+        out["recent_research_activity"] = [
+            {"action": _text(a.get("action")),
+             "detail": _text(a.get("detail")),
+             "job_id": _text(a.get("job_id")),
+             "at": _text(a.get("at") or a.get("created_at"))}
+            for a in store.list_activity(limit=200)
+            if _text(a.get("action")) in _INTEL_ACTIONS
+            and _text(a.get("category")).upper() == cat.upper()
+        ][-8:]
+        # latest persisted result: honest intelligence errors + lineage
+        for job_row in reversed(
+                [j for j in store.list_jobs(limit=50)
+                 if _text(j.agent_category).upper() == cat.upper()]):
+            res = store.get_result(job_row.id)
+            if res is None or not isinstance(res.structured, dict):
+                continue
+            st = res.structured
+            out["intelligence_errors"] = list(
+                st.get("intelligence_errors") or [])[:8]
+            out["lineage_digest"] = _text(
+                (st.get("research_lineage") or {}).get("digest"))
+            out["contract"] = _text(st.get("contract"))
+            break
+    except Exception as exc:  # noqa: BLE001 - honest absence
+        out["reason"] = _text(exc.__class__.__name__, 80)
+    return out
+
+
 def _runtime_agent_records(agent_key: str,
                            agent_name: str) -> dict[str, Any]:
     """Real per-agent runtime records (jobs, knowledge used, cases).
@@ -643,7 +732,9 @@ def _runtime_agent_records(agent_key: str,
     """
     empty = {"source_available": False, "jobs": [], "knowledge_used": [],
              "cases": [], "evidence_count": 0, "worker": {},
-             "llm_last": {}}
+             "llm_last": {},
+             "intelligence": {"available": False,
+                              "reason": "no runtime state"}}
     try:
         from backend.research_agents.capabilities import capability_for
         from backend.research_agents.runtime import runtime_snapshot
@@ -727,6 +818,7 @@ def _runtime_agent_records(agent_key: str,
             }
         return {
             "source_available": True,
+            "intelligence": _agent_intelligence(store, cat, agent_name),
             "jobs": job_rows,
             "knowledge_used": [
                 {"document_id": _text(k.get("document_id")),

@@ -32,6 +32,59 @@
     </ul>
   </section>
 
+  {% if research_intel is defined and research_intel %}
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Research intelligence</h2>
+      <span class="badge-sm">{{ research_intel.contract or 'structured-research' }}{% if research_intel.prompt_version %} · {{ research_intel.prompt_version }}{% endif %}</span></div>
+    <dl class="text-sm space-y-1 mb-3">
+      <div class="flex gap-2"><dt class="w-44 text-slate-400">Authoritative gate</dt>
+        <dd>{{ research_intel.evidence_gate.reason or 'not_evaluated' }}
+          · confidence {{ research_intel.evidence_gate.confidence or '—' }}
+          {% if research_intel.evidence_gate.created_case %}· case created{% endif %}</dd></div>
+      <div class="flex gap-2"><dt class="w-44 text-slate-400">Recommended next observation</dt>
+        <dd>{{ research_intel.recommended_next_observation or '—' }}</dd></div>
+      <div class="flex gap-2"><dt class="w-44 text-slate-400">Evidence missing</dt>
+        <dd>{{ research_intel.evidence_missing | join(', ') if research_intel.evidence_missing else '—' }}</dd></div>
+      <div class="flex gap-2"><dt class="w-44 text-slate-400">Lineage</dt>
+        <dd class="font-mono text-xs">{{ research_intel.lineage_digest or '—' }}
+          {% if research_intel.context_stats %}· context {{ research_intel.context_stats.items or 0 }} items / {{ research_intel.context_stats.chars or 0 }} chars (dropped {{ research_intel.context_stats.dropped or 0 }}){% endif %}</dd></div>
+    </dl>
+    {% if research_intel.hypotheses %}
+    <div class="text-slate-400 text-xs mb-1">Hypotheses (state preserved — never collapsed)</div>
+    <ul class="text-sm list-disc pl-5 mb-2">{% for h in research_intel.hypotheses %}
+      <li>[{{ h.state }}/{{ h.source }}] {{ h.hypothesis }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if research_intel.negative_evidence %}
+    <div class="text-slate-400 text-xs mb-1">Negative evidence / not established</div>
+    <ul class="text-sm list-disc pl-5 mb-2">{% for n in research_intel.negative_evidence %}<li>{{ n }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if research_intel.knowledge_considered %}
+    <div class="text-slate-400 text-xs mb-1">Knowledge consulted (why · informed)</div>
+    <ul class="text-sm list-disc pl-5 mb-2">{% for k in research_intel.knowledge_considered %}
+      <li><span class="font-mono">{{ k.id }}</span> — {{ k.title }} <span class="text-slate-500">[why: {{ k.why }} · informed: {{ k.informed | join(', ') }}]</span></li>{% endfor %}</ul>
+    {% endif %}
+    {% if research_intel.prior_research_considered %}
+    <div class="text-slate-400 text-xs mb-1">Prior research considered (similarity — not proof)</div>
+    <ul class="text-sm list-disc pl-5 mb-2">{% for p in research_intel.prior_research_considered %}
+      <li>{{ p.kind }} <span class="font-mono">{{ p.ref }}</span> score {{ p.score }} — {{ p.reasons | join(', ') }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if research_intel.memory_considered %}
+    <div class="text-slate-400 text-xs mb-1">Research memory considered</div>
+    <ul class="text-sm list-disc pl-5 mb-2">{% for m in research_intel.memory_considered %}
+      <li><span class="font-mono">{{ m.id }}</span> [{{ m.state }}/{{ m.kind }}] {{ m.text }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if research_intel.research_recommendations %}
+    <div class="text-slate-400 text-xs mb-1">Research recommendations (advisory, no execution steps)</div>
+    <ul class="text-sm list-disc pl-5 mb-2">{% for r in research_intel.research_recommendations %}
+      <li>{{ r.text }} <span class="text-slate-500">({{ r.reason_codes | join(', ') }})</span></li>{% endfor %}</ul>
+    {% endif %}
+    {% if research_intel.intelligence_errors %}
+    <div class="text-amber-600 text-xs">Intelligence degradations (honest):
+      {{ research_intel.intelligence_errors | join(' · ') }}</div>
+    {% endif %}
+  </section>
+  {% endif %}
+
   <section class="panel p-4 mb-6">
     <div class="panel-head"><h2>Suggested analysis</h2></div>
     <div class="grid md:grid-cols-2 gap-6 text-sm">
