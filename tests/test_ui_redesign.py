@@ -6,6 +6,7 @@ global search, CDN badge safety and shared badge macros.
 
 No live MongoDB / network: every data access is monkeypatched.
 """
+import re
 import unittest
 from datetime import datetime, timedelta
 from unittest import mock
@@ -60,10 +61,17 @@ class TestShell(unittest.TestCase):
         recent.return_value = []
         r = self._get("/")
         self.assertEqual(r.status_code, 200, r.text[:300])
-        # sidebar groups + destinations
-        for token in ("Overview", "Discovery", "Operations", "System",
-                      "/ui/parameters", "/ui/endpoints", "/ui/http", "/ui/urls"):
-            self.assertIn(token, r.text)
+        nav = re.search(r'<nav class="sidebar-nav">(.*?)</nav>', r.text,
+                        re.S).group(1)
+        # SOC-first sidebar: the AI SOC group plus the system group
+        for token in ("AI SOC", "/ui/soc/agents", "/ui/soc/cases",
+                      "/ui/soc/activity", "/ui/soc/handoff", "System"):
+            self.assertIn(token, nav)
+        # legacy engineering/research groups are no longer primary navigation
+        for token in ("Discovery", "Operations", "/ui/parameters",
+                      "/ui/endpoints", "/ui/http", "/ui/urls",
+                      "Legacy / Engineering", "Research / CVEs"):
+            self.assertNotIn(token, nav, f"legacy sidebar item leaked: {token}")
         # timezone indicator (mandatory)
         self.assertIn("Asia/Tehran", r.text)
         # global search entry point

@@ -189,21 +189,16 @@ class TestAttackSurfaceNavigation(unittest.TestCase):
                        return_value={"total": 0}),
         )
 
-    def test_sidebar_link_present_on_command_center(self):
+    def test_attack_surface_is_not_a_sidebar_item(self):
         with _patch_loader(_fixture_snapshot()), \
              mock.patch("backend.dashboard.latest_runs", return_value=[]):
             response = self._get("/ui/command")
         self.assertEqual(response.status_code, 200)
-        link = re.search(
-            r'<a class="side-link side-sub[^"]*" href="([^"]*)"[^>]*>\s*'
-            r'<span class="side-ico">[^<]*</span>Attack Surface</a>',
-            response.text,
-        )
-        self.assertIsNotNone(link, "missing Attack Surface sidebar link")
-        self.assertEqual(link.group(1).split("?")[0].split("#")[0],
-                         "/ui/command")
-        self.assertIn("#attack-surface", link.group(1))
-        # the section anchor the link targets
+        nav = re.search(r'<nav class="sidebar-nav">(.*?)</nav>',
+                        response.text, re.S).group(1)
+        self.assertNotIn("Attack Surface</a>", nav,
+                         "attack surface must not sit in the product sidebar")
+        # the page itself still exposes the section and the route resolves
         self.assertIn('id="attack-surface"', response.text)
 
     def test_quick_action_present(self):
@@ -217,13 +212,14 @@ class TestAttackSurfaceNavigation(unittest.TestCase):
         )
         self.assertIsNotNone(quick, "missing Attack Surface quick action")
 
-    def test_sidebar_link_present_on_other_pages(self):
+    def test_attack_surface_absent_from_sidebar_on_other_pages(self):
         patches = self._dashboard_mocks()
         with patches[0], patches[1], patches[2], patches[3], patches[4]:
             response = self._get("/")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Attack Surface</a>", response.text)
-        self.assertIn("#attack-surface", response.text)
+        nav = re.search(r'<nav class="sidebar-nav">(.*?)</nav>',
+                        response.text, re.S).group(1)
+        self.assertNotIn("Attack Surface</a>", nav)
 
 
 class TestAttackSurfaceUi(unittest.TestCase):

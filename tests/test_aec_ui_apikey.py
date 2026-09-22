@@ -117,9 +117,11 @@ class TestApiKeyPropagation(unittest.TestCase):
             self.assertNotIn("api_key=", url)
 
     def test_base_sidebar_gains_key_when_present(self):
-        # base.html sidebar research link uses api_key_qs from context
+        # base.html sidebar links use api_key_qs from context (the legacy
+        # research link left the sidebar; the SOC links carry the key now)
         html = _render("ui_aec_dashboard", api_key=KEY)
-        self.assertIn("research/index.html?api_key=", html)
+        self.assertIn("/ui/soc/agents?api_key=", html)
+        self.assertIn("/ui/soc/?api_key=", html)
 
 
 class TestMiddlewareUntouched(unittest.TestCase):

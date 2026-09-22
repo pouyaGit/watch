@@ -229,7 +229,10 @@ class TestMissingOptionalAgentData(unittest.TestCase):
         with undeployed("backend.research_agents",
                         "ai.knowledge.specialist_registry"):
             index = soc_agents.agents_index()
-        self.assertEqual(index, {"count": 0, "agents": []})
+        self.assertEqual(index["count"], 0)
+        self.assertEqual(index["agents"], [])
+        self.assertFalse(index["runtime"]["deployed"],
+                         "no runtime may be claimed when none is importable")
 
     def test_empty_index_renders_an_explicit_empty_state(self):
         from backend.soc import agents as soc_agents
@@ -287,31 +290,29 @@ class TestSocPrimaryNavigation(_MountedApp):
                 for label in SOC_PRIMARY_LABELS:
                     self.assertIn(label, names, f"{path}: missing {label!r}")
 
-    def test_legacy_pages_are_not_primary_navigation(self):
+    def test_legacy_pages_are_not_in_the_sidebar_at_all(self):
+        # the collapsed disclosure was itself part of the primary sidebar, so
+        # the legacy destinations must now be absent from it entirely while
+        # their routes stay mounted (TestLegacyRoutesStillAvailable).
         for path in SOC_PAGES:
             with self.subTest(page=path):
-                html = self.get(path).text
-                primary, legacy = sidebar_parts(html)
-                self.assertTrue(legacy, f"{path}: legacy area missing")
-                primary_names = link_names(primary)
-                overlap = primary_names & set(LEGACY_PRIMARY_LABELS)
+                nav = sidebar(self.get(path).text)
+                names = link_names(nav)
+                overlap = set(names) & set(LEGACY_PRIMARY_LABELS)
                 self.assertEqual(overlap, set(),
-                                 f"{path}: legacy links are primary: {overlap}")
+                                 f"{path}: legacy links still in sidebar: {overlap}")
 
-    def test_legacy_area_is_collapsed_but_present(self):
-        html = self.get("/ui/soc/").text
-        _, legacy = sidebar_parts(html)
-        self.assertTrue(legacy.startswith(LEGACY_SECTION_MARKER), legacy[:80])
-        details_tag = legacy.split(">", 1)[0]
-        self.assertNotIn(" open", details_tag,
-                         "legacy navigation must be collapsed by default")
-        names = link_names(legacy)
+    def test_no_legacy_disclosure_or_section_in_the_sidebar(self):
+        nav = sidebar(self.get("/ui/soc/").text)
+        self.assertNotIn("<details", nav)
+        self.assertNotIn("nav-legacy", nav)
+        self.assertNotIn("Legacy / Engineering", nav)
         for label in LEGACY_PRIMARY_LABELS:
-            self.assertIn(label, names, f"legacy link lost: {label!r}")
+            self.assertNotIn(f"</span>{label}</a>", nav, label)
 
-    def test_legacy_engineering_group_label_is_preserved(self):
+    def test_legacy_group_label_is_gone_from_the_sidebar(self):
         html = self.get("/ui/soc/").text
-        self.assertIn("Legacy / Engineering", sidebar(html))
+        self.assertNotIn("Legacy / Engineering", sidebar(html))
 
     def test_all_soc_pages_share_one_navigation(self):
         # the active marker legitimately differs per page; the navigation

@@ -12,77 +12,121 @@
     <p class="text-slate-400 text-sm">No description is declared for this
       agent by the registry that supplies it.</p>
     {% endif %}
+    <p class="text-slate-400 text-sm mt-2">
+      <span class="badge {{ 'badge-ok' if identity.status in ['READY', 'ACTIVE'] else 'badge-muted' }}">{{ identity.status }}</span>
+      {{ identity.status_meaning }}.
+    </p>
   </div>
 
   <div class="grid md:grid-cols-2 gap-6 mb-6">
     <section class="panel p-4">
-      <div class="panel-head"><h2>Identity</h2></div>
+      <div class="panel-head"><h2>Identity (declared)</h2></div>
       <dl class="text-sm space-y-1">
-        <div class="flex gap-2"><dt class="w-32 text-slate-400">Role</dt><dd>{{ identity.role }}</dd></div>
-        <div class="flex gap-2"><dt class="w-32 text-slate-400">Status</dt><dd><span class="badge {{ 'badge-ok' if counters.available else 'badge-warn' }}">{{ identity.status }}</span></dd></div>
-        <div class="flex gap-2"><dt class="w-32 text-slate-400">Queue</dt><dd>{{ counters.queue }}</dd></div>
-        <div class="flex gap-2"><dt class="w-32 text-slate-400">Active jobs</dt><dd>{{ counters.active_jobs }}</dd></div>
-        <div class="flex gap-2"><dt class="w-32 text-slate-400">Total jobs</dt><dd>{{ counters.job_count }}</dd></div>
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Specialization</dt><dd>{{ identity.role }}</dd></div>
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Declared lifecycle</dt><dd>{{ identity.declared_lifecycle }}</dd></div>
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Research only</dt><dd>{{ 'yes' if identity.research_only else 'no' }}</dd></div>
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Definition source</dt><dd class="text-xs">{{ sources.identity }}</dd></div>
       </dl>
+      <p class="text-slate-500 text-xs mt-2">Identity values come from the
+        agent registry verbatim; nothing here is inferred.</p>
     </section>
 
     <section class="panel p-4">
-      <div class="panel-head"><h2>Knowledge</h2></div>
-      <div class="text-sm space-y-3">
-        <div>
-          <div class="text-slate-400 mb-1">Vulnerability areas</div>
-          <div class="flex flex-wrap gap-1">
-            {% for area in knowledge.vulnerability_areas %}<span class="badge">{{ area }}</span>{% else %}<span class="text-slate-500">—</span>{% endfor %}
-          </div>
-        </div>
-        <div>
-          <div class="text-slate-400 mb-1">Techniques</div>
-          <ul class="list-disc pl-5">
-            {% for t in knowledge.techniques %}<li>{{ t }}</li>{% else %}<li class="text-slate-500">—</li>{% endfor %}
-          </ul>
-        </div>
-        <div>
-          <div class="text-slate-400 mb-1">Frameworks / technologies</div>
-          <div class="flex flex-wrap gap-1">
-            {% for f in knowledge.frameworks %}<span class="badge badge-muted">{{ f }}</span>{% else %}<span class="text-slate-500">—</span>{% endfor %}
-          </div>
-        </div>
-        <div>
-          <div class="text-slate-400 mb-1">Previous research topics</div>
-          <ul class="list-disc pl-5">
-            {% for t in knowledge.topics %}<li>{{ t }}</li>{% else %}<li class="text-slate-500">—</li>{% endfor %}
-          </ul>
-        </div>
-      </div>
+      <div class="panel-head"><h2>Runtime</h2></div>
+      {% if runtime.tracked %}
+      <dl class="text-sm space-y-1">
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Queue</dt><dd>{{ runtime.queue }}</dd></div>
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Active jobs</dt><dd>{{ runtime.active_jobs }}</dd></div>
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Total jobs</dt><dd>{{ runtime.job_count }}</dd></div>
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Accepting work</dt><dd>{{ 'yes' if runtime.available else 'no' }}</dd></div>
+      </dl>
+      <p class="text-slate-500 text-xs mt-2">Counters reported by {{ runtime.source }}.</p>
+      {% else %}
+      <p class="empty">Queue, active jobs and total jobs are <strong>not
+        tracked</strong>: no agent runtime is deployed in this environment.
+        They are shown as not tracked rather than as a worker with zero work,
+        because no runtime exists here to report them.</p>
+      {% endif %}
     </section>
   </div>
+
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Capability</h2></div>
+    <p class="text-sm text-slate-400 mb-3">{{ capability.now }}</p>
+    <div class="text-slate-400 mb-1">Declared capabilities (configuration — not recorded execution)</div>
+    <ul class="list-disc pl-5 text-sm">
+      {% for c in capability.declared %}<li>{{ c }}</li>{% else %}<li class="text-slate-500">No capabilities are declared for this agent.</li>{% endfor %}
+    </ul>
+    <p class="text-slate-500 text-xs mt-2">{{ capability.planned }}</p>
+  </section>
+
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Knowledge</h2></div>
+    <div class="grid md:grid-cols-2 gap-4 text-sm">
+      <div>
+        <div class="text-slate-400 mb-1">Declared specialization (registry)</div>
+        <div class="flex flex-wrap gap-1 mb-3">
+          {% for area in knowledge.vulnerability_areas %}<span class="badge">{{ area }}</span>{% else %}<span class="text-slate-500">None declared.</span>{% endfor %}
+        </div>
+        <div class="text-slate-400 mb-1">Declared techniques (registry)</div>
+        <ul class="list-disc pl-5">
+          {% for t in knowledge.techniques %}<li>{{ t }}</li>{% else %}<li class="text-slate-500">None declared.</li>{% endfor %}
+        </ul>
+      </div>
+      <div>
+        <div class="text-slate-400 mb-1">Platform knowledge — shared, platform-wide, not attributed to this agent</div>
+        <div class="flex flex-wrap gap-1 mb-3">
+          {% for f in knowledge.frameworks %}<span class="badge badge-muted">{{ f }}</span>{% else %}<span class="text-slate-500">No technologies are indexed in the knowledge base.</span>{% endfor %}
+        </div>
+        <div class="text-slate-400 mb-1">Research recorded against this agent</div>
+        <ul class="list-disc pl-5">
+          {% for t in knowledge.topics %}<li>{{ t }}</li>{% else %}<li class="text-slate-500">No research is recorded against this agent.</li>{% endfor %}
+        </ul>
+        {% if not history.notes_source_available %}
+        <p class="text-slate-500 text-xs mt-1">The agent-attributed research
+          memory is not deployed in this environment, so nothing can be
+          attributed to this agent here.</p>
+        {% endif %}
+      </div>
+    </div>
+  </section>
 
   <section class="panel p-4 mb-6">
     <div class="panel-head"><h2>Research history</h2></div>
     <div class="grid md:grid-cols-3 gap-4 text-sm">
       <div>
-        <div class="text-slate-400 mb-1">Papers / articles studied</div>
+        <div class="text-slate-400 mb-1">Knowledge-base sources (platform-wide)</div>
+        <p class="text-slate-500 text-xs mb-1">{{ history.scopes.papers }}</p>
         <ul class="space-y-1">
-          {% for p in history.papers %}<li><a class="link" href="{{ p.source_url }}">{{ p.title }}</a> <span class="text-slate-500">{{ p.indexed_at }}</span></li>{% else %}<li class="text-slate-500">—</li>{% endfor %}
+          {% for p in history.papers %}<li><a class="link" href="{{ p.source_url }}">{{ p.title }}</a> <span class="text-slate-500">{{ p.indexed_at }}</span></li>{% else %}<li class="text-slate-500">No knowledge-base documents are indexed.</li>{% endfor %}
         </ul>
       </div>
       <div>
-        <div class="text-slate-400 mb-1">CVEs analyzed</div>
+        <div class="text-slate-400 mb-1">Research-loop records (platform-wide)</div>
+        <p class="text-slate-500 text-xs mb-1">{{ history.scopes.cves }}</p>
         <ul class="space-y-1">
-          {% for c in history.cves %}<li><span class="font-mono">{{ c.id }}</span> <span class="badge badge-muted">{{ c.status }}</span></li>{% else %}<li class="text-slate-500">—</li>{% endfor %}
+          {% for c in history.cves %}<li><span class="font-mono">{{ c.id }}</span> <span class="badge badge-muted">{{ c.status }}</span></li>{% else %}<li class="text-slate-500">No research-loop records are indexed.</li>{% endfor %}
         </ul>
       </div>
       <div>
-        <div class="text-slate-400 mb-1">Internal notes</div>
+        <div class="text-slate-400 mb-1">Findings recorded against this agent</div>
+        <p class="text-slate-500 text-xs mb-1">{{ history.scopes.notes }}</p>
         <ul class="space-y-1">
-          {% for n in history.notes %}<li>{{ n.target or n.category }} <span class="text-slate-500">{{ n.last_seen }}</span></li>{% else %}<li class="text-slate-500">—</li>{% endfor %}
+          {% for n in history.notes %}<li>{{ n.target or n.category }} <span class="text-slate-500">{{ n.last_seen }}</span></li>{% else %}<li class="text-slate-500">No research is recorded against this agent.</li>{% endfor %}
         </ul>
+        {% if not history.notes_source_available %}
+        <p class="text-slate-500 text-xs mt-1">The agent-attributed research
+          memory is not deployed in this environment.</p>
+        {% endif %}
       </div>
     </div>
   </section>
 
-  <section class="panel p-4">
+  <section class="panel p-4 mb-6">
     <div class="panel-head"><h2>Target cases</h2></div>
+    <p class="text-slate-500 text-xs mb-3">These cases are
+      associated by vulnerability category in the AEC case explorer; it does
+      not mean this agent executed the case.</p>
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr><th>Case</th><th>Target</th><th>Category</th><th>Evidence status</th><th></th></tr></thead>
@@ -96,11 +140,23 @@
             <td><a class="link" href="{{ case.detail_url }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">case →</a></td>
           </tr>
           {% else %}
-          <tr><td colspan="5" class="empty">No target cases in the current view.</td></tr>
+          <tr><td colspan="5" class="empty">No cases are associated with this
+            agent's category in the current view.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
+  </section>
+
+  <section class="panel p-4">
+    <div class="panel-head"><h2>Where this page's data comes from</h2></div>
+    <dl class="text-sm space-y-1">
+      <div class="flex gap-2"><dt class="w-32 text-slate-400">Identity</dt><dd class="text-xs">{{ sources.identity }}</dd></div>
+      <div class="flex gap-2"><dt class="w-32 text-slate-400">Runtime</dt><dd class="text-xs">{{ sources.runtime or 'not deployed in this environment' }}</dd></div>
+      <div class="flex gap-2"><dt class="w-32 text-slate-400">Knowledge</dt><dd class="text-xs">{{ sources.knowledge_base }}</dd></div>
+      <div class="flex gap-2"><dt class="w-32 text-slate-400">Memory</dt><dd class="text-xs">{{ sources.research_memory or 'not deployed in this environment' }}</dd></div>
+      <div class="flex gap-2"><dt class="w-32 text-slate-400">Cases</dt><dd class="text-xs">{{ sources.cases }}</dd></div>
+    </dl>
   </section>
 </div>
 {% endblock %}

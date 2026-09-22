@@ -12,21 +12,7 @@ a.link:hover { text-decoration: underline; }
 /* Timeline rows: keep the time column fixed-width and mono. */
 .timeline-time { font-family: ui-monospace, monospace; font-size: 12px; }
 
-/* Primary navigation is the AI SOC group.  The legacy engineering surface is
-   kept (nothing removed, no route changes) but collapsed behind a
-   <details> disclosure so it is no longer primary navigation.  The links stay
-   in the DOM, keyboard reachable and identical to before once expanded. */
-.nav-legacy { margin: 0; }
-.nav-legacy > summary {
-  list-style: none;
-  cursor: pointer;
-  user-select: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.nav-legacy > summary::-webkit-details-marker { display: none; }
-.nav-legacy > summary::after { content: "▸"; font-size: 9px; }
-.nav-legacy[open] > summary::after { content: "▾"; }
-.nav-legacy .side-link { padding-left: 22px; }
-.nav-legacy .side-link .side-ico { font-size: 11px; }
+/* Primary navigation is the AI SOC group only: the legacy engineering
+   destinations keep their routes for backward compatibility but are not
+   rendered in the sidebar (web/templates/base.html).  No disclosure, no
+   second navigation system. */
