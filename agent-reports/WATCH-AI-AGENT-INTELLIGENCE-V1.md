@@ -130,3 +130,40 @@ values; tests prove an LLM hypothesis cannot create or upgrade a case.
   runtime uses `complete()` directly because the real provider's
   contract is envelope-based (Phase-0 finding #1).
 - `backend/routers/research_agents.py` still ships unmounted.
+
+## First real LLM job — attempt 1 and the contract defect (recorded)
+
+Job `job-xss-c70608036a` (XSS, `xss-agent`, program dell,
+`www.dell.com`, scope `watch:scope:dell/www.dell.com`, production,
+priority 70, timeout 120) ran bounded with `--max-jobs 1 --llm OPENROUTER`,
+key sourced from `/opt/watch/.env` with `OPENROUTER_MODEL` pinned to
+`openrouter/free` (the `.env` default `nvidia/…:free` is rejected by the
+guard). Wall 47.8 s, CPU 1.3 s, peak RSS ~65 MB, exit 0.
+
+What worked: claim → authz → 50 observations → 5 real knowledge documents
+read → `llm_analysis_started (OpenRouter openrouter/free
+xss-agent-analysis-v1)` → failure path fail-closed: no evidence, no case,
+no result, `llm_analysis_failed` + `job_failed` audit + automatic retry
+requeue (attempt 1/3, no fake output anywhere).
+
+**Concrete runtime defect found:** the attempt's reason was
+`llm_provider_error: ` (empty). Diagnosis (no mocks): endpoint reachable
+(HTTPS 200 in 0.21 s) and a bounded real `complete()` diagnostic returned
+in 14.1 s with the **flat R45 success projection** — `complete()` returns
+`{summary, insights, recommendations, …}` directly on success and
+**raises** `ProviderCallError` on failure; only `complete_with_status()`
+returns the `{response, error, telemetry, _exception}` envelope. The
+runtime awaited an envelope from `complete()`, so a successful LLM answer
+was misclassified as a provider failure with an empty reason.
+
+**Fix (commit `7ebf28e`):** use `complete_with_status()` when available
+(telemetry: attempts/response_chars), normalize all three real outcome
+shapes (flat projection / envelope / raised exception), classify from
+plan fields (`error_category`/`error_code`/`status_code`) and exception
+attributes — deterministic mapping to `timeout | rate_limit | auth |
+configuration | empty_response | context_rejected | schema_failure |
+provider_unavailable | provider_error` — and reasons are never empty
+(bare exceptions fall back to the exception class name). Three regression
+tests added (flat projection accepted, `complete_with_status` preferred,
+non-empty reason); full battery re-run green: 98 + 98 + AEC 2149 +
+smoke 95/95.
