@@ -265,31 +265,55 @@ class TestAgentStatusTruthfulness(unittest.TestCase):
                                   "when no runtime tracks it")
 
     def test_status_is_derived_from_the_runtime_report(self):
+        from unittest import mock
+
         from backend.soc import agents as soc_agents
 
         try:
-            from backend.research_agents import service as ra
+            import backend.research_agents.runtime as rt
         except Exception:  # deployed module set: nothing to derive from
             self.skipTest("agent runtime not deployed")
 
-        reported = {str(a.get("category")).lower(): a
-                    for a in (ra.agents_payload().get("agents") or [])}
-        payload = soc_agents.agents_index()
+        # sentinel runtime states — the page must follow them verbatim
+        fake = {
+            "xss": {"status": "ACTIVE", "queue": 0, "active_jobs": 1,
+                    "job_count": 3, "available": True, "worker_alive": True,
+                    "last_job": {"id": "j1", "status": "RUNNING"},
+                    "last_activity": "t1", "completed": 1, "failed": 0},
+            "idor": {"status": "IDLE", "queue": 2, "active_jobs": 0,
+                     "job_count": 4, "available": True, "worker_alive": True,
+                     "last_job": {"id": "j2", "status": "COMPLETED"},
+                     "last_activity": "t2", "completed": 4, "failed": 0},
+            "ssrf": {"status": "FAILED", "queue": 0, "active_jobs": 0,
+                     "job_count": 2, "available": True, "worker_alive": True,
+                     "last_job": {"id": "j3", "status": "TERMINAL_FAILED"},
+                     "last_activity": "t3", "completed": 0, "failed": 2},
+        }
+        fake_snap = {
+            "deployed": True,
+            "worker": {"alive": True, "reason": "heartbeat fresh",
+                       "worker_id": "w1", "last_heartbeat": "t0",
+                       "mode": "fixture"},
+            "queue": 2, "running": 1, "completed": 5, "failed": 2,
+            "retries": 1, "last_failure": "t3",
+        }
+        with mock.patch.object(rt, "agent_runtime_states",
+                               return_value=fake), \
+                mock.patch.object(rt, "runtime_snapshot",
+                                  return_value=fake_snap):
+            payload = soc_agents.agents_index()
         self.assertGreaterEqual(payload["count"], 1)
+        expected_by_key = {k: v["status"] for k, v in fake.items()}
         for agent in payload["agents"]:
-            source = reported.get(agent["key"])
-            if source is None:
-                self.assertEqual(agent["status"], "PLANNED", agent["name"])
-                self.assertFalse(agent["runtime_tracked"], agent["name"])
-                continue
-            self.assertTrue(agent["runtime_tracked"], agent["name"])
-            if int(source.get("active_jobs") or 0) > 0:
-                expected = "ACTIVE"
-            elif bool(source.get("available")):
-                expected = "READY"
-            else:
-                expected = "PLANNED"
+            expected = expected_by_key.get(agent["key"], "PLANNED")
             self.assertEqual(agent["status"], expected, agent["name"])
+            self.assertEqual(agent["runtime_tracked"],
+                             expected != "PLANNED", agent["name"])
+            if expected != "PLANNED":
+                self.assertTrue(agent["last_job"] is not None
+                                or agent["queue"] >= 0, agent["name"])
+        # the worker block rides along with the runtime report
+        self.assertTrue(payload["runtime"]["worker"]["alive"])
 
     def test_declared_lifecycle_is_reported_not_invented(self):
         from backend.soc import agents as soc_agents
@@ -309,7 +333,7 @@ class TestAgentStatusTruthfulness(unittest.TestCase):
         with undeployed(*UNDEPLOYED):
             detail = soc_agents.agent_detail("xss-agent")
         meaning = detail["identity"]["status_meaning"]
-        self.assertIn("no agent runtime", meaning.lower())
+        self.assertIn("no live agent worker", meaning.lower())
 
 
 # --------------------------------------------------------------------------

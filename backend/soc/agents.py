@@ -12,19 +12,21 @@ environment with neither renders an explicit empty state.  Nothing here
 writes, executes, or fabricates: every value is projected from a declared
 field, and when a source is absent the block is simply empty.
 
-Runtime status is derived, never defaulted:
+Runtime status is derived from the Agent Runtime v1 store, never
+defaulted:
 
-* ``PLANNED`` — a definition exists but no agent runtime reports this agent,
-  so it cannot be executing or accepting work (the deployed tree today);
-* ``READY``   — the agent runtime is deployed and reports the agent able to
-  accept work, with nothing executing;
-* ``ACTIVE``  — the agent runtime reports jobs executing right now.
+* ``PLANNED`` — a definition exists but no live worker can accept work
+  (runtime state absent, or the worker heartbeat is stale);
+* ``READY``   — live worker, no jobs recorded for this agent yet;
+* ``IDLE``    — live worker, past jobs exist, none executing right now;
+* ``ACTIVE``  — a job is CLAIMED/RUNNING for this agent right now;
+* ``FAILED``  — live worker, no active job, last outcome was a terminal
+  failure requiring retry/recovery.
 
-``IDLE`` is deliberately not used: the runtime exposes definition readiness,
-queue depth and job counts, which cannot distinguish "idle with no work" from
-"ready for work" — showing IDLE would be a guess.  Queue/active/total counters
-are ``None`` (rendered as *not tracked*) whenever no runtime reports them, so a
-missing runtime is never displayed as a zero-activity worker.
+Every value comes from real queue state (``agent_runtime_states()``);
+counters are ``None`` (rendered as *not tracked*) whenever no runtime
+state exists, so a missing runtime is never displayed as a
+zero-activity worker.
 """
 
 from __future__ import annotations
@@ -49,30 +51,50 @@ _KB_HARVEST_LIMIT = 40
 # ---------------------------------------------------------------- status model
 STATUS_PLANNED = "PLANNED"
 STATUS_READY = "READY"
+STATUS_IDLE = "IDLE"
 STATUS_ACTIVE = "ACTIVE"
-STATUS_VALUES = (STATUS_PLANNED, STATUS_READY, STATUS_ACTIVE)
+STATUS_FAILED = "FAILED"
+STATUS_VALUES = (STATUS_PLANNED, STATUS_READY, STATUS_IDLE,
+                 STATUS_ACTIVE, STATUS_FAILED)
 
 MEANING_PLANNED = (
-    "definition exists — no agent runtime is deployed in this environment, "
-    "so it cannot execute or accept work")
+    "definition exists — no live agent worker is running in this "
+    "environment, so it cannot execute or accept work")
 MEANING_PLANNED_REGISTERED = (
-    "registered in the agent runtime but not marked ready")
+    "registered in the agent runtime but the worker is not running")
 MEANING_READY = (
-    "the agent runtime is deployed and reports this agent able to accept "
-    "work; nothing is executing right now")
-MEANING_ACTIVE = "the agent runtime reports jobs executing right now"
+    "live agent worker, no jobs recorded for this agent yet")
+MEANING_IDLE = (
+    "live agent worker, past jobs exist, nothing executing right now")
+MEANING_ACTIVE = "the agent runtime reports a job executing right now"
+MEANING_FAILED = (
+    "the agent runtime's last outcome for this agent was a terminal "
+    "failure — retry/recovery required")
 
-_RUNTIME_SOURCE = "backend.research_agents.service"
+_STATUS_MEANINGS = {
+    STATUS_PLANNED: MEANING_PLANNED,
+    STATUS_READY: MEANING_READY,
+    STATUS_IDLE: MEANING_IDLE,
+    STATUS_ACTIVE: MEANING_ACTIVE,
+    STATUS_FAILED: MEANING_FAILED,
+}
+
+_RUNTIME_SOURCE = "backend.research_agents.runtime"
 
 
 def _runtime_status(tracked: bool, stats: Mapping[str, Any]) -> tuple[str, str]:
     """(status, meaning) derived from what the runtime actually reports.
 
     Nothing here falls back to a flattering default: without a runtime
-    report the agent is PLANNED, whatever the definition claims.
+    report the agent is PLANNED, whatever the definition claims.  With a
+    report, the runtime's own five-state verdict is used verbatim.
     """
     if not tracked:
         return STATUS_PLANNED, MEANING_PLANNED
+    reported = _text(stats.get("status")).upper()
+    if reported in _STATUS_MEANINGS:
+        return reported, _STATUS_MEANINGS[reported]
+    # legacy service payloads carry no status — derive conservatively
     if int(stats.get("active_jobs") or 0) > 0:
         return STATUS_ACTIVE, MEANING_ACTIVE
     if bool(stats.get("available")):
@@ -172,33 +194,58 @@ def _registry_agents() -> list[dict[str, Any]]:
 
 
 def _runtime_report() -> tuple[bool, dict[str, dict[str, Any]]]:
-    """(runtime deployed, per-key counters) from the real orchestration facade.
+    """(runtime state exists, per-key runtime verdicts) from Agent Runtime v1.
 
-    Only ``backend.research_agents.service`` can report queue/job counters for
-    these agents.  When it is absent (the deployed tree) or raises, the runtime
-    is reported as *absent* and no counter is invented.
+    The persistent queue (``backend.research_agents.runtime_store``) is the
+    single source: statuses, queue depth, job counts, last job and last
+    activity are read from real state.  When no runtime state exists (or
+    the runtime module is absent), the runtime is reported as *absent* —
+    agents render PLANNED and no counter is invented.
     """
     try:
-        from backend.research_agents import service as ra
-
-        payload = ra.agents_payload()
+        from backend.research_agents.runtime import (
+            agent_runtime_states,
+            runtime_snapshot,
+        )
     except Exception:
         return False, {}
-    if not isinstance(payload, Mapping):
+    try:
+        snap = runtime_snapshot()
+        states = agent_runtime_states()
+    except Exception:
         return False, {}
+    if not isinstance(snap, Mapping) or not snap.get("deployed"):
+        return False, {}
+    worker = snap.get("worker") if isinstance(snap.get("worker"), Mapping)         else {}
     out: dict[str, dict[str, Any]] = {}
-    for entry in payload.get("agents", []) or []:
-        if not isinstance(entry, Mapping):
+    for key, st in (states or {}).items():
+        if not isinstance(st, Mapping):
             continue
-        key = _text(entry.get("category")).lower()
-        if not key:
-            continue
-        out[key] = {
-            "queue": int(entry.get("queue") or 0),
-            "active_jobs": int(entry.get("active_jobs") or 0),
-            "job_count": int(entry.get("job_count") or 0),
-            "available": bool(entry.get("available")),
+        out[_text(key).lower()] = {
+            "queue": int(st.get("queue") or 0),
+            "active_jobs": int(st.get("active_jobs") or 0),
+            "job_count": int(st.get("job_count") or 0),
+            "available": bool(st.get("available")),
+            "status": _text(st.get("status")),
+            "last_job": st.get("last_job"),
+            "last_activity": _text(st.get("last_activity")),
+            "completed": int(st.get("completed") or 0),
+            "failed": int(st.get("failed") or 0),
+            "worker_alive": bool(st.get("worker_alive")),
         }
+    out["_worker"] = {
+        "alive": bool(worker.get("alive")),
+        "reason": _text(worker.get("reason")),
+        "worker_id": _text(worker.get("worker_id")),
+        "last_heartbeat": _text(worker.get("last_heartbeat")),
+        "mode": _text(worker.get("mode")),
+        "queue_total": int(snap.get("queue") or 0),
+        "running": int(snap.get("running") or 0),
+        "completed_total": int(snap.get("completed") or 0),
+        "failed_total": int(snap.get("failed") or 0),
+        "retries": int(snap.get("retries") or 0),
+        "last_failure": _text(snap.get("last_failure")),
+    }
     return True, out
 
 
@@ -292,14 +339,16 @@ def agents_index() -> dict[str, Any]:
     except Exception:
         declared = []
     runtime_deployed, counts = _runtime_report()
+    worker = counts.get("_worker") if runtime_deployed else {}
     agents: list[dict[str, Any]] = []
     for agent in declared:
         if not isinstance(agent, Mapping):
             continue
         key = _text(agent.get("key")).lower()
         stats = counts.get(key) or counts.get(_text(agent.get("category"))) or {}  # noqa: E501
-        tracked = runtime_deployed and key in counts
+        tracked = runtime_deployed and key in counts and key != "_worker"
         status, meaning = _runtime_status(tracked, stats)
+        last_job = stats.get("last_job") if isinstance(stats, Mapping) else None
         agents.append({
             "slug": _slug(key),
             "key": key,
@@ -312,12 +361,17 @@ def agents_index() -> dict[str, Any]:
             "runtime_tracked": tracked,
             "queue": int(stats.get("queue") or 0) if tracked else None,
             "active_jobs": int(stats.get("active_jobs") or 0) if tracked else None,  # noqa: E501
-            "job_count": int(stats.get("job_count") or 0) if tracked else None,
+            "job_count": int(stats.get("job_count") or 0) if tracked else None,  # noqa: E501
             "available": bool(stats.get("available")) if tracked else False,
+            "last_job": (last_job if isinstance(last_job, Mapping) else None),
+            "last_activity": _text(stats.get("last_activity"))
+                             if tracked else "",
         })
     agents.sort(key=lambda a: a["name"])
-    return {"count": len(agents), "agents": agents,
-            "runtime": _runtime_block(runtime_deployed)}
+    block = _runtime_block(runtime_deployed)
+    if runtime_deployed and isinstance(worker, Mapping):
+        block["worker"] = dict(worker)
+    return {"count": len(agents), "agents": agents, "runtime": block}
 
 
 def _agent_knowledge(agent_key: str, agent_name: str) -> dict[str, list[str]]:
@@ -514,7 +568,9 @@ def agent_detail(slug: str) -> dict[str, Any] | None:
             "they are planned, not implemented, in this deployment.")
     knowledge = _agent_knowledge(key, name)
     history = _agent_history(name)
+    runtime_records = _runtime_agent_records(key, name)
     return {
+        "runtime_records": runtime_records,
         "identity": {
             "slug": slug,
             "key": key,
@@ -561,3 +617,98 @@ def agent_detail(slug: str) -> dict[str, Any] | None:
             "available": runtime["available"],
         },
     }
+
+
+def _runtime_agent_records(agent_key: str,
+                           agent_name: str) -> dict[str, Any]:
+    """Real per-agent runtime records (jobs, knowledge used, cases).
+
+    Everything here is read from the Agent Runtime store; absent store
+    yields explicit empty blocks with ``source_available`` false — nothing
+    is synthesized.
+    """
+    empty = {"source_available": False, "jobs": [], "knowledge_used": [],
+             "cases": [], "evidence_count": 0, "worker": {}}
+    try:
+        from backend.research_agents.capabilities import capability_for
+        from backend.research_agents.runtime import runtime_snapshot
+        from backend.research_agents.runtime_store import default_store
+    except Exception:
+        return empty
+    try:
+        store = default_store()
+        if not store.state_path.exists():
+            return empty
+        snap = runtime_snapshot(store)
+        cat = ""
+        cap = capability_for(agent_key)
+        if cap is None:
+            # slug may map by agent name instead of category
+            from backend.research_agents.capabilities import CAPABILITIES
+            for c, candidate in CAPABILITIES.items():
+                if candidate.agent_name == agent_name or \
+                        agent_key in (c.lower(), candidate.agent_name):
+                    cat = c
+                    break
+        else:
+            cat = cap.category
+        jobs = store.list_jobs(limit=500) if cat else []
+        jobs = [j for j in jobs if j.agent_category.upper() == cat.upper()]
+        jobs.sort(key=lambda j: j.updated_at or j.created_at or "")
+        job_rows = [
+            {
+                "id": j.id,
+                "status": j.status,
+                "mission": j.mission,
+                "attempt_count": j.attempt_count,
+                "execution_mode": j.execution_mode,
+                "confidence": "",
+                "case_ref": j.case_ref,
+                "evidence_refs": len(j.evidence_refs),
+                "created_at": j.created_at,
+                "updated_at": j.updated_at,
+                "completed_at": j.completed_at,
+                "error": j.error,
+            }
+            for j in reversed(jobs[:20])
+        ]
+        # enrich confidence from persisted results
+        for row in job_rows:
+            res = store.get_result(row["id"])
+            if res is not None:
+                row["confidence"] = res.confidence
+        knowledge = [
+            k for k in store.list_knowledge_use()
+            if _text(k.get("agent")).lower() == agent_name.lower()
+            or _text(k.get("category")).upper() == cat.upper()
+        ]
+        cases = [c for c in store.list_cases()
+                 if _text(c.get("category")).upper() == cat.upper()
+                 or _text(c.get("specialist")).lower() == agent_name.lower()]
+        evidence = [e for e in store.list_evidence()
+                    if _text(e.get("category")).upper() == cat.upper()]
+        return {
+            "source_available": True,
+            "jobs": job_rows,
+            "knowledge_used": [
+                {"document_id": _text(k.get("document_id")),
+                 "title": _text(k.get("title")),
+                 "topic": _text(k.get("topic")),
+                 "at": _text(k.get("created_at"))}
+                for k in knowledge[-20:]
+            ],
+            "cases": [
+                {"id": _text(c.get("id")),
+                 "target": _text(c.get("target")),
+                 "confidence": _text(c.get("confidence")),
+                 "status": _text(c.get("status")),
+                 "execution_mode": _text(c.get("execution_mode")),
+                 "created_at": _text(c.get("created_at"))}
+                for c in cases[-20:]
+            ],
+            "evidence_count": len(evidence),
+            "worker": (snap.get("worker") or {})
+            if isinstance(snap.get("worker"), Mapping) else {},
+        }
+    except Exception:
+        return empty

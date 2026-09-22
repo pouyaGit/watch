@@ -271,8 +271,8 @@ class TestOverviewAgentMetric(unittest.TestCase):
             payload = soc_overview.overview_payload()
         self.assertEqual(payload["agents"], 3)
         self.assertEqual(payload["agent_counts"],
-                         {"registered": 3, "ready": 1, "active": 1,
-                          "planned": 1})
+                         {"registered": 3, "ready": 1, "idle": 0,
+                          "active": 1, "failed": 0, "planned": 1})
 
     def test_overview_page_labels_the_metric_truthfully(self):
         from fastapi.testclient import TestClient

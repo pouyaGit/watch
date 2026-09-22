@@ -170,9 +170,36 @@ def _aec_events() -> list[dict[str, Any]]:
     return events
 
 
+def _agent_runtime_events() -> list[dict[str, Any]]:
+    """Agent Runtime v1 activity rows (real queue/audit events)."""
+    events: list[dict[str, Any]] = []
+    try:
+        from backend.research_agents.runtime import runtime_activity
+
+        rows = runtime_activity(limit=_TIMELINE_LIMIT)
+    except Exception:
+        return events
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        events.append({
+            "time": _text(row.get("at")),
+            "agent": _text(row.get("agent")) or "agent-runtime",
+            "action": _text(row.get("action")),
+            "detail": (
+                f"[{_text(row.get('execution_mode') or row.get('mode')) or 'production'}] "
+                f"{_text(row.get('detail'))}"
+            ).strip(),
+            "source": "agent-runtime",
+            "job_id": _text(row.get("job_id")),
+        })
+    return events
+
+
 def activity_payload(limit: int = _TIMELINE_LIMIT) -> dict[str, Any]:
     """Mission-control payload: counts + bounded real timeline."""
-    timeline = _cve_events() + _investigation_events() + _aec_events()
+    timeline = (_cve_events() + _investigation_events() + _aec_events()
+                + _agent_runtime_events())
     # aec events use tick numbers; sort numeric/ISO mixed by str, bounded
     timeline.sort(key=lambda e: str(e.get("time") or ""))
     return {

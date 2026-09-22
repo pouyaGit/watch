@@ -13,7 +13,7 @@
       agent by the registry that supplies it.</p>
     {% endif %}
     <p class="text-slate-400 text-sm mt-2">
-      <span class="badge {{ 'badge-ok' if identity.status in ['READY', 'ACTIVE'] else 'badge-muted' }}">{{ identity.status }}</span>
+      <span class="badge {{ 'badge-ok' if identity.status in ['READY', 'IDLE', 'ACTIVE'] else 'badge-muted' }}">{{ identity.status }}</span>
       {{ identity.status_meaning }}.
     </p>
   </div>
@@ -39,6 +39,10 @@
         <div class="flex gap-2"><dt class="w-40 text-slate-400">Active jobs</dt><dd>{{ runtime.active_jobs }}</dd></div>
         <div class="flex gap-2"><dt class="w-40 text-slate-400">Total jobs</dt><dd>{{ runtime.job_count }}</dd></div>
         <div class="flex gap-2"><dt class="w-40 text-slate-400">Accepting work</dt><dd>{{ 'yes' if runtime.available else 'no' }}</dd></div>
+        {% if runtime.worker is defined and runtime.worker %}
+        <div class="flex gap-2"><dt class="w-40 text-slate-400">Worker</dt>
+          <dd>{{ 'alive' if runtime.worker.alive else 'not running' }} — {{ runtime.worker.reason }}</dd></div>
+        {% endif %}
       </dl>
       <p class="text-slate-500 text-xs mt-2">Counters reported by {{ runtime.source }}.</p>
       {% else %}

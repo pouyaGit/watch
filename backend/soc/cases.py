@@ -28,6 +28,27 @@ def cases_index() -> dict[str, Any]:
             rows.append(case)
     except Exception:
         rows = []
+    # Agent Runtime v1 cases (evidence-gated creations), honest provenance
+    try:
+        from backend.research_agents.runtime_store import default_store
+
+        store = default_store()
+        if store.state_path.exists():
+            for case in store.list_cases():
+                rows.append({
+                    "case_id": _text(case.get("id")),
+                    "target": _text(case.get("target")),
+                    "category": _text(case.get("category")),
+                    "specialist": _text(case.get("specialist")),
+                    "evidence_state": _text(case.get("confidence")),
+                    "research_state": _text(case.get("status")),
+                    "next_action": "analyst review",
+                    "source": "agent-runtime",
+                    "execution_mode": _text(case.get("execution_mode")),
+                    "detail_url": f"/ui/soc/cases/{_text(case.get('id'))}",
+                })
+    except Exception:
+        pass
     return {"count": len(rows), "cases": _bounded(rows, 100)}
 
 
@@ -37,15 +58,78 @@ def _resolution(case_id: str) -> tuple[dict | None, str]:
         from backend.routers import aec
 
         detail = aec.build_case_detail_view(case_id)
-        if not isinstance(detail, dict) or "case" not in detail:
-            return None, "not found"
-        case = detail.get("case")
-        # an unresolved id yields an empty case record — treat as missing
-        if not isinstance(case, Mapping) or not case.get("case_id"):
-            return None, "not found"
-        return detail, ""
+        case = detail.get("case") if isinstance(detail, dict) else None
+        # a resolved AEC id wins; anything else falls through to the store
+        if isinstance(case, Mapping) and case.get("case_id"):
+            return detail, ""
     except Exception:
-        return None, "unavailable"
+        pass
+    # fallback: an Agent Runtime v1 case (evidence-gated creation)
+    runtime_detail = _runtime_case_detail(case_id)
+    if runtime_detail is not None:
+        return runtime_detail, ""
+    return None, "not found"
+
+
+def _runtime_case_detail(case_id: str) -> dict[str, Any] | None:
+    """Build a case detail from the Agent Runtime store (responsible agent
+    + research chain), or None when this id is not a runtime case."""
+
+    try:
+        from backend.research_agents.runtime_store import default_store
+
+        store = default_store()
+        case = store.get_case(case_id)
+        if case is None:
+            return None
+        job = store.get(_text(case.get("job_id")))
+        result = store.get_result(_text(case.get("job_id")))
+        evidence = store.list_evidence(job_id=_text(case.get("job_id")))
+    except Exception:
+        return None
+    chain: list[dict[str, Any]] = []
+    if job is not None:
+        chain.append({"step": "job", "ref": job.id, "status": job.status,
+                      "mission": job.mission,
+                      "authorization_ref": job.authorization_ref})
+    if result is not None:
+        chain.append({"step": "result", "ref": job.id if job else "",
+                      "confidence": result.confidence,
+                      "findings": len(result.findings),
+                      "blockers": list(result.blockers),
+                      "execution_mode": result.execution_mode})
+    for row in evidence:
+        chain.append({"step": "evidence", "ref": _text(row.get("id")),
+                      "signal": _text(row.get("signal")),
+                      "type": _text(row.get("type"))})
+    return {
+        "case": {
+            "case_id": _text(case.get("id")),
+            "target": _text(case.get("target")),
+            "category": _text(case.get("category")),
+            "specialist": _text(case.get("specialist")),
+            "hypothesis": _text(case.get("hypothesis")),
+            "confidence": _text(case.get("confidence")),
+            "status": _text(case.get("status")),
+            "created_at": _text(case.get("created_at")),
+            "source": "agent-runtime",
+            "execution_mode": _text(case.get("execution_mode")),
+        },
+        "authorization_status": {
+            "state": "recorded",
+            "reference": _text(case.get("authorization_context")),
+        },
+        "research_history": [],
+        "agent_chain": {
+            "responsible_agent": _text(case.get("specialist")),
+            "job_id": _text(case.get("job_id")),
+            "observation_refs": list(case.get("observation_refs") or []),
+            "evidence_refs": list(case.get("evidence_refs") or []),
+            "chain": chain,
+            "analysis": _text(case.get("analysis")),
+            "execution_mode": _text(case.get("execution_mode")),
+        },
+    }
 
 
 def _evidence_artifacts(case_id: str) -> list[dict[str, Any]]:
@@ -123,6 +207,10 @@ def case_detail(case_id: str) -> dict[str, Any] | None:
 
     return {
         "case_id": case_id,
+        "agent_chain": (detail.get("agent_chain")
+                        if isinstance(detail.get("agent_chain"), Mapping)
+                        else None),
+        "source": _text(case.get("source")),
         "target": target,
         "hypothesis": hypothesis,
         "suggested_analysis": suggested_analysis,
