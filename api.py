@@ -27,7 +27,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
-
+from backend.routers import aec
 # Importing this module triggers database/db.py -> mongoengine.connect().
 # We rely on that side effect -- every Document subclass (Programs, TaskRun,
 # ...) needs the connection to be open before the first query.
@@ -109,7 +109,7 @@ app.include_router(research_router.router)
 app.include_router(research_pages.router)
 app.include_router(command_center_router.router)
 app.include_router(product_api_router.router)
-
+app.include_router(aec.router)
 
 if __name__ == "__main__":
     import uvicorn
