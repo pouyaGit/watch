@@ -40,6 +40,7 @@ from backend.routers import research as research_router
 from backend.routers import research_activity as research_activity_router
 from backend.routers import research_cases as research_cases_router
 from backend.routers import research_pages
+from backend.routers import soc as soc_router
 from config import config
 
 API_KEY = config().get("API_KEY", "")
@@ -108,6 +109,7 @@ app.include_router(research_cases_router.router)
 app.include_router(research_router.router)
 app.include_router(research_pages.router)
 app.include_router(command_center_router.router)
+app.include_router(soc_router.router)
 app.include_router(product_api_router.router)
 app.include_router(aec.router)
 
