@@ -1,12 +1,15 @@
-"""SOC UX correction — SOC-only sidebar + truthful agent status.
+"""SOC UX correction — composition + truthful agent status.
 
 Two defects from browser verification of the live AI SOC:
 
 1. the legacy Research section was still *in* the primary sidebar (the
    previous fix only wrapped it in a collapsed ``<details>``).  The approved IA
    wants it out of the normal sidebar entirely: routes stay mounted for
-   backward compatibility, links go.  Nothing may replace it with another
-   dropdown, and no "Legacy / Engineering" section may remain visible.
+   backward compatibility, links going.  Nothing may replace it with another
+   dropdown, and no "Legacy / Engineering" section may remain visible.  The
+   sidebar itself carries two product surfaces — Recon Ops (restored core
+   recon navigation) + AI SOC — plus the System group; see
+   ``tests.test_recon_soc_navigation`` for that composition contract.
 
 2. the Agents page statuses did not describe the real runtime.  ``ready`` was
    a *default substituted when the registry declared no lifecycle, and queue /
@@ -40,18 +43,24 @@ SOC_PAGES = ["/ui/soc/", "/ui/soc/agents", "/ui/soc/cases", "/ui/soc/activity",
 #: the approved primary product navigation
 SOC_PRIMARY_LABELS = ["Overview", "Agents", "Missions / Activity", "Cases",
                       "Evidence", "Knowledge", "Handoff"]
-#: the only non-SOC items allowed to stay (genuinely necessary system links)
+#: restored core Recon Operations navigation (second product surface)
+RECON_PRIMARY_LABELS = ["Programs", "Subdomains", "Live", "HTTP",
+                        "Fresh HTTP", "Wordlists", "URLs", "Endpoints",
+                        "Parameter Discovery", "Recent Changes"]
+#: the only non-SOC items allowed to stay (system links)
 SYSTEM_LABELS = ["Runs", "Tasks", "API docs"]
-ALLOWED_SIDEBAR_LABELS = set(SOC_PRIMARY_LABELS) | set(SYSTEM_LABELS)
+ALLOWED_SIDEBAR_LABELS = (set(SOC_PRIMARY_LABELS) | set(RECON_PRIMARY_LABELS)
+                          | set(SYSTEM_LABELS))
 
-#: must be gone from the normal sidebar
+#: must be gone from the normal sidebar: the OLD research navigation plus
+#: engineering entries that are intentionally not primary navigation.
+#: (Core recon items are deliberately NOT in this list — they were
+#: restored; see RECON_PRIMARY_LABELS.)
 LEGACY_PRIMARY_LABELS = ["Research Cases", "Research / CVEs", "Research Queue",
                          "Research Tasks", "Research Leads", "Research Plans",
                          "Research Agent", "XSS", "Knowledge Base", "Reports",
-                         "Command Center", "Dashboard", "Programs", "Domains",
-                         "HTTP", "URLs", "Endpoints", "Parameters", "Crawl",
-                         "DNS Bruteforce", "Parameter Discovery",
-                         "Recent Changes", "Attack Surface"]
+                         "Command Center", "Dashboard", "Domains", "Crawl",
+                         "DNS Bruteforce", "Attack Surface"]
 
 LEGACY_ROUTES = ["/ui/research", "/ui/research/queue", "/ui/research/tasks",
                  "/ui/research/leads", "/ui/research/plans",
@@ -170,8 +179,15 @@ class TestSidebarIsSocOnly(_MountedApp):
         self.assertNotIn("<details", nav)
         self.assertNotIn("Research</p>", nav)
         groups = GROUP_RE.findall(nav)
-        self.assertEqual(groups, ["AI SOC", "System"],
+        self.assertEqual(groups, ["Recon Ops", "AI SOC", "System"],
                          f"unexpected sidebar groups: {groups}")
+
+    def test_recon_and_soc_items_coexist(self):
+        names = set(link_names(sidebar(self.get("/ui/soc/").text)))
+        for label in RECON_PRIMARY_LABELS:
+            self.assertIn(label, names, f"restored recon link missing: {label}")
+        for label in SOC_PRIMARY_LABELS:
+            self.assertIn(label, names, f"SOC link missing: {label}")
 
     def test_sidebar_contains_exactly_the_intended_items(self):
         names = set(link_names(sidebar(self.get("/ui/soc/").text)))

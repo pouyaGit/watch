@@ -1,0 +1,39 @@
+{# wordlists.html — read-only index of the per-program wordlists the
+   discovery pipeline already generates (served by the existing
+   /api/wordlist/{program_name} endpoint). Lists; never creates. #}
+{% extends "base.html" %}
+{% block title %}Wordlists — WATCH{% endblock %}
+{% block page %}Wordlists{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1 class="page-title">Wordlists</h1>
+  <p class="page-sub">{{ total }} program{{ 's' if total != 1 }} — wordlists
+    are generated per program and downloaded from the existing read-only
+    wordlist API.</p>
+</div>
+
+<div class="table-wrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Program</th>
+        <th>Wordlist</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in wordlists %}
+      <tr>
+        <td><a href="{{ entry.program_url }}">{{ entry.program_name }}</a></td>
+        <td><a href="{{ entry.wordlist_url }}" class="badge-link">download</a></td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="2">No programs yet — a wordlist appears here for each
+          program once discovery has run.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

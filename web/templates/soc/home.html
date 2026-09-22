@@ -10,7 +10,8 @@
   <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
     <a class="panel p-4 block hover:border-cyan-500/50" href="/ui/soc/agents{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">
       <div class="text-3xl font-bold">{{ agents }}</div>
-      <div class="text-slate-400 text-sm">Agents</div>
+      <div class="text-slate-400 text-sm">Agents registered</div>
+      <div class="text-slate-500 text-xs">{{ agent_counts.ready }} ready · {{ agent_counts.active }} active · {{ agent_counts.planned }} planned</div>
     </a>
     <a class="panel p-4 block hover:border-cyan-500/50" href="/ui/soc/cases{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">
       <div class="text-3xl font-bold">{{ cases }}</div>
@@ -41,7 +42,15 @@
         <span class="font-mono">{{ runtime.current_run or '—' }}</span></div>
       <div><span class="text-slate-400">Basis:</span>
         <span class="text-slate-500">{{ runtime.status_basis }}</span></div>
+      {% if runtime.status == 'UNKNOWN' %}
+      <div class="text-slate-500">Runtime state could not be observed —
+        UNKNOWN is not failure.</div>
+      {% endif %}
     </div>
+    <p class="text-slate-600 text-xs mt-2">Status comes from the read-only
+      R83 activity collector — scheduler run records, research case records
+      and the execution-lock probe — the same source the Activity page and
+      the research-activity endpoint use.</p>
   </section>
 
   <div class="flex flex-wrap gap-3">

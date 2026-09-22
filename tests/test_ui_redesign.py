@@ -63,14 +63,17 @@ class TestShell(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text[:300])
         nav = re.search(r'<nav class="sidebar-nav">(.*?)</nav>', r.text,
                         re.S).group(1)
-        # SOC-first sidebar: the AI SOC group plus the system group
-        for token in ("AI SOC", "/ui/soc/agents", "/ui/soc/cases",
+        # two product surfaces: Recon Ops (restored core recon links),
+        # AI SOC, and the system group
+        for token in ("Recon Ops", "/ui/programs", "/ui/domains", "/ui/http",
+                      "/ui/http/fresh", "/ui/wordlists", "/ui/urls",
+                      "/ui/endpoints", "/ui/parameters", "/ui/changes",
+                      "AI SOC", "/ui/soc/agents", "/ui/soc/cases",
                       "/ui/soc/activity", "/ui/soc/handoff", "System"):
-            self.assertIn(token, nav)
-        # legacy engineering/research groups are no longer primary navigation
-        for token in ("Discovery", "Operations", "/ui/parameters",
-                      "/ui/endpoints", "/ui/http", "/ui/urls",
-                      "Legacy / Engineering", "Research / CVEs"):
+            self.assertIn(token, nav, f"sidebar item missing: {token}")
+        # the OLD research group and legacy engineering entries stay out
+        for token in ("Legacy / Engineering", "Research / CVEs",
+                      "Research Queue", "Command Center", "Attack Surface"):
             self.assertNotIn(token, nav, f"legacy sidebar item leaked: {token}")
         # timezone indicator (mandatory)
         self.assertIn("Asia/Tehran", r.text)
