@@ -228,10 +228,11 @@ class TestAdvisoryContract(_EnvBase):
         instr = req["instruction"]
         self.assertLessEqual(len(instr), 400)
         self.assertTrue(instr.endswith("credentials."), instr[-60:])
-        self.assertIn("xss-agent-analysis-v1.1", instr)
-        self.assertIn("summary (<=150 chars)", instr)
-        self.assertIn("insight_code: UPPER_SNAKE_CASE", instr)
-        self.assertIn("no other keys", instr)
+        self.assertIn("xss-agent-analysis-v1.2", instr)
+        self.assertIn('{"summary":"<=150 chars"', instr)
+        self.assertIn('"insight_code":"UPPER_SNAKE_CASE"', instr)
+        self.assertIn("no markdown", instr)
+        self.assertIn("only these keys", instr)
 
     def test_context_budget_fails_closed_before_provider(self):
         cfg = RuntimeConfig(execution_mode="fixture",
@@ -295,7 +296,7 @@ class TestXSSChainWithLLM(_EnvBase):
         self.assertEqual(result.provider, "OPENROUTER")
         self.assertEqual(result.model, "openrouter/free")
         self.assertEqual(result.prompt_version,
-                         "xss-agent-analysis-v1.1")
+                         "xss-agent-analysis-v1.2")
         st = result.structured
         self.assertIn(st["verdict"],
                       ("evidence_sufficient_for_review",
@@ -516,7 +517,7 @@ class TestSOCExposure(_EnvBase):
         last = records["llm_last"]
         self.assertEqual(last["requested_model"], "openrouter/free")
         self.assertEqual(last["prompt_version"],
-                         "xss-agent-analysis-v1.1")
+                         "xss-agent-analysis-v1.2")
         self.assertEqual(last["job_status"], JobStatus.COMPLETED.value)
         self.assertTrue(last["hypothesis"])
         self.assertIn("verdict", last)

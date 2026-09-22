@@ -185,3 +185,19 @@ smoke 95/95.
   regression-tested (instruction bounds + version pins). The terminal job
   `job-xss-c70608036a` remains an honest permanent record; a fresh job
   runs the v1.1 success-path validation after promotion.
+
+## v1.2: example-driven prompt after v1.1 attempts (recorded)
+
+- Job `job-xss-113d54a0e0` ran on v1.1: attempt 1
+  `llm_schema_failure: provider content is not valid JSON`;
+  attempt 2 `schema_failure: insight_code item shape invalid`
+  (2/3, auto-retrying, no fabricated output). Across five real
+  free-router calls the varying reply defects are: over-long summary,
+  malformed items, non-JSON content — the strict R45 validator never
+  repairs, and prose-style shape instructions did not lift conformance.
+- **`xss-agent-analysis-v1.2`** replaces prose with a complete
+  example skeleton (exact `summary`/`insights`/`recommendations`
+  objects), `Raw JSON, no markdown, exactly:`, item/length caps —
+  worst-case length 389/400, regression-tested (version pins +
+  skeleton-token assertions). Attempt 3 of the same job runs on v1.2
+  after promotion.
