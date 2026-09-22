@@ -449,6 +449,47 @@ Known pre-existing baseline failures are unchanged and not hidden:
 test_research_agent (1 data-location), dashboard navigation flake,
 3 stale battery entries (r82 sidebar / CVE sort / legacy cases).
 
+------------------------------------------------------------
+PRODUCTION VALIDATION FINDINGS — defects found by REAL runs
+(fixed in this promotion; Phase 17 exists exactly for this)
+------------------------------------------------------------
+
+Run 1 (job-xss-1d9cb07e56, deterministic hunt before --llm wiring):
+loop itself verified in production — objective obj-4166d2685ddd,
+2 plans (genuine re-plan v1->v2), 2 GRANTED authorizations, 3 typed
+observations, RESOLVED / sufficient_evidence, 12 objective revisions.
+
+Run 2 (job-xss-447203e643, real openrouter/free analysis + hunt):
+found THREE defects, all fixed with regression tests before this
+promotion:
+
+1. advisory_id was generated as adv-<12 hex> but the provider schema
+   requires ADVISORY_ID_RE ^adv-[0-9a-f]{16}$ -> both LLM advisor
+   calls in that run were rejected pre-flight
+   ("advisory_id is malformed"); the loop degraded honestly to
+   deterministic planning (by design) and the job still COMPLETED
+   with case case-cd39108f032c (final analysis LLM: openrouter/free,
+   prompt xss-agent-analysis-v2, gate high).
+2. The follow-up structural checks then exposed advisory_mode and
+   source_layer outside their closed enums, source_refs using
+   unlisted layers/free-text references, limitations using free text,
+   and a request above MAX_CONTEXT_CHARS (4000 canonical). The hunt
+   request is now fully conformed: advisory_mode RESEARCH_PRIORITY,
+   source_layer MULTI, R44/R45 source refs with <=40-char lowercase
+   references (incl. the scope reference required by Phase 7),
+   ADVISORY_INPUT_LIMITATIONS codes only, worst-case request
+   canonical 3769/4000 — proven by sanitize_provider_context in the
+   test suite (advisory_id + full-request structural test).
+3. Contract rows_added was reset by every executed plan and reported
+   only the last plan's additions; it now accumulates across all
+   plans (test asserts contract total == sum of observation records).
+
+Observation honesty note: typed reads DID add genuinely new rows in
+production (http-rows +1, parameter-rows +22 beyond the legacy first
+read's budget); url-rows returned 0 new rows (already covered) and is
+recorded honestly as an ok observation with 0 new rows — never as a
+fabricated gain.
+
 Delivery: work on agent/daily-development; explicit file staging
 (production 27 dirty entries untouched); check.sh gates; push via
 push_safe.sh; promotion request; STOP at Telegram APPROVE.

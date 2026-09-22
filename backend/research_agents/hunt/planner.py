@@ -19,6 +19,7 @@ never writes a plan, never chooses scope, never executes anything.
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -38,6 +39,9 @@ from backend.research_agents.hunt.registry import (
     validate_observation_requests,
 )
 from backend.research_agents.hunt.store import utcnow
+from ai.schemas.llm_advisory_input import ADVISORY_INPUT_LIMITATIONS
+from ai.schemas.llm_provider import (SOURCE_REF_LAYER_R44,
+                                     SOURCE_REF_LAYER_R45)
 
 SCORING_METHOD = "heuristic_transparent_v1"
 
@@ -167,8 +171,8 @@ def advisor_request(
 ) -> dict[str, Any]:
     """R51-shaped advisory request: ONLY bounded hunt state, the allowed
     observation registry, scope reference and safety constraints."""
-    items = list(missing_items)[:8]
-    cands = list(candidates)[:6]
+    items = list(missing_items)[:3]
+    cands = list(candidates)[:3]
     allowed = [str(t) for t in allowed_types]
     instruction = (
         f"{ADVISOR_PROMPT_VERSION}: hunt planning advisor for "
@@ -191,12 +195,14 @@ def advisor_request(
         signals.append({
             "signal_type": "MISSING_EVIDENCE",
             "subject": (f"{item.item_code}: "
-                        f"{_bounded(item.reason, 160)}"),
+                        f"{_bounded(item.reason, 100)}"),
             "source_agent": capability.agent_name,
             "source_classification": capability.category,
-            "recommendation": (f"candidate observation types: "
-                               f"{', '.join(item.observation_type_suggestions)}"
-                               or "none")[:240],
+            "recommendation": (
+                "candidates: "
+                + _bounded(",".join(
+                    item.observation_type_suggestions) or "none", 120)
+            )[:160],
             "confidence": "not_evaluated",
             "research_only": True,
         })
@@ -204,46 +210,55 @@ def advisor_request(
         signals.append({
             "signal_type": "DETERMINISTIC_CANDIDATE",
             "subject": (f"{cand.observation_type} score={cand.score} "
-                        f"gain={cand.information_gain} "
-                        "(heuristic)"),
+                        "gain=heuristic"),
             "source_agent": capability.agent_name,
             "source_classification": capability.category,
-            "recommendation": _bounded(cand.reason, 240),
+            "recommendation": _bounded(cand.reason, 160),
             "confidence": "not_evaluated",
             "research_only": True,
         })
 
     sections = {
         "research_context": {
-            "research_question": _bounded(objective.research_objective, 240),
+            "research_question": _bounded(
+                objective.research_objective, 160),
             "research_focus": f"hunt-planning:{capability.category}",
             "context_fact_count": len(signals),
             "source_layers": ["authorized_observations", "knowledge",
                               "research_memory", "deterministic_analysis"],
             "research_only": True,
         },
-        "learning_signals": signals[:10],
+        "learning_signals": signals[:6],
     }
+    # R51 source_refs: closed layer enum (R42/R43/R44/R45),
+    # reference <= 40 chars, lowercase — the scope reference is the
+    # authorization identifier required by Phase 7 (no target URLs,
+    # no endpoints, no DB dumps).
     source_refs = [
-        {"layer": "scope", "reference": _bounded(objective.scope_ref, 80)},
-        {"layer": "objective", "reference": _bounded(
-            objective.objective_id, 80)},
-        {"layer": "registry", "reference": "hunt-observation-registry-v1"},
-        {"layer": "observed_types",
-         "reference": _bounded(",".join(sorted(observed_types)), 80)},
+        {"layer": SOURCE_REF_LAYER_R45,
+         "reference": _bounded(objective.scope_ref, 40).lower() or "none"},
+        {"layer": SOURCE_REF_LAYER_R45,
+         "reference": _bounded(
+             f"objective:{objective.objective_id}", 40).lower()},
+        {"layer": SOURCE_REF_LAYER_R45,
+         "reference": "hunt-observation-registry-v1"},
+        {"layer": SOURCE_REF_LAYER_R44,
+         "reference": "hunt-missing-evidence-v1"},
     ]
-    limitations = [
-        "advisory only: deterministic validator constructs the final plan",
-        "observation registry is closed: only listed types can be planned",
-        "no exploitation, no target contact, no scope change",
-        *EXECUTION_GUARANTEES,
-    ]
+    # limitations: closed code enum only (free text is rejected by the
+    # provider structural validator)
+    limitations = list(ADVISORY_INPUT_LIMITATIONS)[:8]
     return {
         "rule_version": "r51",
-        "advisory_id": new_id("adv"),
-        "advisory_mode": "hunt_planning_advisor",
+        # schema ADVISORY_ID_RE requires adv- + 16 hex chars
+        # (the R51 structural validator rejects anything else)
+        "advisory_id": f"adv-{uuid.uuid4().hex[:16]}",
+        # closed enum conformance: ADVISORY_MODES / LLM_ADVISORY_SOURCE_
+        # LAYERS (RESEARCH_PRIORITY = prioritization advice, MULTI =
+        # missing-evidence + candidates + knowledge layers)
+        "advisory_mode": "RESEARCH_PRIORITY",
         "provider_kind": "OPENROUTER",
-        "source_layer": "hunt_planner",
+        "source_layer": "MULTI",
         "instruction": instruction,
         "sections": sections,
         "source_refs": source_refs,
