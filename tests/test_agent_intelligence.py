@@ -219,6 +219,20 @@ class TestAdvisoryContract(_EnvBase):
         payload = json.dumps(req["sections"], sort_keys=True, default=str)
         self.assertLessEqual(len(payload), 4000 + 200)
 
+    def test_instruction_carries_numeric_contract_bounds(self):
+        cap = capability_for("XSS")
+        req = _advisory_request(cap, _job(), _rows(2), [],
+                                deterministic_analysis(cap, _job(),
+                                                       _rows(2), []),
+                                prompt_version_for(cap))
+        instr = req["instruction"]
+        self.assertLessEqual(len(instr), 400)
+        self.assertTrue(instr.endswith("credentials."), instr[-60:])
+        self.assertIn("xss-agent-analysis-v1.1", instr)
+        self.assertIn("summary (<=150 chars)", instr)
+        self.assertIn("insight_code: UPPER_SNAKE_CASE", instr)
+        self.assertIn("no other keys", instr)
+
     def test_context_budget_fails_closed_before_provider(self):
         cfg = RuntimeConfig(execution_mode="fixture",
                             llm_provider_kind="OPENROUTER",
@@ -280,7 +294,8 @@ class TestXSSChainWithLLM(_EnvBase):
         self.assertIsNotNone(result)
         self.assertEqual(result.provider, "OPENROUTER")
         self.assertEqual(result.model, "openrouter/free")
-        self.assertEqual(result.prompt_version, "xss-agent-analysis-v1")
+        self.assertEqual(result.prompt_version,
+                         "xss-agent-analysis-v1.1")
         st = result.structured
         self.assertIn(st["verdict"],
                       ("evidence_sufficient_for_review",
@@ -500,7 +515,8 @@ class TestSOCExposure(_EnvBase):
         self.assertTrue(records["source_available"])
         last = records["llm_last"]
         self.assertEqual(last["requested_model"], "openrouter/free")
-        self.assertEqual(last["prompt_version"], "xss-agent-analysis-v1")
+        self.assertEqual(last["prompt_version"],
+                         "xss-agent-analysis-v1.1")
         self.assertEqual(last["job_status"], JobStatus.COMPLETED.value)
         self.assertTrue(last["hypothesis"])
         self.assertIn("verdict", last)

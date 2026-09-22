@@ -167,3 +167,21 @@ provider_unavailable | provider_error` — and reasons are never empty
 tests added (flat projection accepted, `complete_with_status` preferred,
 non-empty reason); full battery re-run green: 98 + 98 + AEC 2149 +
 smoke 95/95.
+
+## Attempts 2–3 and prompt v1.1 (recorded)
+
+- **Attempt 2** (after fix promotion `9d27acd`): full classified reason —
+  `llm_schema_failure: provider summary exceeds the bounded size` (the
+  free model's `summary` exceeded the R45 400-char bound). Fail-closed,
+  audited, auto-retry. Wall 23.0 s, RSS 65 MB.
+- **Attempt 3**: `schema_failure: insight_code item shape invalid`
+  (model emitted a malformed insight item). Attempts exhausted →
+  **TERMINAL_FAILED** (3/3), no result, no case, no fabricated output —
+  the Epic's retry/terminal policy proven end-to-end on real traffic.
+- The strict R45 validator never repairs content, so the sanctioned lever
+  is the versioned prompt (Phase 7): **`xss-agent-analysis-v1.1`** adds
+  explicit numeric contract bounds (`summary <=150 chars`, max 6 items,
+  exact two-key item shapes, `no other keys`), worst-case length 396/400,
+  regression-tested (instruction bounds + version pins). The terminal job
+  `job-xss-c70608036a` remains an honest permanent record; a fresh job
+  runs the v1.1 success-path validation after promotion.
