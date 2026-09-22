@@ -221,3 +221,53 @@ smoke 95/95.
   accepted with canonical-only storage and deterministic gate values;
   missing canonical code key still rejected. Battery: 198 OK, AEC
   2149 OK, smoke 95/95.
+
+## Phase 13 — first real LLM job: SUCCESS (`job-xss-b92f12aa7b`)
+
+After promotion `58eef77` (mapper fix live), one fresh production XSS
+job ran `--max-jobs 1 --llm OPENROUTER` with key sourced from `.env`
+and `OPENROUTER_MODEL` pinned `openrouter/free` and **COMPLETED on
+attempt 1**. Verified chain, all from real persisted state:
+
+1. Guard preflight accepted exact free config (key loaded, model
+   `openrouter/free`, `WATCH_AGENT_LLM_MODE=free`).
+2. Claim → authorization (`watch:scope:dell/www.dell.com`) →
+   `observations_loaded: 50 authorized observations`.
+3. Knowledge: 5 real KB documents read for this attempt
+   (`knowledge_used` 12:48:52 — cve_hub ×2, Yoast, TinyMCE, jQuery).
+4. `llm_analysis_started: OpenRouter openrouter/free
+   xss-agent-analysis-v1.2` → real response → **schema validation
+   PASSED** → `llm_analysis_completed: resolved=openrouter/free
+   latency_ms=32873 usage=n/a prompt=xss-agent-analysis-v1.2`.
+5. **Evidence gate authoritative:** `evidence_gate_evaluated:
+   decision=case reason=evidence_rules_met gate_confidence=high`
+   (deterministic confidence; LLM output only merged as reasoning).
+6. Research result persisted (`structured-analysis-v1`): hypothesis +
+   5 insights (UPPER_SNAKE codes e.g. `OBSERVATION_SET`) + 4
+   recommendations + 8 observations considered; verdict
+   `evidence_sufficient_for_review`; 4 findings.
+7. Case **`case-3c80c0ab076f`** created (production mode, auth
+   context, real advisory hypothesis/analysis text) with **6 evidence**
+   refs; audit 90 events total (`evidence_recorded` ×6,
+   `case_created`, `result_persisted`, `job_completed`).
+8. SOC exposure (service layer, exactly what the template renders):
+   banner `agent-intelligence-v1-free-only` / OpenRouter Free /
+   `key_configured: true` (no key value), `llm_last` =
+   job COMPLETED, requested=resolved `openrouter/free`, prompt
+   `xss-agent-analysis-v1.2`, latency 32873 ms, usage `{}` (not
+   exposed by contract — reported honestly), confidence `high`,
+   verdict + real hypothesis/reasoning.
+9. **Secret scan:** runtime store (4 files) scanned against the real
+   key value and `sk-or-v1-` prefix — **NONE present**; API key never
+   persisted, logged, or echoed.
+10. Resources: worker exit 0, wall 34.6 s, CPU 1.3 s, peak RSS 65 MB;
+    concurrency 1, single bounded run, no persistent worker, no
+    systemd change.
+
+Final state: 4 jobs total — 2 COMPLETED (pre-LLM
+`job-xss-d554bb5304` + LLM `job-xss-b92f12aa7b`), 2 honest
+TERMINAL_FAILED (`job-xss-c70608036a`, `job-xss-113d54a0e0` —
+attempts exhausted under real defect conditions, documented above),
+queue 0, 2 cases, 12 evidence. The authenticated HTML page itself
+cannot be rendered by the agent (Telegram-auth wall); its data source
+was invoked directly and every field above comes from it.
