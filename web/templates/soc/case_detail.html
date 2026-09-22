@@ -78,6 +78,64 @@
     <ul class="text-sm list-disc pl-5 mb-2">{% for r in research_intel.research_recommendations %}
       <li>{{ r.text }} <span class="text-slate-500">({{ r.reason_codes | join(', ') }})</span></li>{% endfor %}</ul>
     {% endif %}
+    {% if research_intel.hunt and research_intel.hunt.objective_id %}
+    <div class="text-slate-400 text-xs mt-3 mb-1">Hunt plan (autonomous
+      research-control loop)</div>
+    <div class="text-sm">
+      <span class="font-mono">{{ research_intel.hunt.objective_id }}</span>
+      · state {{ research_intel.hunt.state or '—' }}
+      {% if research_intel.hunt.termination_reason %}
+      · termination
+      <span class="font-mono">{{ research_intel.hunt.termination_reason }}</span>
+      {% endif %}
+      · {{ research_intel.hunt.iterations or 0 }} iteration(s)
+      · {{ research_intel.hunt.plan_count or 0 }} plan(s)
+      · {{ research_intel.hunt.observation_ids | length if research_intel.hunt.observation_ids else 0 }} observation(s)
+      · +{{ research_intel.hunt.rows_added or 0 }} row(s)
+      {% if research_intel.hunt.llm_advisory and research_intel.hunt.llm_advisory.used %}
+      · LLM advisor used ({{ research_intel.hunt.llm_advisory.calls or 0 }} call(s), advisory only)
+      {% endif %}
+    </div>
+    {% if research_intel.hunt.missing_remaining %}
+    <div class="text-xs text-slate-500">Evidence still missing at
+      termination: {{ research_intel.hunt.missing_remaining | join(', ') }}</div>
+    {% endif %}
+    {% endif %}
+    {% if research_intel.hunt_detail %}
+    <div class="text-xs text-slate-400 mt-2">
+      Hypothesis: {{ research_intel.hunt_detail.hypothesis }}</div>
+    {% if research_intel.hunt_detail.plans %}
+    <div class="text-slate-400 text-xs mt-2 mb-1">Hunt plans (all versions
+      preserved)</div>
+    <ul class="text-sm list-disc pl-5 mb-2">
+      {% for p in research_intel.hunt_detail.plans %}
+      <li><span class="font-mono">{{ p.plan_id }}</span> v{{ p.version }}
+        [{{ p.state }}] — requested {{ p.observation_types | join(', ') }}
+        <div class="text-xs text-slate-500">why: {{ p.reason }}</div></li>
+      {% endfor %}</ul>
+    {% endif %}
+    {% if research_intel.hunt_detail.observations %}
+    <div class="text-slate-400 text-xs mb-1">Observations executed
+      (authorized, store-boundary reads)</div>
+    <ul class="text-sm list-disc pl-5 mb-2">
+      {% for o in research_intel.hunt_detail.observations %}
+      <li><span class="font-mono">{{ o.observation_id }}</span>
+        {{ o.types | join(', ') }} — {{ o.outcome }}
+        (+{{ o.new_rows }} new row(s))</li>
+      {% endfor %}</ul>
+    {% endif %}
+    {% if research_intel.hunt_detail.authorizations %}
+    <div class="text-xs text-slate-500">Authorizations:
+      {% for a in research_intel.hunt_detail.authorizations %}
+      <span class="font-mono">{{ a.auth_id }}</span>[{{ a.status }}]{% if not loop.last %} · {% endif %}
+      {% endfor %}</div>
+    {% endif %}
+    {% if research_intel.hunt_detail.termination_reason %}
+    <div class="text-xs text-slate-500">Termination:
+      {{ research_intel.hunt_detail.termination_reason }}
+      — {{ research_intel.hunt_detail.termination_detail }}</div>
+    {% endif %}
+    {% endif %}
     {% if research_intel.intelligence_errors %}
     <div class="text-amber-600 text-xs">Intelligence degradations (honest):
       {{ research_intel.intelligence_errors | join(' · ') }}</div>

@@ -40,6 +40,12 @@ from backend.research_agents.capabilities import (
     SpecialistCapability,
     capability_for,
 )
+from backend.research_agents.hunt import (  # Phase: autonomous planner
+    HuntLimits,
+    HuntStore,
+    run_hunt,
+)
+from backend.research_agents.hunt.audit import hunt_audit_event
 from backend.research_agents.intelligence.context import (
     ContextLimits,
     assemble as assemble_context,
@@ -152,6 +158,14 @@ class RuntimeConfig:
     intelligence_context_chars: int = 1600
     intelligence_recommendation_limit: int = 6
     intelligence_scan_limit: int = 60
+    # Autonomous hunt planner (opt-in: 0 plans == loop disabled, which
+    # keeps every existing job/test byte-identical).
+    hunt_max_plans: int = 0
+    hunt_max_observations: int = 6
+    hunt_max_iterations: int = 4
+    hunt_max_llm_plans: int = 2
+    hunt_max_seconds: int = 60
+    hunt_per_type_limit: int = 25
 
     def resolved_worker_id(self) -> str:
         return self.worker_id or f"agent-worker-{os.getpid()}"
@@ -209,9 +223,35 @@ class FixtureObservations:
     def __init__(self, rows_by_job: dict[str, list[dict[str, Any]]]):
         self.rows_by_job = dict(rows_by_job)
 
-    def observe(self, job: ResearchJob) -> list[dict[str, Any]]:
-        rows = self.rows_by_job.get(job.id, [])
-        return [_clean_row(dict(r)) for r in rows]
+    def observe(self, job: ResearchJob, *, types: tuple[str, ...] | None = None,
+                limit: int | None = None) -> list[dict[str, Any]]:
+        rows = [_clean_row(dict(r))
+                for r in self.rows_by_job.get(job.id, [])]
+        if types:
+            wanted = {str(t) for t in types}
+
+            def keep(row: dict[str, Any]) -> bool:
+                src = str(row.get("source") or "")
+                params = row.get("params") or []
+                if "url-rows" in wanted and src == "urls":
+                    return True
+                if "endpoint-rows" in wanted and src == "endpoints":
+                    return True
+                if "http-rows" in wanted and src == "http":
+                    return True
+                if "header-rows" in wanted and src == "http" \
+                        and row.get("headers_snippet"):
+                    return True
+                if "parameter-rows" in wanted and src in ("urls",
+                                                          "endpoints") \
+                        and params:
+                    return True
+                return False
+
+            rows = [r for r in rows if keep(r)]
+        if limit is not None:
+            rows = rows[: max(0, int(limit))]
+        return rows
 
 
 class ReadStoreObservations:
@@ -224,7 +264,8 @@ class ReadStoreObservations:
     def __init__(self, limit: int = 50):
         self.limit = int(limit)
 
-    def observe(self, job: ResearchJob) -> list[dict[str, Any]]:
+    def observe(self, job: ResearchJob, *, types: tuple[str, ...] | None = None,
+                limit: int | None = None) -> list[dict[str, Any]]:
         """Read the models that actually hold each row shape.
 
         Field mapping follows the deployed schema: ``Http`` carries
@@ -243,6 +284,9 @@ class ReadStoreObservations:
         scope = (job.subdomain or "").strip()
         if not scope:
             raise ObservationUnavailable("no subdomain scope on job")
+        budget = int(limit) if limit is not None else self.limit
+        if types:
+            return self._observe_typed(db, scope, tuple(types), budget)
         rows: list[dict[str, Any]] = []
         try:
             for doc in db.Urls.objects(subdomain=scope)[: self.limit]:
@@ -285,6 +329,89 @@ class ReadStoreObservations:
                 f"observation read failed: {exc.__class__.__name__}"
             ) from exc
         return rows
+
+    def _observe_typed(self, db: Any, scope: str,
+                       types: tuple[str, ...],
+                       budget: int) -> list[dict[str, Any]]:
+        """Type-scoped read through the SAME store boundary (hunt loop).
+
+        One type (or several) per call with its own budget; ``kb-rows``
+        is intentionally NOT served here — knowledge reads go through
+        the existing KnowledgeLoader. Unknown types return no rows: the
+        registry validation upstream prevents them from ever being
+        requested, and the boundary itself stays conservative.
+        """
+        rows: list[dict[str, Any]] = []
+        want_urls = "url-rows" in types
+        want_params = "parameter-rows" in types
+        want_end = "endpoint-rows" in types
+        want_http = "http-rows" in types
+        want_header = "header-rows" in types
+        try:
+            if (want_urls or want_params) and len(rows) < budget:
+                for doc in db.Urls.objects(subdomain=scope):
+                    if len(rows) >= budget:
+                        break
+                    params = list(getattr(doc, "params", None) or [])[:40]
+                    if want_params and not want_urls and not params:
+                        continue
+                    rows.append(_clean_row({
+                        "source": "urls",
+                        "ref": str(doc.id),
+                        "url": getattr(doc, "url", ""),
+                        "path": getattr(doc, "path", ""),
+                        "status": getattr(doc, "status_code", 0) or 0,
+                        "params": params,
+                    }))
+            if (want_end or want_params) and len(rows) < budget:
+                for doc in db.Endpoints.objects(subdomain=scope):
+                    if len(rows) >= budget:
+                        break
+                    params = list(getattr(doc, "params", None) or [])[:40]
+                    if want_params and not want_end and not params:
+                        continue
+                    rows.append(_clean_row({
+                        "source": "endpoints",
+                        "ref": str(doc.id),
+                        "url": (getattr(doc, "example_url", "")
+                                or getattr(doc, "path", "")),
+                        "path": getattr(doc, "path", ""),
+                        "params": params,
+                    }))
+            if (want_http or want_header) and len(rows) < budget:
+                for doc in db.Http.objects(subdomain=scope):
+                    if len(rows) >= budget:
+                        break
+                    headers = getattr(doc, "headers", None)
+                    snippet = ""
+                    if isinstance(headers, dict) and headers:
+                        snippet = " | ".join(
+                            f"{k}: {v}"
+                            for k, v in list(headers.items())[:12])
+                    if want_header and not want_http:
+                        rows.append(_clean_row({
+                            "source": "http",
+                            "ref": str(doc.id),
+                            "url": getattr(doc, "url", ""),
+                            "status": getattr(doc, "status_code", 0) or 0,
+                            "headers_snippet": snippet,
+                        }))
+                    else:
+                        rows.append(_clean_row({
+                            "source": "http",
+                            "ref": str(doc.id),
+                            "url": getattr(doc, "url", ""),
+                            "status": getattr(doc, "status_code", 0) or 0,
+                            "title": getattr(doc, "title", ""),
+                            "tech": getattr(doc, "tech", ""),
+                            "headers_snippet": snippet,
+                        }))
+        except Exception as exc:
+            raise ObservationUnavailable(
+                f"typed observation read failed: "
+                f"{exc.__class__.__name__}"
+            ) from exc
+        return rows[:budget]
 
 
 # ------------------------------------------------------- authorization
@@ -332,7 +459,8 @@ class KnowledgeLoader:
     def load(self, store: RuntimeStore, job: ResearchJob,
              capability: SpecialistCapability,
              observations: list[dict[str, Any]] | None = None,
-             memory_hits: list[Any] | None = None) -> list[dict[str, Any]]:
+             memory_hits: list[Any] | None = None,
+             query_hints: Any = ()) -> list[dict[str, Any]]:
         def _note(detail: str, **extra: Any) -> None:
             try:
                 store.record_activity({
@@ -355,7 +483,8 @@ class KnowledgeLoader:
                 capability=capability, job=job,
                 observations=list(observations or []),
                 memory_hits=list(memory_hits or []),
-                list_kb=rd.list_kb, limit=self.limit)
+                list_kb=rd.list_kb, limit=self.limit,
+                extra_queries=query_hints)
         except KnowledgeUnavailable as exc:
             _note(f"unavailable: {exc}")
             return []
@@ -1061,6 +1190,7 @@ def attach_research_contract(
     decision: CaseDecision | None = None,
     recommendations: list[Any] | None = None,
     observations: list[dict[str, Any]] | None = None,
+    hunt: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persisted ``structured-research-v2`` expansion (Phase 7).
 
@@ -1115,6 +1245,33 @@ def attach_research_contract(
     ])
     structured["evidence_missing"] = evidence_missing
     structured["negative_evidence"] = negative[:8]
+    if hunt:
+        structured["hunt"] = {
+            "objective_id": _bounded_text(
+                hunt.get("objective_id"), 80),
+            "state": _bounded_text(hunt.get("state"), 40),
+            "termination_reason": _bounded_text(
+                hunt.get("termination_reason"), 80),
+            "termination_detail": _bounded_text(
+                hunt.get("termination_detail"), 300),
+            "iterations": int(hunt.get("iterations") or 0),
+            "plan_ids": [_bounded_text(p, 80)
+                         for p in (hunt.get("plan_ids") or [])][:8],
+            "plan_count": len(hunt.get("plans") or []),
+            "authorization_count": len(
+                hunt.get("authorization_ids") or []),
+            "observation_ids": [_bounded_text(o, 80)
+                                for o in
+                                (hunt.get("observation_ids") or [])][:8],
+            "missing_remaining": [_bounded_text(m, 80)
+                                  for m in
+                                  (hunt.get("missing_remaining") or [])][:8],
+            "rows_added": int(hunt.get("rows_added") or 0),
+            "knowledge_added": int(hunt.get("knowledge_added") or 0),
+            "llm_advisory": dict(hunt.get("llm_advisory") or {}),
+            "errors": [_bounded_text(e, 120)
+                       for e in (hunt.get("errors") or [])][:6],
+        }
     structured.setdefault("confidence", gate_conf)
     structured.setdefault("blockers",
                           [_bounded_text(b, 120)
@@ -1391,6 +1548,30 @@ class AgentWorker:
             intel["sections"] = []
             intel["stats"] = {}
 
+        # ---- autonomous hunt planner (opt-in: config.hunt_max_plans>0)
+        hunt: dict[str, Any] | None = None
+        if cfg.hunt_max_plans > 0:
+            try:
+                hunt_outcome = self._run_hunt(job, capability, rows,
+                                              knowledge, memory_hits,
+                                              started)
+                if hunt_outcome is not None:
+                    hunt = hunt_outcome.to_dict()
+                    rows = list(hunt_outcome.rows or rows)
+                    knowledge = list(hunt_outcome.knowledge or knowledge)
+                    intel["hunt"] = hunt
+            except Exception as exc:  # noqa: BLE001 - honest degrade
+                intel["errors"].append(
+                    f"hunt:{_bounded_text(str(exc), 100)}")
+                self._intel_activity(
+                    job, "research_state_updated",
+                    f"hunt loop unavailable: "
+                    f"{_bounded_text(str(exc), 160)}")
+                hunt = {"enabled": True,
+                        "termination_reason":
+                            f"hunt_loop_error:{type(exc).__name__}",
+                        "errors": [type(exc).__name__]}
+
         analysis = deterministic_analysis(capability, job, rows, knowledge)
         provider_kind, model, prompt_version = "", "", ""
         analysis_ms = 0
@@ -1533,7 +1714,8 @@ class AgentWorker:
 
         analysis = attach_research_contract(
             analysis, capability=capability, job=job, intel=intel,
-            decision=decision, recommendations=recs, observations=rows)
+            decision=decision, recommendations=recs, observations=rows,
+            hunt=hunt)
 
         findings = tuple(_bounded_text(h.get("hypothesis"), 200)
                          for h in (analysis.get("hypotheses") or [])[:10])
@@ -1608,6 +1790,157 @@ class AgentWorker:
 
     def _transition(self, job_id: str, status: str, **kw: Any) -> None:
         self.store.transition(job_id, status, worker=self.worker_id, **kw)
+
+    def _hunt_advisor(
+        self, request: dict[str, Any]
+    ) -> tuple[Any, dict[str, Any]]:
+        """Free-only LLM planning advisor through the SAME provider
+        abstraction as the analysis path (Phase 7). Advisory output only:
+        the executor re-validates everything against the registry."""
+        from ai.providers.provider_registry import select_provider
+        from backend.research_agents.hunt.models import ADVISOR_PROMPT_VERSION
+
+        cfg = self.config
+        try:
+            guard = resolve_free_config(cfg.llm_provider_kind,
+                                        cfg.llm_model,
+                                        int(cfg.llm_timeout))
+        except FreeOnlyViolation as exc:
+            raise AnalysisUnavailable(f"free_only: {exc.reason}") from None
+        payload = json.dumps(request.get("sections", {}), sort_keys=True,
+                             default=str)
+        if len(payload) > int(cfg.context_max_chars):
+            raise AnalysisUnavailable(
+                "context_too_large: hunt advisor context exceeds "
+                f"{int(cfg.context_max_chars)} chars")
+        try:
+            provider = select_provider(
+                guard["provider_kind"],
+                model=guard["requested_model"],
+                timeout_seconds=guard["timeout_seconds"],
+                max_retries=0,
+                retry_backoff_seconds=0,
+            )
+        except Exception as exc:
+            raise AnalysisUnavailable(
+                f"provider_configuration: {_no_secret(exc)}") from None
+        t0 = time.monotonic()
+        try:
+            status_call = getattr(provider, "complete_with_status", None)
+            if callable(status_call):
+                outcome = status_call(request)
+            else:
+                outcome = provider.complete(request)
+        except Exception as exc:
+            elapsed = int((time.monotonic() - t0) * 1000)
+            kind = _classify_provider_error(None, exc)
+            raise AnalysisUnavailable(
+                f"llm_{kind}: {_err_text(None, exc)}") from None
+        elapsed = int((time.monotonic() - t0) * 1000)
+        if not isinstance(outcome, dict):
+            raise AnalysisUnavailable(
+                "llm_provider_error: unexpected advisor outcome type "
+                f"{type(outcome).__name__}")
+        if ("summary" in outcome or "insights" in outcome) \
+                and "response" not in outcome:
+            response: Any = outcome
+            err: Any = None
+            telemetry: dict[str, Any] = {}
+        else:
+            err = outcome.get("error")
+            response = outcome.get("response")
+            telemetry = (outcome.get("telemetry")
+                         if isinstance(outcome.get("telemetry"), dict)
+                         else {})
+        if err is not None or response is None:
+            exc = outcome.get("_exception")
+            kind = _classify_provider_error(err, exc)
+            raise AnalysisUnavailable(
+                f"llm_{kind}: {_err_text(err, exc)}")
+        resolved = ""
+        try:
+            resolved = str(
+                (telemetry.get("model") if telemetry else "")
+                or (response.get("model")
+                    if isinstance(response, dict) else "")
+                or "")
+        except Exception:  # noqa: BLE001
+            resolved = ""
+        return response, {
+            "model_requested": guard["requested_model"],
+            "model_resolved": _bounded_text(resolved, 80)
+            or "not_exposed_by_contract",
+            "latency_ms": elapsed,
+            "prompt_version": ADVISOR_PROMPT_VERSION,
+        }
+
+    def _run_hunt(self, job: ResearchJob,
+                  capability: SpecialistCapability,
+                  rows: list[dict[str, Any]],
+                  knowledge: list[dict[str, Any]],
+                  memory_hits: list[Any],
+                  started: float):
+        """Phase 9/11: the bounded autonomous hunt loop (opt-in).
+
+        Observations run only through ``self.observations`` (the existing
+        boundary), authorization only through ``self.auth`` (the existing
+        checker), the evidence gate is called READ-ONLY, and the advisor
+        is optional (deterministic planning works with no LLM at all).
+        """
+        cfg = self.config
+        limits = HuntLimits(
+            max_plans_per_objective=max(1, int(cfg.hunt_max_plans)),
+            max_observations=max(1, int(cfg.hunt_max_observations)),
+            max_planning_iterations=max(1, int(cfg.hunt_max_iterations)),
+            max_llm_planning_calls=max(0, int(cfg.hunt_max_llm_plans)),
+            max_seconds=max(5, int(cfg.hunt_max_seconds)),
+            per_type_limit=max(1, int(cfg.hunt_per_type_limit)),
+        )
+        hunt_store = HuntStore(self.store.base)
+
+        def _activity(action: str, detail: str) -> None:
+            try:
+                self.store.record_activity({
+                    "job_id": job.id, "agent": job.assigned_agent,
+                    "category": job.agent_category, "action": action,
+                    "detail": scrub_text(_bounded_text(detail, 300)),
+                    "mode": job.execution_mode,
+                })
+            except Exception:  # noqa: BLE001 - best effort
+                pass
+
+        def _audit(stage: str, payload: dict[str, Any]) -> None:
+            # failures propagate to the executor's audit wrapper, which
+            # records them in outcome.errors (never a silent drop)
+            self.store.record_audit_event(
+                hunt_audit_event(stage, job_id=job.id, **payload))
+
+        def _knowledge(hints: list[str]) -> list[dict[str, Any]]:
+            return self.knowledge.load(
+                self.store, job, capability, observations=[],
+                memory_hits=memory_hits, query_hints=hints)
+
+        def _expired() -> bool:
+            try:
+                return time.monotonic() - started > cfg.job_timeout
+            except Exception:  # noqa: BLE001
+                return True
+
+        return run_hunt(
+            job=job, capability=capability, store=self.store,
+            hunt_store=hunt_store, observations=self.observations,
+            auth_checker=self.auth,
+            determin_fn=deterministic_analysis,
+            gate_fn=evaluate_case_creation,
+            limits=limits,
+            initial_rows=rows, initial_knowledge=knowledge,
+            advisor_fn=(self._hunt_advisor if self.llm_enabled else None),
+            knowledge_fn=_knowledge,
+            memory_store=MemoryStore(self.store.base),
+            deadline_fn=_expired,
+            emit_activity=_activity,
+            emit_audit=_audit,
+        )
 
     def _intel_activity(self, job: ResearchJob, action: str,
                         detail: str) -> None:

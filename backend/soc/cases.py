@@ -130,7 +130,44 @@ def _runtime_case_detail(case_id: str) -> dict[str, Any] | None:
                 st.get("intelligence_errors") or [])[:8],
             "lineage_digest": _text(
                 (st.get("research_lineage") or {}).get("digest")),
+            "hunt": (st.get("hunt")
+                     if isinstance(st.get("hunt"), dict) else {}),
         }
+        # full hunt plan/observation detail from the HuntStore
+        try:
+            from backend.research_agents.hunt.store import HuntStore
+            hs = HuntStore(store.base)
+            objs = hs.objectives_for_job(_text(case.get("job_id")))
+            if objs:
+                bundle = hs.objective_bundle(objs[-1].objective_id) or {}
+                research_intel["hunt_detail"] = {
+                    "objective_id": objs[-1].objective_id,
+                    "state": objs[-1].state,
+                    "hypothesis": objs[-1].hypothesis,
+                    "termination_reason": objs[-1].termination_reason,
+                    "termination_detail": objs[-1].termination_detail,
+                    "plans": [{
+                        "plan_id": p.get("plan_id"),
+                        "version": p.get("version"),
+                        "state": p.get("state"),
+                        "observation_types": [
+                            r.get("observation_type") for r in
+                            (p.get("observations_requested") or [])],
+                        "reason": _text(p.get("reason"), 300),
+                    } for p in bundle.get("plans", []) or []],
+                    "authorizations": [
+                        {"auth_id": a.get("auth_id"),
+                         "status": a.get("status")}
+                        for a in bundle.get("authorizations", []) or []],
+                    "observations": [
+                        {"observation_id": o.get("observation_id"),
+                         "types": list(o.get("observation_types") or []),
+                         "outcome": o.get("outcome"),
+                         "new_rows": o.get("new_rows")}
+                        for o in bundle.get("observations", []) or []],
+                }
+        except Exception:  # noqa: BLE001 - honest absence
+            pass
     return {
         "research_intel": research_intel,
         "case": {

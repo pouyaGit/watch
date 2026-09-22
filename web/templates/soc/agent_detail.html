@@ -173,6 +173,69 @@
         <span class="font-mono">{{ runtime_records.intelligence.lineage_digest }}</span>
         · contract {{ runtime_records.intelligence.contract or '—' }}</div>
       {% endif %}
+      {% if runtime_records.intelligence.hunt is defined
+            and runtime_records.intelligence.hunt.available %}
+      <div class="text-slate-400 text-xs mt-4 mb-1">Hunt objectives
+        (autonomous planner — real plans &amp; observations)</div>
+      {% for o in runtime_records.intelligence.hunt.objectives %}
+      <div class="mb-3 border-l-2 border-slate-700 pl-3">
+        <div class="text-sm">
+          <span class="font-mono">{{ o.objective_id }}</span>
+          · <span class="badge-sm">{{ o.state }}</span>
+          {% if o.termination_reason %}
+          · terminated: <span class="font-mono">{{ o.termination_reason }}</span>
+          {% endif %}
+          <span class="text-slate-500">({{ o.iteration }} iteration(s),
+            {{ o.plans_created }} plan(s), {{ o.observations_run }}
+            observation(s){% if o.llm_plans_used %},
+            {{ o.llm_plans_used }} LLM advisor call(s){% endif %})</span>
+        </div>
+        <div class="text-xs text-slate-500">{{ o.research_objective }}</div>
+        {% if o.active_plan %}
+        <div class="text-xs">Active plan:
+          <span class="font-mono">{{ o.active_plan.plan_id }}</span>
+          v{{ o.active_plan.version }} [{{ o.active_plan.state }}]
+          — {{ o.active_plan.observation_types | join(', ') }}</div>
+        {% endif %}
+        {% if o.pending_observation %}
+        <div class="text-xs text-amber-600">Pending observation:
+          {{ o.pending_observation.observation_types | join(', ')
+             if o.pending_observation.observation_types
+             else o.pending_observation.plan_id }}
+          [{{ o.pending_observation.state }}]</div>
+        {% endif %}
+        {% if o.plans %}
+        <div class="text-xs text-slate-400 mt-1">Plan versions</div>
+        <ul class="text-xs list-disc pl-5">
+          {% for p in o.plans %}
+          <li><span class="font-mono">{{ p.plan_id }}</span> v{{ p.version }}
+            [{{ p.state }}] — {{ p.observation_types | join(', ') }}
+            · gain {{ p.expected_information_gain or 0 }}
+            ({{ p.gain_label or 'heuristic' }})</li>
+          {% endfor %}</ul>
+        {% endif %}
+        {% if o.recent_outcomes %}
+        <div class="text-xs text-slate-400 mt-1">Recent outcomes</div>
+        <ul class="text-xs list-disc pl-5">
+          {% for r in o.recent_outcomes %}
+          <li>{{ r.kind }} <span class="font-mono">{{ r.ref }}</span>
+            [{{ r.state }}] {{ r.detail }}</li>
+          {% endfor %}</ul>
+        {% endif %}
+        {% if o.why_next_observation %}
+        <div class="text-xs mt-1">Why this observation was selected:
+          <span class="text-slate-400">{{ o.why_next_observation }}</span></div>
+        {% endif %}
+        {% if o.termination_detail %}
+        <div class="text-xs text-slate-500">Termination:
+          {{ o.termination_detail }}</div>
+        {% endif %}
+      </div>
+      {% else %}
+      <p class="text-slate-500 text-xs">No hunt objectives recorded for
+        this specialist yet.</p>
+      {% endfor %}
+      {% endif %}
     {% else %}
       <p class="text-slate-500 text-sm">No research intelligence state exists
         for this specialist yet.</p>
