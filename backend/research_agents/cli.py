@@ -60,6 +60,19 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="lease seconds (default 30)")
     run.add_argument("--timeout", type=int, default=120,
                      help="per-job wall-clock timeout seconds (default 120)")
+    run.add_argument("--hunt", action="store_true",
+                     help="enable the bounded autonomous hunt planner loop")
+    run.add_argument("--hunt-plans", type=int, default=0,
+                     help="max hunt plans per objective (0 = disabled; "
+                          "--hunt defaults this to 3)")
+    run.add_argument("--hunt-observations", type=int, default=6,
+                     help="max hunt observation executions per objective")
+    run.add_argument("--hunt-iterations", type=int, default=4,
+                     help="max hunt planning iterations per objective")
+    run.add_argument("--hunt-llm-plans", type=int, default=2,
+                     help="max LLM planning-advisor calls per objective")
+    run.add_argument("--hunt-seconds", type=int, default=60,
+                     help="max hunt wall-clock seconds per objective")
 
     sub.add_parser("status", help="observability snapshot as JSON")
 
@@ -97,6 +110,9 @@ def _install_shutdown(flag: dict[str, bool]) -> None:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    hunt_plans = int(args.hunt_plans)
+    if args.hunt and hunt_plans <= 0:
+        hunt_plans = 3
     config = RuntimeConfig(
         lease_seconds=args.lease,
         job_timeout=args.timeout,
@@ -105,6 +121,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         execution_mode=args.mode,
         llm_provider_kind=args.llm,
         llm_model=args.model,
+        hunt_max_plans=max(0, hunt_plans),
+        hunt_max_observations=max(1, args.hunt_observations),
+        hunt_max_iterations=max(1, args.hunt_iterations),
+        hunt_max_llm_plans=max(0, args.hunt_llm_plans),
+        hunt_max_seconds=max(5, args.hunt_seconds),
     )
     worker = AgentWorker(config=config, store=default_store())
     flag = {"stop": False}

@@ -636,7 +636,115 @@ def agent_detail(slug: str) -> dict[str, Any] | None:
 _INTEL_ACTIONS = (
     "memory_retrieved", "knowledge_selected", "prior_research_matched",
     "memory_learned", "recommendation_generated",
+    # autonomous hunt planner (Phase 13)
+    "hunt_objective_created", "missing_evidence_detected",
+    "hunt_plan_created", "plan_validated", "authorization_requested",
+    "authorization_granted", "authorization_rejected",
+    "observation_started", "observation_completed",
+    "research_state_updated", "hunt_replanned", "hunt_terminated",
 )
+
+
+def _hunt_intelligence(store: Any, cat: str) -> dict[str, Any]:
+    """Phase 13: hunt objectives / plans / observations from real state.
+
+    Reads ONLY HuntStore records; failures return an honest
+    ``available: false`` block — no synthesized plans or counters.
+    """
+    out: dict[str, Any] = {
+        "available": False, "reason": "no hunt state", "objectives": [],
+    }
+    try:
+        from backend.research_agents.hunt.store import HuntStore
+        hs = HuntStore(store.base)
+        objectives = hs.list_objectives(category=cat, limit=5)
+        if not objectives:
+            out["reason"] = "no objectives recorded"
+            return out
+        rows: list[dict[str, Any]] = []
+        for obj in objectives:
+            bundle = hs.objective_bundle(obj.objective_id) or {}
+            plans = bundle.get("plans", []) or []
+            observations = bundle.get("observations", []) or []
+            authorizations = bundle.get("authorizations", []) or []
+            active_states = {"DRAFT", "VALIDATED", "AUTHORIZATION_REQUIRED",
+                             "AUTHORIZED", "EXECUTING"}
+            active = next((p for p in reversed(plans)
+                           if p.get("state") in active_states), {})
+            observed_plans = {o.get("plan_id") for o in observations}
+            pending = next(
+                ({"plan_id": p.get("plan_id"),
+                  "state": p.get("state"),
+                  "observation_types": p.get("observations_requested")
+                  and [r.get("observation_type")
+                       for r in p.get("observations_requested")]}
+                 for p in reversed(plans)
+                 if p.get("state") in {"AUTHORIZED", "EXECUTING"}
+                 and p.get("plan_id") not in observed_plans),
+                {})
+            recent = ([{"kind": "plan", "ref": p.get("plan_id"),
+                        "state": p.get("state"),
+                        "detail": ", ".join(
+                            r.get("observation_type", "") for r in
+                            p.get("observations_requested") or [])}
+                       for p in plans[-3:]]
+                      + [{"kind": "observation",
+                          "ref": o.get("observation_id"),
+                          "state": o.get("outcome"),
+                          "detail": ",".join(
+                              o.get("observation_types") or [])}
+                         for o in observations[-3:]])
+            why_src = active or (plans[-1] if plans else {})
+            rows.append({
+                "objective_id": obj.objective_id,
+                "job_id": obj.job_id,
+                "state": obj.state,
+                "hypothesis": obj.hypothesis,
+                "research_objective": obj.research_objective,
+                "termination_reason": obj.termination_reason,
+                "termination_detail": obj.termination_detail,
+                "iteration": obj.iteration,
+                "plans_created": obj.plans_created,
+                "observations_run": obj.observations_run,
+                "llm_plans_used": obj.llm_plans_used,
+                "updated_at": obj.updated_at,
+                "active_plan": {
+                    "plan_id": active.get("plan_id"),
+                    "version": active.get("version"),
+                    "state": active.get("state"),
+                    "observation_types": [
+                        r.get("observation_type") for r in
+                        (active.get("observations_requested") or [])],
+                } if active else {},
+                "pending_observation": pending or {},
+                "plans": [{
+                    "plan_id": p.get("plan_id"),
+                    "version": p.get("version"),
+                    "state": p.get("state"),
+                    "observation_types": [
+                        r.get("observation_type") for r in
+                        (p.get("observations_requested") or [])],
+                    "reason": _text(p.get("reason"), 300),
+                    "priority": p.get("priority"),
+                    "expected_information_gain":
+                        p.get("expected_information_gain"),
+                    "gain_label": p.get("gain_label"),
+                } for p in plans],
+                "authorizations": [
+                    {"auth_id": a.get("auth_id"),
+                     "status": a.get("status"),
+                     "reasons": list(a.get("reasons") or [])[:3]}
+                    for a in authorizations[-4:]],
+                "recent_outcomes": recent[-6:],
+                "why_next_observation": _text(
+                    why_src.get("reason") if why_src else "", 300),
+            })
+        out["objectives"] = rows
+        out["available"] = True
+        out["reason"] = ""
+    except Exception as exc:  # noqa: BLE001 - honest absence
+        out["reason"] = _text(exc.__class__.__name__, 80)
+    return out
 
 
 def _agent_intelligence(store: Any, cat: str,
@@ -650,6 +758,8 @@ def _agent_intelligence(store: Any, cat: str,
         "recommendations": [], "knowledge_recent": [], "related_cases": [],
         "recent_research_activity": [], "intelligence_errors": [],
         "lineage_digest": "",
+        "hunt": {"available": False, "reason": "no hunt state",
+                 "objectives": []},
     }
     try:
         from backend.research_agents.intelligence.memory import (
@@ -703,6 +813,8 @@ def _agent_intelligence(store: Any, cat: str,
             if _text(a.get("action")) in _INTEL_ACTIONS
             and _text(a.get("category")).upper() == cat.upper()
         ][-8:]
+        # autonomous hunt objectives/plans (real HuntStore records)
+        out["hunt"] = _hunt_intelligence(store, cat)
         # latest persisted result: honest intelligence errors + lineage
         for job_row in reversed(
                 [j for j in store.list_jobs(limit=50)

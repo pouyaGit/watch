@@ -140,6 +140,7 @@ def select_knowledge(
     memory_hits: list[Any],
     list_kb: Callable[..., dict],
     limit: int = 5,
+    extra_queries: Any = (),
 ) -> KnowledgeSelection:
     """Deterministic bounded relevance selection. Raises
     ``KnowledgeUnavailable`` when the KB itself fails."""
@@ -149,7 +150,10 @@ def select_knowledge(
     hints = tuple(str(h) for h in
                   (getattr(capability, "intelligence_hints", ()) or ()))
     category = str(getattr(capability, "category", "") or "")
-    queries = [q for q in (list(topics) + list(hints)) if q][:6]
+    extra = [str(q).strip() for q in (extra_queries or ())
+             if str(q).strip()]
+    queries = list(dict.fromkeys(
+        q for q in (extra + list(topics) + list(hints)) if q))[:6]
 
     signal_tokens: set[str] = set()
     for row in observations[:20]:
