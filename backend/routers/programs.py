@@ -704,6 +704,7 @@ def ui_http_fresh(request: Request, hours: int = 24, page: int = 1, limit: int =
             "list_with_badges.html",
             _ctx(
             request,
+            active="http-fresh",
             title=f"Fresh HTTP ({hours}h)",
             items=items,
             **_paginated_list_ctx(

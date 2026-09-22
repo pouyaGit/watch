@@ -53,6 +53,28 @@
     </div>
 
     <nav class="sidebar-nav">
+      <p class="nav-group">Recon Ops</p>
+      <a class="side-link{{ ' active' if active == 'programs' }}" href="/ui/programs{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">◎</span>Programs</a>
+      <a class="side-link{{ ' active' if active == 'domains' }}" href="/ui/domains{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">⬡</span>Subdomains</a>
+      <a class="side-link{{ ' active' if active == 'domains' }}" href="/ui/domains{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">◉</span>Live</a>
+      <a class="side-link{{ ' active' if active == 'http' }}" href="/ui/http{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">⇄</span>HTTP</a>
+      <a class="side-link{{ ' active' if active == 'http-fresh' }}" href="/ui/http/fresh{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">✦</span>Fresh HTTP</a>
+      <a class="side-link{{ ' active' if active == 'wordlists' }}" href="/ui/wordlists{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">☰</span>Wordlists</a>
+      <a class="side-link{{ ' active' if active == 'urls' }}" href="/ui/urls{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">≡</span>URLs</a>
+      <a class="side-link{{ ' active' if active == 'endpoints' }}" href="/ui/endpoints{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">⚟</span>Endpoints</a>
+      <a class="side-link{{ ' active' if active == 'parameters' }}" href="/ui/parameters{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">⚙</span>Parameter Discovery</a>
+      <a class="side-link{{ ' active' if active == 'changes' }}" href="/ui/changes{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
+        <span class="side-ico">±</span>Recent Changes</a>
+
       <p class="nav-group">AI SOC</p>
       <a class="side-link{{ ' active' if active == 'soc-overview' }}" href="/ui/soc/{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}" @click="navOpen = false">
         <span class="side-ico">◈</span>Overview</a>

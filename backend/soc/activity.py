@@ -1,9 +1,12 @@
 """backend/soc/activity.py — SOC-4 AI activity / mission control (read-only).
 
 Answers "what is AI doing right now" from real existing sources:
-the real ai-knowledge activity status, the research-agent service
-counters, the AEC execution-run view, investigation reports, and
-research loop records.  No invented events, bounded timeline.
+the R83 read-only activity collector (run records, research case
+records and the execution-lock probe — the same collector the Command
+Center and the research-activity status endpoint use), the
+research-agent service counters, the AEC execution-run view,
+investigation reports, and research loop records.  No invented events,
+bounded timeline.
 """
 
 from __future__ import annotations
@@ -17,14 +20,27 @@ _TIMELINE_LIMIT = 60
 
 
 def _runtime_status() -> dict[str, Any]:
-    """Real runtime observability (ai-knowledge activity status)."""
-    try:
-        from ai.knowledge.ai_activity_status import build_activity_status
+    """Real runtime observability from the existing R83 collector.
 
-        status = build_activity_status()
+    ``backend.research_activity.collect_activity()`` gathers the actual
+    facts (scheduler run records, research case records, execution-lock
+    probe, scheduler window) and the pure R83 engine projects them.  It
+    is the same source the Command Center and the research-activity
+    status endpoint already use, so every surface agrees.
+
+    Earlier this called the pure engine with *no* facts, which made both
+    SOC pages report ``UNKNOWN / runtime_state_not_observable`` even
+    though 50+ run records and a free lock probe were sitting on disk —
+    "never looked" masquerading as "not observable".  UNKNOWN now only
+    appears when the collector itself is unavailable.
+    """
+    try:
+        from backend import research_activity
+
+        status = research_activity.collect_activity()
         if not isinstance(status, Mapping):
             return {"status": "UNKNOWN", "current_stage": "",
-                    "current_run": None}
+                    "current_run": None, "status_basis": "unavailable"}
         return {
             "status": _text(status.get("status")) or "UNKNOWN",
             "current_stage": _text(status.get("current_stage")) or "",

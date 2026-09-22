@@ -24,10 +24,12 @@ KB_ID = "kb-609f38e9c57c0592"            # CVE-2026-1557 synthesis document
 
 
 _LEGACY_SIDEBAR_LABELS = {
+    # the OLD research navigation stays out of the primary sidebar.
+    # Core recon destinations (Programs, HTTP, URLs, Endpoints, …) were
+    # restored as the Recon Ops group — see tests.test_recon_soc_navigation.
     "Research Cases", "Research / CVEs", "Research Queue", "Research Tasks",
     "Research Leads", "Research Plans", "Research Agent", "XSS",
-    "Knowledge Base", "Reports", "Command Center", "Dashboard", "Programs",
-    "Domains", "HTTP", "URLs", "Endpoints", "Parameters",
+    "Knowledge Base", "Reports", "Command Center", "Dashboard",
 }
 
 
@@ -113,10 +115,11 @@ class TestDashboardResearchSection(_Base):
 
 class TestSidebarActiveState(_Base):
     def test_legacy_pages_render_but_are_not_sidebar_destinations(self):
-        # UX correction: the sidebar is SOC-first, so legacy research pages no
-        # longer get a sidebar entry (hence no sidebar active highlight).
-        # Routes and page content are unchanged; asserted against the shipped
-        # template because this module drives the deployed app.
+        # UX correction: the sidebar carries Recon Ops + AI SOC + System, so
+        # legacy research pages no longer get a sidebar entry (hence no
+        # sidebar active highlight).  Routes and page content are unchanged;
+        # asserted against the shipped template because this module drives
+        # the deployed app.
         cases = [
             "/ui/research", "/ui/research/queue", "/ui/research/tasks",
             "/ui/xss", "/ui/kb", "/ui/reports",

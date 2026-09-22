@@ -47,13 +47,22 @@ class TestSideNavigation(unittest.TestCase):
         for href in SOC_HREFS:
             self.assertIn(href, text, f"SOC link {href} missing")
 
+    def test_recon_group_present(self):
+        text = self._base()
+        self.assertIn("Recon Ops", text)
+        for href in ("/ui/programs", "/ui/domains", "/ui/http",
+                     "/ui/http/fresh", "/ui/wordlists", "/ui/urls",
+                     "/ui/endpoints", "/ui/parameters", "/ui/changes"):
+            self.assertIn(href, text, f"recon link {href} missing")
+
     def test_legacy_engineering_label_absent(self):
         text = self._base()
         self.assertNotIn("Legacy / Engineering", text)
         self.assertNotIn("nav-legacy", text)
-        # SOC-first sidebar: exactly the AI SOC group plus the system group
+        # two product surfaces plus the system group (old research links
+        # stay out; see tests.test_recon_soc_navigation for the recon pins)
         groups = re.findall(r'<p class="nav-group">([^<]+)</p>', text)
-        self.assertEqual(groups, ["AI SOC", "System"], groups)
+        self.assertEqual(groups, ["Recon Ops", "AI SOC", "System"], groups)
 
 
 class TestSocPageRender(unittest.TestCase):

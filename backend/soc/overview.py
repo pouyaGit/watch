@@ -18,17 +18,34 @@ def _safe_int(value: Any) -> int:
 
 
 def overview_payload() -> dict[str, Any]:
-    """SOC home: high-level state totals + runtime status."""
+    """SOC home: high-level state totals + runtime status.
+
+    The agent number comes from the *same* projection ``/ui/soc/agents``
+    renders (``backend.soc.agents.agents_index``) so the Overview and the
+    Agents page can never disagree, and the ready/active/planned split is
+    exposed beside it so the metric cannot be misread as "operational
+    agents".  (It used to count ``backend.research_agents.registry`` — a
+    module that is not part of the deployed tree — and reported 0 while
+    the Agents page showed the declared registry.)
+    """
     agents = 0
+    agent_counts = {"registered": 0, "ready": 0, "active": 0, "planned": 0}
     cases = 0
     evidence = 0
     reports = 0
     knowledge = 0
 
     try:
-        from backend.research_agents.registry import build_default_registry
+        from backend.soc import agents as soc_agents
 
-        agents = len(build_default_registry().list_agents())
+        index = soc_agents.agents_index()
+        listed = index.get("agents") or []
+        agents = int(index.get("count") or len(listed))
+        agent_counts["registered"] = agents
+        for agent in listed:
+            status = str(agent.get("status") or "").upper()
+            if status in ("READY", "ACTIVE", "PLANNED"):
+                agent_counts[status.lower()] += 1
     except Exception:
         pass
 
@@ -58,6 +75,7 @@ def overview_payload() -> dict[str, Any]:
 
     return {
         "agents": agents,
+        "agent_counts": agent_counts,
         "cases": cases,
         "evidence": evidence,
         "reports": reports,

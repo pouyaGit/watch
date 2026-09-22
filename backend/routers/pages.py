@@ -191,6 +191,39 @@ def programs_table(request: Request, sort: str = "name", direction: str = "asc",
     )
 
 
+# ----------------------------- wordlists -----------------------------
+@router.get("/ui/wordlists", response_class=HTMLResponse)
+def wordlists_page(request: Request):
+    """Per-program wordlists index (read-only).
+
+    Wordlists are generated per program by the discovery pipeline and are
+    already served by the existing plain-text endpoint
+    ``/api/wordlist/{program_name}`` (the per-program page links it as its
+    "Wordlist" card).  This page only lists those existing artifacts — no
+    new data source, no generation, no writes.
+    """
+    rows = dash.program_rows(sort="name", direction="asc", mode="all")
+    entries = [
+        {
+            "program_name": row["program_name"],
+            "program_url": build_url(f"/ui/program/{row['program_name']}"),
+            "wordlist_url": build_url(f"/api/wordlist/{row['program_name']}"),
+        }
+        for row in rows
+    ]
+    return templates.TemplateResponse(
+        request,
+        "wordlists.html",
+        _ctx(
+            request,
+            active="wordlists",
+            page_title="Wordlists",
+            wordlists=entries,
+            total=len(entries),
+        ),
+    )
+
+
 # ----------------------------- global search -----------------------------
 @router.get("/ui/search", response_class=HTMLResponse)
 def ui_search(request: Request, q: Optional[str] = None):
