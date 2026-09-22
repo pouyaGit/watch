@@ -64,7 +64,7 @@ SCHEMA_NAME = "structured-analysis-v1"
 def prompt_version_for(capability: SpecialistCapability) -> str:
     """Versioned prompt identifier persisted with every LLM analysis."""
 
-    return f"{capability.agent_name}-analysis-v1"
+    return f"{capability.agent_name}-analysis-v1.1"
 
 MODE_PRODUCTION = "production"
 MODE_FIXTURE = "fixture"
@@ -522,12 +522,15 @@ def _advisory_request(capability: SpecialistCapability,
     """
 
     instruction = (
-        f"{prompt_version}: agent {capability.agent_name}, category "
-        f"{capability.category}. Mission: {_bounded_text(job.mission, 120)}. "
-        "Advisory-only analysis of this authorized research state: insights "
-        "describe what the observations indicate (never confirmed "
-        "vulnerabilities); recommendations name the single next authorized "
-        "observation. No payloads, no execution steps, no credentials."
+        f"{prompt_version}: {capability.agent_name} "
+        f"({capability.category}). Mission: "
+        f"{_bounded_text(job.mission, 30)}. "
+        "JSON only, exact keys: summary (<=150 chars); insights (max 6, "
+        "each: {insight_code: UPPER_SNAKE_CASE, text: <=200}); "
+        "recommendations (max 6, each: {recommendation_code, "
+        "text: <=200}); no other keys. Insights never confirm "
+        "vulnerabilities. Recommendations = next authorized observation. "
+        "No payloads or credentials."
     )[:400]
 
     signals: list[dict[str, Any]] = []
