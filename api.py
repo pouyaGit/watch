@@ -109,8 +109,8 @@ app.include_router(research_cases_router.router)
 app.include_router(research_router.router)
 app.include_router(research_pages.router)
 app.include_router(command_center_router.router)
-app.include_router(product_api_router.router)
 app.include_router(soc_router.router)
+app.include_router(product_api_router.router)
 
 
 if __name__ == "__main__":
