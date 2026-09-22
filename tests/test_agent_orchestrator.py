@@ -983,11 +983,19 @@ class TestInteroperability(unittest.TestCase):
         backend = ROOT / "backend"
         if not backend.exists():
             self.skipTest("backend directory absent")
+        # Sanctioned exception (stabilization epic, operator-approved layered
+        # identity): backend/soc/agents.py may reference the engine's
+        # ``specialist_registry`` as its declared-identity fallback when the
+        # research runtime is not deployed.  The orchestrator wiring bans
+        # remain in force everywhere, including that file.
+        allowed_registry = ROOT / "backend" / "soc" / "agents.py"
         for path in backend.rglob("*.py"):
             text = path.read_text(encoding="utf-8", errors="ignore")
             self.assertNotIn("agent_orchestrator", text, str(path))
-            self.assertNotIn("specialist_registry", text, str(path))
             self.assertNotIn("orchestrate_research", text, str(path))
+            if path == allowed_registry:
+                continue
+            self.assertNotIn("specialist_registry", text, str(path))
 
     def test_specialist_modules_do_not_import_the_orchestrator(self):
         for path in sorted((ROOT / "ai" / "knowledge").glob("*.py")):

@@ -9,6 +9,14 @@
     definitions. These are agent <em>definitions</em>, not autonomous workers —
     the pages separate what is declared from what is actually recorded.</p>
   <p class="text-slate-400 text-sm mb-6">{{ runtime.meaning }}.</p>
+  {% if runtime.worker is defined and runtime.worker %}
+  <p class="text-slate-500 text-xs mb-6">Agent worker:
+    {{ 'alive' if runtime.worker.alive else 'not running' }} —
+    {{ runtime.worker.reason }}{% if runtime.worker.worker_id %}
+    ({{ runtime.worker.worker_id }}){% endif %}{% if runtime.worker.last_heartbeat %},
+    last heartbeat {{ runtime.worker.last_heartbeat }}{% endif %}{% if runtime.worker.mode %},
+    mode {{ runtime.worker.mode }}{% endif %}.</p>
+  {% endif %}
   {% else %}
   <p class="text-slate-400 text-sm mb-6">No registered specialist agents are
     declared by the agent registries available to this runtime. Nothing is
@@ -30,7 +38,7 @@
           <td class="font-medium">{{ agent.name }}</td>
           <td class="text-slate-400">{{ agent.role }}</td>
           <td>
-            <span class="badge {{ 'badge-ok' if agent.status in ['READY', 'ACTIVE'] else 'badge-muted' }}">{{ agent.status }}</span>
+            <span class="badge {{ 'badge-ok' if agent.status in ['READY', 'IDLE', 'ACTIVE'] else 'badge-muted' }}">{{ agent.status }}</span>
             <div class="text-slate-500 text-xs mt-1">{{ agent.status_meaning }}</div>
           </td>
           {% if agent.runtime_tracked %}
@@ -50,10 +58,12 @@
     <p class="empty">No registered agents — no agent definitions are
       available to this runtime.</p>
   {% endif %}
-  <p class="empty">Status meanings: PLANNED = definition exists, no runtime
-    available; READY = runtime deployed and able to accept work, nothing
-    executing; ACTIVE = runtime reports jobs executing now. Status is derived
-    from the runtime report and is never assumed from a definition, so no
-    activity is shown for work that did not happen.</p>
+  <p class="empty">Status meanings: PLANNED = definition exists but no live
+    worker can accept work; READY = live worker, no jobs for this agent yet;
+    IDLE = live worker, past jobs, nothing executing; ACTIVE = a job is
+    executing right now; FAILED = the last outcome was a terminal failure
+    needing retry/recovery. Status comes from real queue state and is never
+    assumed from a definition, so no activity is shown for work that did not
+    happen.</p>
 </div>
 {% endblock %}

@@ -29,7 +29,8 @@ def overview_payload() -> dict[str, Any]:
     the Agents page showed the declared registry.)
     """
     agents = 0
-    agent_counts = {"registered": 0, "ready": 0, "active": 0, "planned": 0}
+    agent_counts = {"registered": 0, "ready": 0, "idle": 0, "active": 0,
+                    "failed": 0, "planned": 0}
     cases = 0
     evidence = 0
     reports = 0
@@ -44,7 +45,7 @@ def overview_payload() -> dict[str, Any]:
         agent_counts["registered"] = agents
         for agent in listed:
             status = str(agent.get("status") or "").upper()
-            if status in ("READY", "ACTIVE", "PLANNED"):
+            if status in ("READY", "IDLE", "ACTIVE", "FAILED", "PLANNED"):
                 agent_counts[status.lower()] += 1
     except Exception:
         pass

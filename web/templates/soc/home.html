@@ -11,7 +11,7 @@
     <a class="panel p-4 block hover:border-cyan-500/50" href="/ui/soc/agents{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">
       <div class="text-3xl font-bold">{{ agents }}</div>
       <div class="text-slate-400 text-sm">Agents registered</div>
-      <div class="text-slate-500 text-xs">{{ agent_counts.ready }} ready · {{ agent_counts.active }} active · {{ agent_counts.planned }} planned</div>
+      <div class="text-slate-500 text-xs">{{ agent_counts.ready }} ready · {{ agent_counts.idle }} idle · {{ agent_counts.active }} active · {{ agent_counts.failed }} failed · {{ agent_counts.planned }} planned</div>
     </a>
     <a class="panel p-4 block hover:border-cyan-500/50" href="/ui/soc/cases{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">
       <div class="text-3xl font-bold">{{ cases }}</div>
