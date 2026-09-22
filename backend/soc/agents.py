@@ -11,6 +11,20 @@ the engine's own deterministic specialist registry
 environment with neither renders an explicit empty state.  Nothing here
 writes, executes, or fabricates: every value is projected from a declared
 field, and when a source is absent the block is simply empty.
+
+Runtime status is derived, never defaulted:
+
+* ``PLANNED`` — a definition exists but no agent runtime reports this agent,
+  so it cannot be executing or accepting work (the deployed tree today);
+* ``READY``   — the agent runtime is deployed and reports the agent able to
+  accept work, with nothing executing;
+* ``ACTIVE``  — the agent runtime reports jobs executing right now.
+
+``IDLE`` is deliberately not used: the runtime exposes definition readiness,
+queue depth and job counts, which cannot distinguish "idle with no work" from
+"ready for work" — showing IDLE would be a guess.  Queue/active/total counters
+are ``None`` (rendered as *not tracked*) whenever no runtime reports them, so a
+missing runtime is never displayed as a zero-activity worker.
 """
 
 from __future__ import annotations
@@ -31,6 +45,56 @@ _CVES_LIMIT = 12
 _NOTES_LIMIT = 12
 _CASES_LIMIT = 12
 _KB_HARVEST_LIMIT = 40
+
+# ---------------------------------------------------------------- status model
+STATUS_PLANNED = "PLANNED"
+STATUS_READY = "READY"
+STATUS_ACTIVE = "ACTIVE"
+STATUS_VALUES = (STATUS_PLANNED, STATUS_READY, STATUS_ACTIVE)
+
+MEANING_PLANNED = (
+    "definition exists — no agent runtime is deployed in this environment, "
+    "so it cannot execute or accept work")
+MEANING_PLANNED_REGISTERED = (
+    "registered in the agent runtime but not marked ready")
+MEANING_READY = (
+    "the agent runtime is deployed and reports this agent able to accept "
+    "work; nothing is executing right now")
+MEANING_ACTIVE = "the agent runtime reports jobs executing right now"
+
+_RUNTIME_SOURCE = "backend.research_agents.service"
+
+
+def _runtime_status(tracked: bool, stats: Mapping[str, Any]) -> tuple[str, str]:
+    """(status, meaning) derived from what the runtime actually reports.
+
+    Nothing here falls back to a flattering default: without a runtime
+    report the agent is PLANNED, whatever the definition claims.
+    """
+    if not tracked:
+        return STATUS_PLANNED, MEANING_PLANNED
+    if int(stats.get("active_jobs") or 0) > 0:
+        return STATUS_ACTIVE, MEANING_ACTIVE
+    if bool(stats.get("available")):
+        return STATUS_READY, MEANING_READY
+    return STATUS_PLANNED, MEANING_PLANNED_REGISTERED
+
+
+def _runtime_block(deployed: bool) -> dict[str, Any]:
+    """Page-level runtime banner (real, or an explicit absence)."""
+    if deployed:
+        return {
+            "deployed": True,
+            "source": _RUNTIME_SOURCE,
+            "meaning": "queue, active-job and job counters come from "
+                       f"{_RUNTIME_SOURCE}",
+        }
+    return {
+        "deployed": False,
+        "source": "",
+        "meaning": "No agent runtime is deployed in this environment — queue, "
+                   "active jobs and total jobs are not tracked for any agent",
+    }
 
 
 def _deployed_registry_agents() -> list[dict[str, Any]]:
@@ -107,24 +171,51 @@ def _registry_agents() -> list[dict[str, Any]]:
     return _engine_specialist_agents()
 
 
-def _service_counts() -> dict[str, dict[str, int]]:
-    """Per-agent runtime counters from the real orchestration facade."""
+def _runtime_report() -> tuple[bool, dict[str, dict[str, Any]]]:
+    """(runtime deployed, per-key counters) from the real orchestration facade.
+
+    Only ``backend.research_agents.service`` can report queue/job counters for
+    these agents.  When it is absent (the deployed tree) or raises, the runtime
+    is reported as *absent* and no counter is invented.
+    """
     try:
         from backend.research_agents import service as ra
 
         payload = ra.agents_payload()
-        out: dict[str, dict[str, int]] = {}
-        for entry in payload.get("agents", []):
-            key = _text(entry.get("category")).lower()
-            out[key] = {
-                "queue": int(entry.get("queue") or 0),
-                "active_jobs": int(entry.get("active_jobs") or 0),
-                "job_count": int(entry.get("job_count") or 0),
-                "available": bool(entry.get("available")),
-            }
-        return out
     except Exception:
-        return {}
+        return False, {}
+    if not isinstance(payload, Mapping):
+        return False, {}
+    out: dict[str, dict[str, Any]] = {}
+    for entry in payload.get("agents", []) or []:
+        if not isinstance(entry, Mapping):
+            continue
+        key = _text(entry.get("category")).lower()
+        if not key:
+            continue
+        out[key] = {
+            "queue": int(entry.get("queue") or 0),
+            "active_jobs": int(entry.get("active_jobs") or 0),
+            "job_count": int(entry.get("job_count") or 0),
+            "available": bool(entry.get("available")),
+        }
+    return True, out
+
+
+def _service_counts() -> dict[str, dict[str, Any]]:
+    """Counters only (runtime presence is reported by ``_runtime_report``)."""
+
+    return _runtime_report()[1]
+
+
+def _declared_lifecycle(agent: Mapping[str, Any]) -> str:
+    """The registry's own declared lifecycle/status, verbatim.
+
+    Empty string when the definition declares none — never a substituted
+    default, so the UI can say "not declared" truthfully.
+    """
+
+    return _text(agent.get("lifecycle_state")) or _text(agent.get("status"))
 
 
 def _memory_summary() -> dict[str, Any]:
@@ -189,36 +280,44 @@ def _case_rows() -> list[dict[str, Any]]:
 
 
 def agents_index() -> dict[str, Any]:
-    """All registered AI agents with identity + live counters.
+    """Declared agents + runtime-derived status (never a defaulted status).
 
     Degrades to an empty index (never raises) when no identity source is
-    available, so the page can render an explicit empty state.
+    available, so the page can render an explicit empty state.  Counters are
+    ``None`` unless a runtime actually reports them: a missing runtime is
+    shown as *not tracked*, never as a worker with zero jobs.
     """
     try:
         declared = _registry_agents()
     except Exception:
         declared = []
+    runtime_deployed, counts = _runtime_report()
     agents: list[dict[str, Any]] = []
-    counts = _service_counts()
     for agent in declared:
         if not isinstance(agent, Mapping):
             continue
         key = _text(agent.get("key")).lower()
         stats = counts.get(key) or counts.get(_text(agent.get("category"))) or {}  # noqa: E501
+        tracked = runtime_deployed and key in counts
+        status, meaning = _runtime_status(tracked, stats)
         agents.append({
             "slug": _slug(key),
             "key": key,
             "name": _text(agent.get("name")),
             "purpose": _text(agent.get("description")),
             "role": _text(agent.get("category")),
-            "status": _text(agent.get("status")) or "ready",
-            "queue": int(stats.get("queue") or 0),
-            "active_jobs": int(stats.get("active_jobs") or 0),
-            "job_count": int(stats.get("job_count") or 0),
-            "available": bool(stats.get("available", True)),
+            "status": status,
+            "status_meaning": meaning,
+            "declared_lifecycle": _declared_lifecycle(agent),
+            "runtime_tracked": tracked,
+            "queue": int(stats.get("queue") or 0) if tracked else None,
+            "active_jobs": int(stats.get("active_jobs") or 0) if tracked else None,  # noqa: E501
+            "job_count": int(stats.get("job_count") or 0) if tracked else None,
+            "available": bool(stats.get("available")) if tracked else False,
         })
     agents.sort(key=lambda a: a["name"])
-    return {"count": len(agents), "agents": agents}
+    return {"count": len(agents), "agents": agents,
+            "runtime": _runtime_block(runtime_deployed)}
 
 
 def _agent_knowledge(agent_key: str, agent_name: str) -> dict[str, list[str]]:
@@ -274,8 +373,26 @@ def _agent_knowledge(agent_key: str, agent_name: str) -> dict[str, list[str]]:
     }
 
 
-def _agent_history(agent_name: str) -> dict[str, list[dict[str, Any]]]:
-    """Research history: papers, CVEs analyzed, internal notes."""
+def _memory_source_available() -> bool:
+    """Whether the agent-attributed research memory exists here (import only)."""
+
+    try:
+        from backend.investigation_engine.memory import ResearchMemory  # noqa: F401,E501
+
+        return True
+    except Exception:
+        return False
+
+
+def _agent_history(agent_name: str) -> dict[str, Any]:
+    """Research history, split by attribution truth.
+
+    ``papers``/``cves`` are platform-wide records (no agent attribution field
+    exists in them); ``notes`` are the only agent-attributed records.  The
+    ``scopes`` block tells the page which is which, and
+    ``notes_source_available`` distinguishes "nothing recorded" from "the
+    attributing store is not deployed".
+    """
     papers: list[dict[str, Any]] = []
     for doc in _kb_documents():
         title = _text(doc.get("title"))
@@ -313,6 +430,14 @@ def _agent_history(agent_name: str) -> dict[str, list[dict[str, Any]]]:
         "papers": papers,
         "cves": _cve_records(),
         "notes": notes,
+        "scopes": {
+            "papers": "platform-wide — knowledge-base documents, not "
+                      "attributed to individual agents",
+            "cves": "platform-wide — research-loop records, not attributed "
+                    "to individual agents",
+            "notes": "agent-attributed — research memory",
+        },
+        "notes_source_available": _memory_source_available(),
     }
 
 
@@ -360,7 +485,35 @@ def agent_detail(slug: str) -> dict[str, Any] | None:
     if found is None:
         return None
     name = _text(found.get("name"))
-    counts = _service_counts().get(key) or {}
+    runtime_deployed, counts = _runtime_report()
+    tracked = runtime_deployed and key in counts
+    stats = counts.get(key) or {}
+    status, meaning = _runtime_status(tracked, stats)
+    declared_lifecycle = _declared_lifecycle(found) or "NOT DECLARED"
+    can_execute = tracked and bool(stats.get("available"))
+    runtime = _runtime_block(runtime_deployed)
+    runtime.update({
+        "tracked": tracked,
+        "queue": int(stats.get("queue") or 0) if tracked else None,
+        "active_jobs": int(stats.get("active_jobs") or 0) if tracked else None,
+        "job_count": int(stats.get("job_count") or 0) if tracked else None,
+        "available": bool(stats.get("available")) if tracked else False,
+    })
+    if can_execute:
+        capability_now = (
+            "The deployed agent runtime reports this agent able to accept "
+            "work; counters below come from that runtime.")
+        capability_planned = "Declared capabilities can be dispatched by the deployed runtime."  # noqa: E501
+    else:
+        capability_now = (
+            "Not executable in this deployment: execution, queueing and "
+            "scheduling for this agent are not implemented in any deployed "
+            "runtime, so it cannot be running work.")
+        capability_planned = (
+            "These capabilities are declared in the agent registry only; "
+            "they are planned, not implemented, in this deployment.")
+    knowledge = _agent_knowledge(key, name)
+    history = _agent_history(name)
     return {
         "identity": {
             "slug": slug,
@@ -368,16 +521,43 @@ def agent_detail(slug: str) -> dict[str, Any] | None:
             "name": name,
             "purpose": _text(found.get("description")),
             "role": _text(found.get("category")),
-            "status": _text(found.get("status")) or "ready",
+            "status": status,
+            "status_meaning": meaning,
+            "declared_lifecycle": declared_lifecycle,
+            "research_only": bool(found.get("research_only", True)),
             "description": _text(found.get("description")),
         },
-        "knowledge": _agent_knowledge(key, name),
-        "history": _agent_history(name),
+        "runtime": runtime,
+        "capability": {
+            "can_execute_now": can_execute,
+            "now": capability_now,
+            "declared": list(knowledge.get("techniques") or []),
+            "planned": capability_planned,
+        },
+        "knowledge": knowledge,
+        "history": history,
         "target_cases": _agent_cases(key),
+        "cases_scope": "association by vulnerability category (AEC case "
+                       "explorer) — it does not mean this agent executed "
+                       "the case",
+        "sources": {
+            "identity": (
+                _RUNTIME_SOURCE.replace(".service", ".registry")
+                if runtime_deployed
+                else "ai.knowledge.specialist_registry — engine specialist definitions"  # noqa: E501
+            ),
+            "runtime": runtime["source"],
+            "knowledge_base": "backend.research_data — platform-wide, not attributed to individual agents",  # noqa: E501
+            "research_memory": (
+                "backend.investigation_engine.memory — agent-attributed"
+                if history["notes_source_available"] else ""
+            ),
+            "cases": "AEC case explorer — association by vulnerability category",  # noqa: E501
+        },
         "counters": {
-            "queue": int(counts.get("queue") or 0),
-            "active_jobs": int(counts.get("active_jobs") or 0),
-            "job_count": int(counts.get("job_count") or 0),
-            "available": bool(counts.get("available", True)),
+            "queue": runtime["queue"],
+            "active_jobs": runtime["active_jobs"],
+            "job_count": runtime["job_count"],
+            "available": runtime["available"],
         },
     }

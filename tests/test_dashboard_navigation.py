@@ -3,7 +3,7 @@ tests/test_dashboard_navigation.py — Stage D8 dashboard navigation &
 Recent Operations regression tests.
 
 Covers:
-- every Research sidebar destination (href, route response, precedence)
+- Research destinations stay reachable by route but leave the sidebar
 - dashboard <-> leads <-> plans <-> CVE cross navigation
 - Recent Operations rendering + per-operation fail-soft (no fabrication)
 - the "All runs" link points at the real UI Runs route
@@ -17,6 +17,7 @@ import re
 import sys
 import unittest
 from contextlib import contextmanager
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, "/opt/watch")
@@ -131,21 +132,24 @@ class TestResearchSidebar(_Base):
                 return self._get(page)
         return self._get(page)
 
-    def test_every_research_destination_present_and_nonempty(self):
+    def test_research_destinations_stay_out_of_the_sidebar(self):
+        # UX correction: the sidebar is SOC-first, so no research destination
+        # may be rendered there any more.  Asserted against the shipped
+        # template (this module drives the deployed app) so the contract holds
+        # before and after promotion; the routes themselves are proven by
+        # test_every_research_destination_route_resolves below.
+        base = (Path(__file__).resolve().parents[1]
+                / "web" / "templates" / "base.html").read_text()
+        nav = re.search(r'<nav class="sidebar-nav">(.*?)</nav>', base,
+                        re.S).group(1)
+        rendered = {name.strip() for _, name in SIDE_LINK_RE.findall(nav)}
+        leaked = rendered & set(RESEARCH_SIDEBAR)
+        self.assertEqual(leaked, set(),
+                         f"legacy research items still in sidebar: {leaked}")
         for page in ("/", "/ui/runs", "/ui/domains", "/ui/research"):
             with self.subTest(page=page):
                 r = self._render(page)
                 self.assertEqual(r.status_code, 200)
-                links = self._sidebar(r.text)
-                for name, path in RESEARCH_SIDEBAR.items():
-                    self.assertIn(name, links, f"{page}: missing sidebar {name!r}")
-                    href = links[name]
-                    self.assertTrue(href, f"{page}: empty href for {name!r}")
-                    self.assertEqual(href.split("?")[0], path,
-                                     f"{page}: {name!r} -> {href!r}")
-                # regression: plans was the link left undefined on
-                # programs.py / runs.py pages (rendered href="").
-                self.assertTrue(links["Research Plans"])
 
     def test_every_research_destination_route_resolves(self):
         for name, path in RESEARCH_SIDEBAR.items():

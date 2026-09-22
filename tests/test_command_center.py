@@ -298,7 +298,7 @@ class TestCommandCenterRoutes(_WatchlistFixture):
         # JSON projection carries no credential-bearing URL
         self.assertNotIn("research_url", candidate)
 
-    def test_sidebar_links_to_command_center(self):
+    def test_command_center_is_not_a_sidebar_item(self):
         for path, patch_target in (
             ("/", "backend.dashboard"),
             ("/ui/command", "backend.dashboard"),
@@ -319,13 +319,11 @@ class TestCommandCenterRoutes(_WatchlistFixture):
                                 return_value={"total": 0}):
                     r = self._get(path)
                 self.assertEqual(r.status_code, 200)
-                link = re.search(
-                    r'<a class="side-link[^"]*" href="([^"]*)"[^>]*>\s*'
-                    r'<span class="side-ico">[^<]*</span>Command Center</a>',
-                    r.text,
-                )
-                self.assertIsNotNone(link, f"{path}: missing Command Center link")
-                self.assertEqual(link.group(1).split("?")[0], "/ui/command")
+                nav = re.search(r'<nav class="sidebar-nav">(.*?)</nav>',
+                                r.text, re.S).group(1)
+                self.assertNotIn(
+                    "Command Center</a>", nav,
+                    f"{path}: legacy Command Center link still in sidebar")
 
     def test_command_route_resolves(self):
         with mock.patch("backend.dashboard.latest_runs", return_value=[]):

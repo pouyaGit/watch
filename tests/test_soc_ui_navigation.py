@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 LEGACY_VARS = [
-    "command_url", "root_url", "programs_url",
+    "command_url", "programs_url",
     "domains_url", "http_url", "urls_url", "endpoints_url",
     "parameters_url", "runs_url", "dns_url", "changes_url",
     "research_url", "queue_url", "research_tasks_url", "leads_url",
@@ -33,12 +33,13 @@ class TestSideNavigation(unittest.TestCase):
     def _base(self) -> str:
         return (ROOT / "web" / "templates" / "base.html").read_text()
 
-    def test_legacy_nav_entries_remain(self):
+    def test_legacy_nav_entries_are_not_rendered(self):
         text = self._base()
-        # legacy sidebar links render from these template variables;
-        # every pre-existing entry must still be referenced
+        # UX correction: the legacy pages keep their routes for backward
+        # compatibility but their links must not be rendered in the sidebar
         for var in LEGACY_VARS:
-            self.assertIn(f"{{{{ {var} }}}}", text, f"legacy link {var} removed")
+            self.assertNotIn(f"{{{{ {var} }}}}", text,
+                             f"legacy sidebar link still rendered: {var}")
 
     def test_soc_group_present(self):
         text = self._base()
@@ -46,9 +47,13 @@ class TestSideNavigation(unittest.TestCase):
         for href in SOC_HREFS:
             self.assertIn(href, text, f"SOC link {href} missing")
 
-    def test_legacy_engineering_label_present(self):
+    def test_legacy_engineering_label_absent(self):
         text = self._base()
-        self.assertIn("Legacy / Engineering", text)
+        self.assertNotIn("Legacy / Engineering", text)
+        self.assertNotIn("nav-legacy", text)
+        # SOC-first sidebar: exactly the AI SOC group plus the system group
+        groups = re.findall(r'<p class="nav-group">([^<]+)</p>', text)
+        self.assertEqual(groups, ["AI SOC", "System"], groups)
 
 
 class TestSocPageRender(unittest.TestCase):

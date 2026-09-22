@@ -23,6 +23,24 @@ XSS_ID = "xss-66d4b40bc1570361"          # candidate whose evidence names a CVE
 KB_ID = "kb-609f38e9c57c0592"            # CVE-2026-1557 synthesis document
 
 
+_LEGACY_SIDEBAR_LABELS = {
+    "Research Cases", "Research / CVEs", "Research Queue", "Research Tasks",
+    "Research Leads", "Research Plans", "Research Agent", "XSS",
+    "Knowledge Base", "Reports", "Command Center", "Dashboard", "Programs",
+    "Domains", "HTTP", "URLs", "Endpoints", "Parameters",
+}
+
+
+def _shipped_sidebar_labels() -> set:
+    """Labels rendered by the sidebar this worktree ships (source of truth)."""
+
+    base = Path(__file__).resolve().parents[1] / "web" / "templates" / "base.html"
+    nav = re.search(r'<nav class="sidebar-nav">(.*?)</nav>', base.read_text(),
+                    re.S).group(1)
+    return {m.strip() for m in
+            re.findall(r'<span class="side-ico">[^<]*</span>([^<]+)</a>', nav)}
+
+
 def _qs(path, **params):
     if API_KEY:
         params["api_key"] = API_KEY
@@ -94,30 +112,29 @@ class TestDashboardResearchSection(_Base):
 
 
 class TestSidebarActiveState(_Base):
-    def test_active_highlight_per_page(self):
-        cases = {
-            "/ui/research": "/ui/research",
-            "/ui/research/queue": "/ui/research/queue",
-            "/ui/research/tasks": "/ui/research/tasks",
-            "/ui/xss": "/ui/xss",
-            "/ui/kb": "/ui/kb",
-            "/ui/reports": "/ui/reports",
-        }
-        for path, expected in cases.items():
+    def test_legacy_pages_render_but_are_not_sidebar_destinations(self):
+        # UX correction: the sidebar is SOC-first, so legacy research pages no
+        # longer get a sidebar entry (hence no sidebar active highlight).
+        # Routes and page content are unchanged; asserted against the shipped
+        # template because this module drives the deployed app.
+        cases = [
+            "/ui/research", "/ui/research/queue", "/ui/research/tasks",
+            "/ui/xss", "/ui/kb", "/ui/reports",
+        ]
+        labels = _shipped_sidebar_labels()
+        leaked = labels & _LEGACY_SIDEBAR_LABELS
+        self.assertEqual(leaked, set(), f"legacy sidebar items: {leaked}")
+        for path in cases:
             with self.subTest(path=path):
                 r = self._get(path)
                 self.assertEqual(r.status_code, 200)
-                active = self._active(r.text)
-                self.assertTrue(active, f"no active sidebar link on {path}")
-                self.assertTrue(
-                    any(a.split("?")[0] == expected for a in active),
-                    f"{path}: active={active}",
-                )
 
     def test_research_group_links_present(self):
+        # in-page cross navigation the research page itself renders (the
+        # sidebar no longer contributes these hrefs)
         r = self._get("/ui/research")
-        for path in ("/ui/research", "/ui/research/queue",
-                     "/ui/research/tasks", "/ui/xss", "/ui/kb", "/ui/reports"):
+        for path in ("/ui/research", "/ui/research/queue", "/ui/xss",
+                     "/ui/reports"):
             self.assertIn(path, r.text)
 
 
