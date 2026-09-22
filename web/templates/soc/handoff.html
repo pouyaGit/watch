@@ -8,6 +8,13 @@
     investigation packages. Open one to review target, evidence and
     suggested tests with an external researcher.</p>
 
+  {% if not source_available %}
+  <p class="empty">No handoff packages are available. The investigation-report
+    source is not deployed in this environment, so there is nothing to project
+    yet — nothing is fabricated for display, and packages appear here as soon
+    as real investigation reports exist.</p>
+  {% endif %}
+
   <div class="table-wrap">
     <table class="tbl">
       <thead>
