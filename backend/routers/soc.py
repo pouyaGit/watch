@@ -110,6 +110,48 @@ def ui_soc_activity(request: Request):
             request, **payload, active="soc-activity"))
 
 
+@router.get("/ui/soc/campaigns", response_class=HTMLResponse)
+def ui_soc_campaigns(request: Request):
+    from backend.soc import campaigns as soc_campaigns
+
+    payload = soc_campaigns.campaigns_index()
+    return _templates.TemplateResponse(
+        request, "soc/campaigns.html", _ctx(
+            request, **payload, active="soc-campaigns"))
+
+
+@router.get("/ui/soc/campaigns/{campaign_id}", response_class=HTMLResponse)
+def ui_soc_campaign_detail(request: Request, campaign_id: str):
+    from backend.soc import campaigns as soc_campaigns
+
+    detail = soc_campaigns.campaign_detail(campaign_id)
+    if detail is None:
+        from fastapi.responses import HTMLResponse as HR
+        return HR(
+            "<h1>Campaign not found</h1><p>No campaign matches "
+            f"{campaign_id!r}.</p>", status_code=404)
+    return _templates.TemplateResponse(
+        request, "soc/campaign_detail.html", _ctx(
+            request, **detail, active="soc-campaigns"))
+
+
+@router.get("/ui/soc/campaigns/{campaign_id}/objectives/{objective_id}",
+            response_class=HTMLResponse)
+def ui_soc_campaign_objective(request: Request, campaign_id: str,
+                              objective_id: str):
+    from backend.soc import campaigns as soc_campaigns
+
+    detail = soc_campaigns.objective_detail(campaign_id, objective_id)
+    if detail is None:
+        from fastapi.responses import HTMLResponse as HR
+        return HR(
+            "<h1>Objective not found</h1><p>No objective matches "
+            f"{objective_id!r}.</p>", status_code=404)
+    return _templates.TemplateResponse(
+        request, "soc/campaign_objective.html", _ctx(
+            request, **detail, active="soc-campaigns"))
+
+
 @router.get("/ui/soc/handoff", response_class=HTMLResponse)
 def ui_soc_handoff(request: Request):
     from backend.soc import handoff as soc_handoff
