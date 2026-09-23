@@ -15,6 +15,34 @@ from backend.soc._util import _bounded, _clean_case, _text
 _ARTIFACT_LIMIT = 20
 
 
+def _finding_next_action(case: Any, cand: Any, verified: bool) -> str:
+    """State-truthful analyst label for a finding case row.
+
+    Cycle-3 production fix: the old fallback said "awaiting verification"
+    for ANY case without a stored next step — including DUPLICATE and
+    BLOCKED cases, which are dead ends that must never present
+    themselves as pending work (truthful-label rule).
+    """
+    state = str(getattr(case, "state", "") or "")
+    if state == "DUPLICATE":
+        canonical = ((cand.duplicate_of if cand else "")
+                     or "its canonical candidate")
+        return f"duplicate of {canonical} — no separate verification"
+    if state == "BLOCKED":
+        return "verification blocked — see finding detail"
+    if state == "REJECTED":
+        return "verification rejected — see finding detail"
+    if state == "INCONCLUSIVE":
+        return "verification inconclusive — see finding detail"
+    if state == "CLOSED":
+        return "closed"
+    if getattr(case, "recommended_next_step", ""):
+        return str(case.recommended_next_step)
+    if verified:
+        return "analyst review"
+    return "awaiting verification"
+
+
 def cases_index() -> dict[str, Any]:
     """SOC case list — every AEC case explorer row + detail links."""
     rows: list[dict[str, Any]] = []
@@ -74,9 +102,8 @@ def cases_index() -> dict[str, Any]:
                         f"{len(cand.evidence_refs or [])} candidate refs"
                     if cand else "")),
                 "research_state": case.state,
-                "next_action": (case.recommended_next_step
-                                or ("analyst review" if verified
-                                    else "awaiting verification"))[:160],
+                "next_action": _finding_next_action(
+                    case, cand, verified)[:160],
                 "source": "finding-verification",
                 "kind": "verified-case" if verified else "candidate-case",
                 "severity": case.severity,

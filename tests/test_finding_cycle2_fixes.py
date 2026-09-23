@@ -325,3 +325,76 @@ class TestSameJobBatchInvariants(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --------------------------------------------------------------------- #
+# Cycle 3: SOC Cases next_action must be state-truthful
+# (a DUPLICATE/BLOCKED row must never say "awaiting verification")
+# --------------------------------------------------------------------- #
+class TestSocCaseNextActionLabels(unittest.TestCase):
+    def _patched(self, runtime):
+        import backend.research_agents.runtime_store as rs
+        return mock.patch.object(rs, "default_store",
+                                 return_value=runtime)
+
+    def test_duplicate_blocked_rows_never_claim_pending_work(self):
+        from backend.soc import cases as soc_cases
+        runtime, fs = make_stores()
+
+        # verified family from a real run (recommended step present)
+        source = enqueue_job(runtime)
+        complete_job(runtime, source, outcome="verified")
+        wf, _ = finding_worker_factory("verified")
+        run_findings([source.id], store=runtime, finding_store=fs,
+                     worker_factory=wf)
+
+        # duplicate family: TRIAGED case, then candidate -> DUPLICATE
+        # (the store cascade folds the case, exactly like production)
+        dup_cand = make_candidate(fs)
+        dup_cand = fs.transition_candidate(dup_cand.candidate_id,
+                                           "TRIAGED", reason="t")
+        dup_case = make_case(fs, dup_cand)
+        fs.transition_candidate(dup_cand.candidate_id, "DUPLICATE",
+                                reason="duplicate_of:some-canonical")
+
+        # blocked family: TRIAGED case -> BLOCKED directly
+        blk_cand = make_candidate(fs)
+        blk_cand = fs.transition_candidate(blk_cand.candidate_id,
+                                           "TRIAGED", reason="t")
+        blk_case = make_case(fs, blk_cand)
+        fs.transition_case(blk_case.case_id, "BLOCKED",
+                           reason="verification_failed")
+
+        # genuine pending family: TRIAGED case that really awaits work
+        pend_cand = make_candidate(fs)
+        pend_cand = fs.transition_candidate(pend_cand.candidate_id,
+                                            "TRIAGED", reason="t")
+        pend_case = make_case(fs, pend_cand)
+
+        with self._patched(runtime):
+            payload = soc_cases.cases_index()
+        rows = {r["case_id"]: r for r in payload["cases"]
+                if r.get("source") == "finding-verification"}
+
+        dup_row = rows[dup_case.case_id]
+        self.assertEqual(dup_row["research_state"], "DUPLICATE")
+        self.assertIn("duplicate", dup_row["next_action"].lower())
+        self.assertNotEqual(dup_row["next_action"],
+                            "awaiting verification")
+
+        blk_row = rows[blk_case.case_id]
+        self.assertEqual(blk_row["research_state"], "BLOCKED")
+        self.assertIn("blocked", blk_row["next_action"].lower())
+        self.assertNotEqual(blk_row["next_action"],
+                            "awaiting verification")
+
+        # a case that truly has nothing yet keeps the pending label
+        pend_row = rows[pend_case.case_id]
+        self.assertEqual(pend_row["next_action"], "awaiting verification")
+
+        # the verified row shows the stored analyst step, never pending
+        verified_rows = [r for r in rows.values()
+                         if r["kind"] == "verified-case"]
+        self.assertTrue(verified_rows)
+        self.assertNotEqual(verified_rows[0]["next_action"],
+                            "awaiting verification")

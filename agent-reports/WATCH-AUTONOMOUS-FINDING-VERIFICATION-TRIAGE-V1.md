@@ -484,13 +484,37 @@ Cycle 2 (this promotion): production validation (sections 19-21) on
 7. this delivery record committed, re-pushed, re-checked, then
    `promotion/request.sh` -> STOP at Telegram APPROVE (rules 33/34).
 
-Post-approve plan (after cycle-2 promote + restart): sanctioned
-store-API repair of the two stuck pre-fix production rows
-(`fcase-35e4f4f4622d` TRIAGED -> DUPLICATE,
-`ver-387ad8fed815` AUTHORIZATION_REQUIRED -> EXPIRED, candidate case
-back-link restored, reason-coded + audited — no JSONL hand-editing),
-then re-read SOC projections to confirm the honest rows, then report the
-final production commit and STOP (rule 35 — no further Epic).
+Post-approve (cycle 2 completion): APPROVE received → approved → fresh
+`check.sh` READY → `promote.sh --yes` merged `7927cc1` into main →
+production **`a6e22af`**, `watch-api` restarted and verified (openapi
+200, soc/findings/cases 401, dirty 27 unchanged). The sanctioned repair
+then ran through FindingStore APIs only (no JSONL hand-editing):
+`fcase-35e4f4f4622d` TRIAGED → **DUPLICATE**, `ver-387ad8fed815`
+AUTHORIZATION_REQUIRED → **EXPIRED** (reason
+`duplicate_artifact_cascade:cand-7c229c48c455`), candidate case
+back-link restored — all three recorded in a `finding_integrity_repair`
+audit row; readback confirmed index/detail/handoff truth, the gate case
+link (`case-697ba6c6e03f` + `fcase-7349be646c50`) and derived
+authorization ids (`authz-35e609a42d32`, `authz-42bf89ffbcce`) now
+resolve.
+
+Cycle 3 (this promotion): that re-read exposed ONE more truthful-label
+defect — the SOC Cases `next_action` fallback still said "awaiting
+verification" for the now-DUPLICATE and the BLOCKED finding rows.
+Fixed in `backend/soc/cases.py` with a state-truthful
+`_finding_next_action()` (duplicate/blocked/rejected/inconclusive/closed
+get their own honest labels; "awaiting verification" only for genuinely
+pending cases; verified rows keep the stored analyst step) plus
+regression tests (`TestSocCaseNextActionLabels`, RED pre-fix). Suites
+re-run isolated — exact totals below.
+
+Cycle 3 flow: battery green → explicit 3-file stage (cases.py, the
+cycle-2/3 suite, this report) → commit → `push_safe.sh` → `report.sh`
++ `check.sh` → `promotion/request.sh` → STOP at Telegram APPROVE
+(rules 33/34). After that promote: restart + verify, re-read the Cases
+rows to confirm the honest labels on production data, report the final
+production commit and STOP (rule 35 — still the same Epic, no further
+Epic).
 
 ## 27. Exact production commit(s)
 
