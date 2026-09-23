@@ -462,6 +462,36 @@ out of the staged set). Delivery flow executed:
    WARN only: 168 unrelated uncommitted entries stay behind (by design).
 7. `promotion/request.sh` -> STOP at Telegram APPROVE (rules 33/34).
 
+Cycle 2 (this promotion): production validation (sections 19-21) on
+`7bbec46` found the four defects fixed here. Flow executed:
+1. per-suite isolated battery: **34/34 suites OK — 859 + AEC 2149 =
+   3,008 tests green** (plus explicit re-verification: cycle-1 finding
+   suites 140 OK, R53 split 34 OK, correlation 84 OK, the two
+   shadow-suspect suites isolated 8 OK + 26 OK on both baselines);
+2. R53 guard grep clean (`finding_correlation` absent from all changed
+   backend files), secret scan clean on the changed set;
+3. explicit 8-file stage from `cycle2_stage_list.txt` (staged == 8
+   verified; `command_center.html` and the ~168 unrelated leftovers
+   excluded);
+4. commit **`a2f9577`** ("finding: cycle-2 production-validation fixes
+   (dedupe truth, duplicate cascade, auth lineage)", +625/-46);
+5. `push_safe.sh origin agent/daily-development` ->
+   **`5b1eb9a..a2f9577`** (fail-closed push);
+6. `report.sh` baseline refresh (DELIVERY-REPORT-2026-09-23 rewritten),
+   `check.sh` -> **READY FOR PROMOTION**: PASS TESTS (82 OK), PASS
+   PATH_GUARD (no forbidden path/secret/env), PASS REPORT (this report
+   included), PASS PRODUCTION (unchanged `7bbec46`, 27 dirty);
+7. this delivery record committed, re-pushed, re-checked, then
+   `promotion/request.sh` -> STOP at Telegram APPROVE (rules 33/34).
+
+Post-approve plan (after cycle-2 promote + restart): sanctioned
+store-API repair of the two stuck pre-fix production rows
+(`fcase-35e4f4f4622d` TRIAGED -> DUPLICATE,
+`ver-387ad8fed815` AUTHORIZATION_REQUIRED -> EXPIRED, candidate case
+back-link restored, reason-coded + audited — no JSONL hand-editing),
+then re-read SOC projections to confirm the honest rows, then report the
+final production commit and STOP (rule 35 — no further Epic).
+
 ## 27. Exact production commit(s)
 
 - Cycle 1: agent commit **`ca9a6d5`** (+ report record `5b1eb9a`),
