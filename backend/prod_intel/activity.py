@@ -103,6 +103,18 @@ EVENT_CATEGORY: dict[str, tuple[str, str]] = {
     "intelligence_memory_learned": ("knowledge_memory_update", "progression"),
     "intelligence_lineage_recorded": ("knowledge_memory_update",
                                       "progression"),
+    # EPIC9: AI operations dispatcher (truthful tick/work events)
+    "ai_window_opened": ("ai_window", "progression"),
+    "ai_window_closed": ("ai_window", "progression"),
+    "ai_tick_started": ("ai_tick", "progression"),
+    "ai_tick_completed": ("ai_tick", "progression"),
+    "tick_budget_exhausted": ("ai_tick", "blocked"),
+    "work_discovered": ("ai_work", "progression"),
+    "work_selected": ("ai_work", "progression"),
+    "work_started": ("ai_work", "progression"),
+    "work_completed": ("ai_work", "progression"),
+    "work_blocked": ("ai_work", "blocked"),
+    "waiting_for_evidence": ("ai_work", "blocked"),
 }
 
 _MEANINGFUL_CATEGORIES = sorted({c for c, _ in EVENT_CATEGORY.values()})

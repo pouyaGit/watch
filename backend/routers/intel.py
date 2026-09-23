@@ -181,3 +181,22 @@ def intel_handoff() -> dict[str, Any]:
             status_code=503,
             detail=f"handoff source unavailable: {type(exc).__name__}"
         ) from None
+
+
+@router.get("/api/intel/ai-ops")
+def intel_ai_ops() -> dict[str, Any]:
+    """EPIC9: AI Operations window / operations state / process liveness
+    as three separate read-only facts. Global API-key auth (shared app
+    gate) — nothing here exempts itself. Worker PROCESS state and AI
+    OPERATIONS state are deliberately distinct: an idle operations state
+    with no live worker process is the normal healthy condition between
+    bounded ticks, not an error."""
+    try:
+        from backend.ai_ops.state import panel
+        return panel()
+    except Exception as exc:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=503,
+            detail=f"ai-ops source unavailable: {type(exc).__name__}"
+        ) from None

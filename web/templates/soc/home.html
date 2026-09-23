@@ -53,6 +53,71 @@
       the research-activity endpoint use.</p>
   </section>
 
+  {# EPIC9 (sections 14/15): AI operations — window, operations state
+     and process liveness are THREE separate facts. No worker process
+     between bounded ticks is the normal healthy condition, not an
+     outage; reasons come from fail-closed eligibility over the
+     existing stores (the evidence gate stays authoritative). #}
+  {% if ai_ops %}
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>AI operations</h2>
+      <a class="text-xs text-cyan-400 hover:underline"
+         href="/api/intel/ai-ops{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">JSON</a>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if ai_ops.window.open %}OPEN{% elif ai_ops.window.open == false %}CLOSED{% else %}UNKNOWN{% endif %}</div>
+        <div class="text-slate-400 text-xs">AI window — {{ ai_ops.window.label or '12:00-00:00 Asia/Tehran' }}</div>
+      </div>
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">{{ ai_ops.operations_display or ai_ops.operations_state or 'UNKNOWN' }}</div>
+        <div class="text-slate-400 text-xs">AI operations (not process state)</div>
+      </div>
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if ai_ops.process and ai_ops.process.alive %}RUNNING{% else %}NOT RUNNING{% endif %}</div>
+        <div class="text-slate-400 text-xs">Worker process
+          {% if ai_ops.process and ai_ops.process.alive and ai_ops.process.worker_id %}
+            — {{ ai_ops.process.worker_id }}
+          {% elif ai_ops.process and ai_ops.process.reason %}
+            — {{ ai_ops.process.reason }}
+          {% endif %}</div>
+      </div>
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {{ ai_ops.work.discovered or 0 }} / {{ ai_ops.work.executable or 0 }}</div>
+        <div class="text-slate-400 text-xs">Discovered / executable work</div>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs">
+      <div><span class="text-slate-400">Current tick:</span>
+        <span class="font-mono">{{ ai_ops.current_tick or '—' }}</span></div>
+      <div><span class="text-slate-400">Last tick:</span>
+        <span class="font-mono">{% if ai_ops.last_tick %}{{ ai_ops.last_tick.outcome }} at {{ ai_ops.last_tick.completed_at or ai_ops.last_tick.started_at }}{% else %}—{% endif %}</span></div>
+      <div><span class="text-slate-400">Next tick:</span>
+        <span class="font-mono">{{ ai_ops.next_tick_at or '—' }}</span></div>
+    </div>
+    {% if ai_ops.last_tick and ai_ops.work %}
+    <div class="text-xs mt-3">
+      <span class="text-slate-400">Work:</span>
+      {{ ai_ops.work.executable or 0 }} executable,
+      {{ ai_ops.work.waiting or 0 }} waiting for evidence,
+      {{ ai_ops.work.blocked or 0 }} blocked,
+      {{ ai_ops.work.deferred or 0 }} deferred{% if ai_ops.work.terminal %},
+      {{ ai_ops.work.terminal }} terminal{% endif %}
+    </div>
+    {% endif %}
+    {% if ai_ops.explanation %}
+    <div class="text-slate-500 text-xs mt-2">{{ ai_ops.explanation }}</div>
+    {% endif %}
+    <p class="text-slate-600 text-xs mt-2">Process state and AI
+      operations state are separate facts: between bounded hourly ticks
+      there is normally NO worker process while operations are IDLE or
+      WAITING_FOR_EVIDENCE — that is healthy, not an outage.</p>
+  </section>
+  {% endif %}
+
   {# Epic8 (section 7A): operational intelligence — same projection as
      /api/intel/overview. Every block renders the projection's own
      state (ok / unavailable / not_observed); nothing is computed here. #}
