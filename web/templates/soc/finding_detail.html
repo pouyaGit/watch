@@ -223,5 +223,59 @@
     </div>
 
   </div>
+
+  {# Epic8: complete analyst package (same projection as
+     /api/intel/cases/{case_id}) for the finding-family case #}
+  {% if case_intel and case_intel.found %}
+  <section class="panel p-4 mt-4">
+    <div class="panel-head"><h2>Analyst package</h2>
+      <a class="text-xs text-cyan-400 hover:underline"
+         href="/api/intel/cases/{{ case_intel.case_id }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">JSON</a>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+      <div>
+        <p><span class="text-slate-400">What was verified:</span>
+          <span class="text-xs text-slate-300">{{ case_intel.what_was_verified }}</span></p>
+        <p><span class="text-slate-400">What was NOT verified:</span>
+          <span class="text-xs text-slate-300">{{ case_intel.what_was_not_verified }}</span></p>
+        <p><span class="text-slate-400">Limitations:</span>
+          <span class="text-xs text-slate-300">{{ case_intel.verification_limitations|join('; ') if case_intel.verification_limitations else 'none recorded' }}</span></p>
+        <p><span class="text-slate-400">Payload / exploit detail:</span>
+          <span class="text-xs text-slate-500">{{ case_intel.payload }}</span></p>
+        <p><span class="text-slate-400">Severity provenance:</span>
+          <span class="text-xs text-slate-300">{{ case_intel.severity }} ({{ case_intel.severity_provenance }})</span></p>
+        <p><span class="text-slate-400">Confidence provenance:</span>
+          <span class="text-xs text-slate-300">{{ case_intel.confidence or '—' }} ({{ case_intel.confidence_provenance or 'n/a' }})</span></p>
+        <p><span class="text-slate-400">Knowledge used:</span>
+          <span class="text-xs text-slate-300">{{ case_intel.knowledge_used|join(', ') if case_intel.knowledge_used else 'none recorded' }}</span></p>
+        <p><span class="text-slate-400">Handoff:</span>
+          <span class="text-xs text-slate-300">{{ case_intel.handoff.state }}</span></p>
+        <p><span class="text-slate-400">Analyst next step:</span>
+          <span class="text-xs text-cyan-300">{{ case_intel.analyst_next_steps }}</span></p>
+      </div>
+      <div>
+        <h3 class="text-slate-300 text-xs uppercase tracking-wide mb-1">Verifications</h3>
+        {% for v in case_intel.lineage.verifications %}
+        <p class="text-xs text-slate-400">{{ v.verification_id }} — {{ v.state }}
+          ({{ v.gate_reason or 'no gate reason' }})</p>
+        {% else %}<p class="text-xs text-slate-600">No verification recorded.</p>{% endfor %}
+        <h3 class="text-slate-300 text-xs uppercase tracking-wide mb-1 mt-2">Timeline
+          ({{ case_intel.timeline|length }} persisted events)</h3>
+        <ul class="text-xs space-y-1 max-h-48 overflow-y-auto">
+          {% for e in case_intel.timeline %}
+          <li class="flex gap-2"><span class="font-mono text-slate-600">{{ e.at[5:19] }}</span>
+            <span class="text-slate-300">{{ e.event }}</span>
+            <span class="text-slate-500">{{ e.reason or e.state }}</span></li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </section>
+  {% elif case_intel %}
+  <section class="panel p-4 mt-4">
+    <p class="text-slate-500 text-xs">Analyst package:
+      {{ case_intel.reason or case_intel.state }}</p>
+  </section>
+  {% endif %}
 </div>
 {% endblock %}

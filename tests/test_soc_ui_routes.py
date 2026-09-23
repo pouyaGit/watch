@@ -29,8 +29,17 @@ def expected_routes() -> list[tuple[list[str], str]]:
         (["GET"], "/ui/soc/cases"),
         (["GET"], "/ui/soc/cases/{case_id}"),
         (["GET"], "/ui/soc/activity"),
+        (["GET"], "/ui/soc/campaigns"),
+        (["GET"], "/ui/soc/campaigns/{campaign_id}"),
+        (["GET"], "/ui/soc/campaigns/{campaign_id}/objectives/{objective_id}"),
+        (["GET"], "/ui/soc/findings"),
+        (["GET"], "/ui/soc/findings/{candidate_id}"),
+        (["GET"], "/ui/soc/targets"),           # EPIC8 target intelligence
         (["GET"], "/ui/soc/handoff"),
         (["GET"], "/ui/soc/handoff/{job_id}"),
+        # EPIC8 intel JSON API rides in as one _IncludedRouter wrapper
+        # (filtered out below via hasattr(r, "methods")) and is asserted
+        # separately by the API suite + openapi path checks.
     ])
 
 

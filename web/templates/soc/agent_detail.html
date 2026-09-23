@@ -340,6 +340,74 @@
     </div>
   </section>
 
+  {% if intel and intel.state != 'unavailable' %}
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Operational intelligence</h2>
+      <a class="text-xs text-cyan-400 hover:underline"
+         href="/api/intel/agents/{{ intel.slug or category }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">JSON</a>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if intel.research.state == 'ok' %}{{ intel.research.value.total }}{% else %}{{ intel.research.state }}{% endif %}</div>
+        <div class="text-slate-400 text-xs">Research jobs
+          {% if intel.research.state == 'ok' %}({{ intel.research.value.recent }} recent){% endif %}</div>
+        <div class="text-slate-600 text-[10px]">{{ intel.research.source }}</div>
+      </div>
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if intel.knowledge.state == 'ok' %}{{ intel.knowledge.value.documents_used }} / {{ intel.knowledge.value.documents_available if intel.knowledge.value.documents_available is not none else '?' }}{% else %}{{ intel.knowledge.state }}{% endif %}</div>
+        <div class="text-slate-400 text-xs">Knowledge documents used / available</div>
+        <div class="text-slate-600 text-[10px]">{{ intel.knowledge.source }}</div>
+      </div>
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if intel.findings.state == 'ok' %}{{ intel.findings.value.candidates }}{% else %}{{ intel.findings.state }}{% endif %}</div>
+        <div class="text-slate-400 text-xs">Candidates
+          {% if intel.findings.state == 'ok' %}· {{ intel.findings.value.verifications }} verifications · {{ intel.findings.value.cases }} cases{% endif %}</div>
+        <div class="text-slate-600 text-[10px]">{{ intel.findings.source }}</div>
+      </div>
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if intel.hunts.state == 'ok' %}{{ intel.hunts.value.total }}{% else %}{{ intel.hunts.state }}{% endif %}</div>
+        <div class="text-slate-400 text-xs">Hunt objectives
+          {% if intel.hunts.state == 'ok' %}({{ intel.hunts.value.by_state|tojson }}){% endif %}</div>
+        <div class="text-slate-600 text-[10px]">{{ intel.hunts.source }}</div>
+      </div>
+    </div>
+    {% if intel.learning.state == 'ok' and intel.learning.value %}
+    <h3 class="text-sm text-slate-300 mb-1">Learning signals
+      <span class="text-slate-600 text-xs">(REJECTED / INFERRED — never promoted)</span></h3>
+    <ul class="text-xs space-y-1">
+      {% for s in intel.learning.value %}
+      <li class="flex gap-2">
+        <span class="text-amber-300">{{ s.state }}</span>
+        <span class="text-slate-400">{{ s.kind }} ×{{ s.count }}</span>
+        <span class="text-slate-500">{{ s.pattern|truncate(80) }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if intel.activity.state == 'ok' and intel.activity.value %}
+    <h3 class="text-sm text-slate-300 mt-3 mb-1">Recent activity</h3>
+    <ul class="text-xs space-y-1">
+      {% for a in intel.activity.value[:6] %}
+      <li class="flex gap-2">
+        <span class="font-mono text-slate-600">{{ a.at[5:19] }}</span>
+        <span class="{% if a.kind == 'failure' %}text-red-400{% else %}text-slate-300{% endif %}">{{ a.category }}</span>
+        {% if a.link %}<a class="text-cyan-400 hover:underline" href="{{ a.link }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">open</a>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+  {% elif intel %}
+  <section class="panel p-4 mb-6">
+    <p class="text-slate-500 text-sm">Operational intelligence unavailable:
+      {{ intel.reason or intel.state }}.</p>
+  </section>
+  {% endif %}
+
   <section class="panel p-4">
     <div class="panel-head"><h2>Where this page's data comes from</h2></div>
     <dl class="text-sm space-y-1">

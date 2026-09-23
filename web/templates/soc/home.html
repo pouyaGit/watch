@@ -53,11 +53,89 @@
       the research-activity endpoint use.</p>
   </section>
 
+  {# Epic8 (section 7A): operational intelligence — same projection as
+     /api/intel/overview. Every block renders the projection's own
+     state (ok / unavailable / not_observed); nothing is computed here. #}
+  {% if intel and intel.state != 'unavailable' %}
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Operational intelligence</h2>
+      <a class="text-xs text-cyan-400 hover:underline"
+         href="/api/intel/overview{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">JSON</a>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if intel.campaigns.state == 'ok' %}{{ intel.campaigns.value.active }} / {{ intel.campaigns.value.total }}{% else %}{{ intel.campaigns.state }}{% endif %}</div>
+        <div class="text-slate-400 text-xs">Active / total campaigns</div>
+      </div>
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if intel.hunts.state == 'ok' %}{{ intel.hunts.value.open }} / {{ intel.hunts.value.total }}{% else %}{{ intel.hunts.state }}{% endif %}</div>
+        <div class="text-slate-400 text-xs">Open / total hunt objectives</div>
+      </div>
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if intel.recent_findings.state == 'ok' %}{{ intel.recent_findings.value.count }}{% else %}{{ intel.recent_findings.state }}{% endif %}</div>
+        <div class="text-slate-400 text-xs">Candidates in window</div>
+      </div>
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">{{ intel.current_activity.state }}</div>
+        <div class="text-slate-400 text-xs">Current activity — {{ intel.current_activity.basis }}</div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <h3 class="text-sm text-slate-300 mb-1">Blockers
+          {% if intel.blockers.state == 'ok' %}({{ intel.blockers.value|length }}){% endif %}</h3>
+        {% if intel.blockers.state == 'ok' and intel.blockers.value %}
+        <ul class="text-xs space-y-1">
+          {% for b in intel.blockers.value[:6] %}
+          <li class="flex gap-2">
+            <span class="text-amber-400">{{ b.kind }}</span>
+            <span class="font-mono text-slate-500">{{ b.id }}</span>
+            <span class="text-slate-400">{{ b.reason|truncate(60) }}</span>
+            {% if b.link %}<a class="text-cyan-400 hover:underline" href="{{ b.link }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">open</a>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}<p class="text-slate-600 text-xs">{{ intel.blockers.state }}
+          — no blockers recorded in window.</p>{% endif %}
+      </div>
+      <div>
+        <h3 class="text-sm text-slate-300 mb-1">Recent meaningful activity</h3>
+        {% if intel.meaningful_activity.state == 'ok' and intel.meaningful_activity.value %}
+        <ul class="text-xs space-y-1">
+          {% for a in intel.meaningful_activity.value[:6] %}
+          <li class="flex gap-2">
+            <span class="text-slate-600 font-mono">{{ a.at[5:19] }}</span>
+            <span class="{% if a.kind == 'failure' %}text-red-400{% elif a.kind == 'denied' %}text-amber-400{% else %}text-slate-300{% endif %}">{{ a.category }}</span>
+            {% if a.link %}<a class="text-cyan-400 hover:underline" href="{{ a.link }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">open</a>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}<p class="text-slate-600 text-xs">
+          {{ intel.meaningful_activity.state }} — nothing observed in window.</p>{% endif %}
+      </div>
+    </div>
+    <p class="text-slate-600 text-xs mt-3">Cases by source:
+      finding {{ intel.cases.finding_cases.value if intel.cases.finding_cases.state == 'ok' else intel.cases.finding_cases.state }}
+      · runtime gate {{ intel.cases.runtime_gate_cases.value if intel.cases.runtime_gate_cases.state == 'ok' else intel.cases.runtime_gate_cases.state }}
+      — families reported separately, never summed.</p>
+  </section>
+  {% elif intel %}
+  <section class="panel p-4 mb-6">
+    <p class="text-slate-500 text-sm">Operational intelligence unavailable:
+      {{ intel.reason or intel.state }}.</p>
+  </section>
+  {% endif %}
+
   <div class="flex flex-wrap gap-3">
     <a class="quick-action" href="/ui/soc/agents{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">Agents</a>
     <a class="quick-action" href="/ui/soc/cases{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">Cases</a>
     <a class="quick-action" href="/ui/soc/activity{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">Activity</a>
     <a class="quick-action" href="/ui/soc/handoff{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">Handoff</a>
+    <a class="quick-action" href="/ui/soc/targets{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">Targets</a>
   </div>
 </div>
 {% endblock %}
