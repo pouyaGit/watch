@@ -10,12 +10,14 @@
   <div class="table-wrap">
     <table class="tbl">
       <thead>
-        <tr><th>Case ID</th><th>Target</th><th>Category</th><th>Research state</th><th>Evidence state</th><th>Specialist</th><th>Next action</th><th></th></tr>
+        <tr><th>Case ID</th><th>Kind</th><th>Target</th><th>Category</th><th>Research state</th><th>Evidence state</th><th>Specialist</th><th>Next action</th><th></th></tr>
       </thead>
       <tbody>
         {% for case in cases %}
         <tr>
           <td class="font-mono">{{ case.case_id }}</td>
+          <td><span class="badge {% if case.kind == 'verified-case' %}badge-ok{% elif case.kind == 'candidate-case' %}badge-neutral{% else %}badge-neutral{% endif %}">{{ case.kind or 'case' }}</span>
+            {% if case.severity %}<div class="text-slate-500 text-xs">{{ case.severity }} · {{ case.severity_provenance }}</div>{% endif %}</td>
           <td>{{ case.target }}</td>
           <td>{{ case.category }}</td>
           <td>{{ case.research_state }}</td>
@@ -25,7 +27,7 @@
           <td><a class="link" href="{{ case.detail_url }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">open →</a></td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="empty">No cases in the current view.</td></tr>
+        <tr><td colspan="9" class="empty">No cases in the current view.</td></tr>
         {% endfor %}
       </tbody>
     </table>

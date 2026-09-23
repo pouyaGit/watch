@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}WATCH &middot; Candidate {{ candidate.candidate_id[:14] }}{% endblock %}
+{% block page %}Finding{% endblock %}
+{% block content %}
+<div class="p-6">
+  <div class="flex items-center gap-3 mb-1">
+    <h1 class="page-title">{{ candidate.vulnerability_class }} candidate
+      <span class="mono text-[12px] text-slate-400">{{ candidate.candidate_id }}</span></h1>
+    <span class="badge {% if state == 'VERIFIED' %}badge-ok{% elif state in ('REJECTED', 'BLOCKED', 'EXPIRED') %}badge-bad{% elif state in ('VERIFYING', 'VERIFICATION_PENDING', 'VERIFICATION_PLANNED') %}badge-run{% else %}badge-neutral{% endif %}">{{ state }}</span>
+    {% if case_kind %}<span class="badge {% if case_kind == 'verified-case' %}badge-ok{% else %}badge-neutral{% endif %}">{{ case_kind }}</span>{% endif %}
+    {% if duplicate_of %}<span class="badge badge-bad">DUPLICATE of {{ duplicate_of }}</span>{% endif %}
+  </div>
+  <p class="text-slate-400 text-sm mb-6">
+    Source job <span class="mono">{{ candidate.source_job }}</span>
+    · scope <span class="mono">{{ candidate.scope_ref }}</span>
+    · specialist {{ candidate.specialist }}
+    {% if candidate.source_campaign %}· campaign {{ candidate.source_campaign }}{% endif %}
+    · created {{ candidate.created_at[:19] }}
+    · updated {{ candidate.updated_at[:19] }}.
+    This is a <strong>candidate</strong>, not a confirmed vulnerability.</p>
+
+  <div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+
+    <div class="card">
+      <h2 class="card-title mb-2">Hypothesis</h2>
+      <p class="text-slate-300 text-sm">{{ hypothesis }}</p>
+      <div class="text-slate-500 text-xs mt-2">endpoint:
+        <span class="mono">{{ candidate.endpoint.get('url', '') if candidate.endpoint is mapping else candidate.endpoint }}</span>
+        {% if candidate.endpoint is mapping and candidate.endpoint.get('parameter') %}
+        · param <span class="mono">{{ candidate.endpoint.get('parameter') }}</span>{% endif %}
+        · method {{ candidate.endpoint.get('method', '—') if candidate.endpoint is mapping else '—' }}</div>
+      <div class="text-slate-500 text-xs mt-1">confidence
+        {{ candidate.confidence.get('value', candidate.confidence) if candidate.confidence is mapping else candidate.confidence }}
+        (provenance: {{ confidence_provenance }})</div>
+      <div class="text-slate-500 text-xs mt-1">severity {{ severity }}
+        — <span class="mono">{{ severity_provenance }}</span></div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title mb-2">Verification gate (authoritative)</h2>
+      {% if gate %}
+      <div class="mb-2">
+        <span class="badge {% if gate.decision == 'VERIFIED' %}badge-ok{% elif gate.decision in ('REJECTED', 'FAILED', 'BLOCKED') %}badge-bad{% else %}badge-neutral{% endif %}">{{ gate.decision }}</span>
+        <span class="text-slate-400 text-xs ml-2">{{ gate.gate_reason }}</span>
+      </div>
+      <p class="text-slate-300 text-sm">{{ gate.reason }}</p>
+      {% if gate.case_id %}<div class="text-slate-500 text-xs mt-1">gate case
+        <span class="mono">{{ gate.case_id }}</span></div>{% endif %}
+      <div class="text-slate-500 text-xs">decided {{ gate.decided_at[:19] if gate.decided_at else '—' }}</div>
+      {% else %}
+      <p class="text-slate-400 text-sm">No gate decision yet — this candidate
+        has not completed verification. Nothing is claimed.</p>
+      {% endif %}
+      {% if verification %}
+      <div class="text-slate-500 text-xs mt-3">
+        verification <span class="mono">{{ verification.verification_id }}</span>
+        · state {{ verification.state }} · attempts
+        {{ verification.attempts }} · rule
+        {{ verification.rule_version }}</div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2 class="card-title mb-2">Missing evidence</h2>
+      {% if missing_evidence %}
+      <ul class="list-disc pl-5 text-sm text-amber-200">
+        {% for m in missing_evidence %}
+        <li>{{ m.description if m is mapping else m }}
+          {% if m is mapping %}<span class="text-slate-500 text-xs">({{ m.evidence_type }} ·
+            {{ 'satisfiable' if m.satisfiable else 'unsatisfiable' }} · {{ m.provenance }})</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="text-slate-400 text-sm">No recorded evidence gaps.</p>{% endif %}
+      {% if related %}
+      <h3 class="text-slate-300 text-xs mt-4 mb-1 uppercase tracking-wide">Related candidates</h3>
+      <ul class="text-xs text-slate-400 list-disc pl-5">
+        {% for r in related %}
+        <li><a class="link mono" href="/ui/soc/findings/{{ r.other_candidate_id }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">{{ r.other_candidate_id }}</a>
+          — {{ r.relation }} ({{ r.reasons[:4] | join(', ') }})</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if linked_duplicates %}
+      <div class="text-slate-500 text-xs mt-2">canonical of:
+        {{ linked_duplicates | join(', ') }} (their evidence preserved)</div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2 class="card-title mb-2">Evidence ({{ evidence_count }})</h2>
+      {% if evidence %}
+      <table class="tbl text-xs">
+        <thead><tr><th>Type</th><th>Label / signal</th><th>Quality</th><th>When</th></tr></thead>
+        <tbody>
+          {% for e in evidence %}
+          <tr>
+            <td class="mono">{{ e.type }}{% if e.observation_ref %}<div class="text-slate-500">obs {{ e.observation_ref[:14] }}</div>{% endif %}</td>
+            <td>{{ e.label or e.signal or e.detail[:60] }}</td>
+            <td>
+              {% if e.reliability %}<span class="badge {% if e.reliability == 'observed' %}badge-ok{% else %}badge-neutral{% endif %}">{{ e.reliability }}</span>{% endif %}
+              <span class="text-slate-500">{{ e.directness }} · {{ e.stance }}{% if e.verification_relevance %} · {{ e.verification_relevance }}{% endif %}</span>
+            </td>
+            <td class="text-slate-500">{{ e.created_at[:19] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<p class="text-slate-400 text-sm">No evidence rows.</p>{% endif %}
+    </div>
+
+    <div class="card">
+      <h2 class="card-title mb-2">Verification plan (existing Hunt Planner)</h2>
+      {% if hunt %}
+      <div class="text-slate-500 text-xs">hunt objective
+        <span class="mono">{{ hunt.objective_id }}</span> · {{ hunt.state }}
+        {% if hunt.termination_reason %}· {{ hunt.termination_reason }}{% endif %}</div>
+      {% if hunt.plans %}
+      <ul class="text-xs text-slate-400 list-disc pl-5 mt-2">
+        {% for p in hunt.plans %}
+        <li><span class="mono">{{ p.plan_id }}</span> — {{ p.observation_types | join(', ') }}
+          <span class="text-slate-500">({{ p.state }})</span></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if hunt.observations %}
+      <h3 class="text-slate-300 text-xs mt-3 mb-1 uppercase tracking-wide">Observations</h3>
+      <ul class="text-xs text-slate-400 list-disc pl-5">
+        {% for o in hunt.observations %}
+        <li><span class="mono">{{ o.id[:14] }}</span> {{ o.type }} — {{ o.state }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% else %}
+      <p class="text-slate-400 text-sm">No verification plan yet — plans are
+        generated by the existing Hunt Planner when verification runs.</p>
+      {% endif %}
+      {% if authorization_ids %}
+      <div class="text-slate-500 text-xs mt-2">authorizations:
+        {{ authorization_ids | join(', ') }}</div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2 class="card-title mb-2">Case package &amp; handoff</h2>
+      {% if case %}
+      <div class="mb-2"><span class="badge {% if case.state == 'READY_FOR_REVIEW' or case.state == 'VERIFIED' %}badge-ok{% elif case.state in ('REJECTED', 'INCONCLUSIVE', 'BLOCKED') %}badge-bad{% else %}badge-neutral{% endif %}">{{ case.state }}</span>
+        <span class="mono text-xs ml-2">{{ case.case_id }}</span></div>
+      {% if package %}
+      <div class="text-slate-500 text-xs">package evidence
+        {{ (package.evidence_ids or []) | length }} · timeline
+        {{ (package.evidence_timeline or []) | length }} · limitations
+        {{ (package.limitations or []) | length }}</div>
+      <div class="text-slate-300 text-sm mt-2">{{ package.recommended_analyst_next_step }}</div>
+      {% endif %}
+      {% if recommended_next_step and not package %}
+      <p class="text-slate-300 text-sm">{{ recommended_next_step }}</p>
+      {% endif %}
+      {% if limitations %}
+      <h3 class="text-slate-300 text-xs mt-3 mb-1 uppercase tracking-wide">Limitations</h3>
+      <ul class="text-xs text-slate-400 list-disc pl-5">
+        {% for l in limitations %}<li>{{ l }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+      {% if handoff_ready %}
+      <div class="text-emerald-400 text-xs mt-2">Handoff ready — read-only
+        package exposed on the SOC Handoff page.</div>
+      {% endif %}
+      {% else %}
+      <p class="text-slate-400 text-sm">No case package — candidates only get
+        a case when they enter verification (nothing is forced into a case).</p>
+      {% endif %}
+    </div>
+
+    {% if advisor and advisor.used %}
+    <div class="card" style="border:1px dashed #b45309">
+      <h2 class="card-title mb-1">LLM advisor <span class="badge badge-neutral">ADVISORY ONLY</span></h2>
+      <p class="text-amber-200 text-xs mb-2">{{ advisor.note }}</p>
+      {% if advisor.candidate_interpretation %}
+      <p class="text-slate-300 text-sm">{{ advisor.candidate_interpretation }}</p>{% endif %}
+      {% if advisor.missing_evidence %}
+      <div class="text-slate-500 text-xs mt-2">advises missing:
+        {{ advisor.missing_evidence | join('; ') }}</div>{% endif %}
+      {% if advisor.verification_recommendations %}
+      <div class="text-slate-500 text-xs">advises next:
+        {{ advisor.verification_recommendations | join('; ') }}</div>{% endif %}
+      {% if advisor.blockers %}
+      <div class="text-slate-500 text-xs">advises blockers:
+        {{ advisor.blockers | join('; ') }}</div>{% endif %}
+      <div class="text-slate-600 text-xs mt-2">model {{ advisor.model_requested }}
+        {% if advisor.model_resolved %}→ {{ advisor.model_resolved }}{% endif %}
+        · confidence label "{{ advisor.confidence }}" (advisory, never a verdict)</div>
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <h2 class="card-title mb-2">Research lineage</h2>
+      <div class="text-slate-500 text-xs mb-2">job
+        <span class="mono">{{ research_history.source_job }}</span>
+        {% if research_history.verification_job %}→ verification job
+        <span class="mono">{{ research_history.verification_job }}</span>{% endif %}
+        {% if research_history.campaign_id %}· campaign {{ research_history.campaign_id }}{% endif %}
+        {% if research_history.objective_id %}· objective {{ research_history.objective_id }}{% endif %}</div>
+      {% if lineage %}
+      <ul class="text-xs text-slate-400 list-disc pl-5">
+        {% for row in lineage %}
+        <li>{{ row.stage }} <span class="text-slate-600">{{ row.created_at[:19] if row.created_at else '' }}</span></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if transitions %}
+      <h3 class="text-slate-300 text-xs mt-3 mb-1 uppercase tracking-wide">Lifecycle transitions</h3>
+      <ul class="text-xs text-slate-500 list-disc pl-5">
+        {% for t in transitions %}
+        <li>{{ t.from_state }} → {{ t.to_state }}
+          <span class="text-slate-600">({{ t.reason[:60] }})</span></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+{% endblock %}

@@ -186,6 +186,64 @@ def _build_parser() -> argparse.ArgumentParser:
         help="resume: revalidate scope+deps+budget, then READY")
     c_resume.add_argument("--campaign-id", required=True)
 
+    # ---- Finding Verification & Triage (Phase 8 CLI) --------------------
+    find_p = sub.add_parser(
+        "finding",
+        help="bounded candidate verification & triage (fail-closed)")
+    f_sub = find_p.add_subparsers(dest="finding_command", required=True)
+
+    f_extract = f_sub.add_parser(
+        "extract",
+        help="extract+correlate+dedup+triage candidates from completed "
+             "job(s); creates NO jobs (safe read-mostly pass)")
+    f_extract.add_argument("--job", action="append", required=True,
+                           dest="jobs", help="completed source job id")
+    f_extract.add_argument("--campaign-id", default="")
+    f_extract.add_argument("--objective-id", default="")
+
+    f_run = f_sub.add_parser(
+        "run",
+        help="full bounded pipeline: extract -> triage -> correlation -> "
+             "verification objective -> hunt/auth/observations -> "
+             "verification gate -> case package")
+    f_run.add_argument("--job", action="append", required=True,
+                       dest="jobs", help="completed source job id")
+    f_run.add_argument("--campaign-id", default="")
+    f_run.add_argument("--objective-id", default="")
+    f_run.add_argument("--max-verifications", type=int, default=2,
+                       help="verification jobs this invocation (default 2)")
+    f_run.add_argument("--llm", default="",
+                       help="advisory only (e.g. OPENROUTER); empty = "
+                            "deterministic verification path")
+    f_run.add_argument("--model", default="", help="model id for --llm")
+    f_run.add_argument("--mode", choices=("production", "fixture"),
+                       default="production")
+    f_run.add_argument("--lease", type=int, default=30)
+    f_run.add_argument("--timeout", type=int, default=120)
+    f_run.add_argument("--hunt", action="store_true",
+                       help="enable the bounded hunt planner for each "
+                            "verification job (verification runs WITH hunt)")
+    f_run.add_argument("--hunt-plans", type=int, default=0)
+    f_run.add_argument("--hunt-observations", type=int, default=6)
+    f_run.add_argument("--hunt-iterations", type=int, default=4)
+    f_run.add_argument("--hunt-llm-plans", type=int, default=2)
+    f_run.add_argument("--hunt-seconds", type=int, default=60)
+    f_run.add_argument("--wall", type=int, default=0,
+                       help="wall-clock seconds (0 = "
+                            "max_verification_runtime_seconds)")
+    f_run.add_argument("--limit", action="append", default=[],
+                       metavar="KEY=VAL",
+                       help="override a cumulative budget limit "
+                            "(e.g. --limit max_llm_calls=3)")
+
+    f_status = f_sub.add_parser(
+        "status", help="candidates/verifications/cases/budget as JSON")
+    f_status.add_argument("--candidate-id", default="")
+
+    f_pkg = f_sub.add_parser(
+        "package", help="analyst case package JSON (real persisted state)")
+    f_pkg.add_argument("--candidate-id", required=True)
+
     return parser
 
 
@@ -606,6 +664,135 @@ def _build_campaign_advisor(config: RuntimeConfig) -> Any:
     return advisor_fn
 
 
+def cmd_finding(args: argparse.Namespace) -> int:
+    """Finding Verification & Triage commands (Phase 24 CLI)."""
+    from backend.research_agents.finding.limits import DEFAULT_LIMITS
+    from backend.research_agents.finding.store import FindingStore
+
+    sub = args.finding_command
+    store = default_store()
+    fs = FindingStore(store.base)
+
+    if sub == "extract":
+        from backend.research_agents.finding.executor import run_findings
+        summary = run_findings(
+            source_jobs=list(args.jobs), store=store, finding_store=fs,
+            campaign_id=args.campaign_id, objective_id=args.objective_id,
+            extract_only=True,
+        )
+        print(json.dumps(summary.to_dict(), sort_keys=True))
+        return EXIT_OK if summary.ok else EXIT_USAGE
+
+    if sub == "run":
+        from backend.research_agents.finding.executor import run_findings
+        hunt_plans = int(args.hunt_plans)
+        if args.hunt and hunt_plans <= 0:
+            hunt_plans = 3
+        config = RuntimeConfig(
+            lease_seconds=args.lease,
+            job_timeout=args.timeout,
+            max_jobs_per_run=1,
+            execution_mode=args.mode,
+            llm_provider_kind=args.llm,
+            llm_model=args.model,
+            hunt_max_plans=max(0, hunt_plans),
+            hunt_max_observations=max(1, args.hunt_observations),
+            hunt_max_iterations=max(1, args.hunt_iterations),
+            hunt_max_llm_plans=max(0, args.hunt_llm_plans),
+            hunt_max_seconds=max(5, args.hunt_seconds),
+        )
+        # free-only guard runs FIRST inside the same advisor builder the
+        # campaign path uses (resolve_free_config -> select_provider);
+        # paid/unknown models fail closed, no fallback exists.
+        advisor_fn = _build_campaign_advisor(config) if args.llm else None
+        limits: dict[str, int] = dict(DEFAULT_LIMITS)
+        for raw in args.limit:
+            if "=" not in str(raw):
+                print(json.dumps({"ok": False,
+                                  "error": f"bad --limit {raw}"}))
+                return EXIT_USAGE
+            key, _, value = str(raw).partition("=")
+            if key.strip() not in limits:
+                print(json.dumps({"ok": False,
+                                  "error": f"unknown limit {key.strip()}"}))
+                return EXIT_USAGE
+            try:
+                limits[key.strip()] = int(value.strip())
+            except ValueError:
+                print(json.dumps({"ok": False,
+                                  "error": f"limit value not int: {value}"}))
+                return EXIT_USAGE
+        summary = run_findings(
+            source_jobs=list(args.jobs), config=config, store=store,
+            finding_store=fs, campaign_id=args.campaign_id,
+            objective_id=args.objective_id, limits=limits,
+            advisor_fn=advisor_fn,
+            max_verifications=max(1, args.max_verifications),
+            wall_seconds=float(args.wall) if args.wall else None,
+        )
+        print(json.dumps(summary.to_dict(), sort_keys=True))
+        return EXIT_OK if summary.ok else EXIT_USAGE
+
+    if sub == "status":
+        if args.candidate_id:
+            candidate = fs.get_candidate(args.candidate_id)
+            if candidate is None:
+                print(json.dumps({"ok": False,
+                                  "error": "unknown candidate"}))
+                return EXIT_USAGE
+            case = fs.cases_for_candidate(args.candidate_id)
+            print(json.dumps({
+                "ok": True,
+                "candidate": candidate.to_dict(),
+                "verifications": [v.to_dict() for v in
+                                  fs.list_verifications(
+                                      candidate_id=args.candidate_id)],
+                "case": case.to_dict() if case else None,
+                "correlations": fs.list_correlations(
+                    candidate_id=args.candidate_id),
+                "lineage": fs.lineage_for(args.candidate_id),
+            }, sort_keys=True))
+            return EXIT_OK
+        print(json.dumps({
+            "ok": True,
+            "candidates": [c.to_dict() for c in fs.list_candidates()],
+            "verifications": [v.to_dict() for v in
+                              fs.list_verifications()],
+            "cases": [c.to_dict() for c in fs.list_cases()],
+            "budget": fs.budget_used(),
+            "budget_ledger_rows": len(fs.budget_ledger()),
+        }, sort_keys=True))
+        return EXIT_OK
+
+    if sub == "package":
+        from backend.research_agents.finding.gate import (
+            VerificationDecision,
+        )
+        candidate = fs.get_candidate(args.candidate_id)
+        if candidate is None:
+            print(json.dumps({"ok": False, "error": "unknown candidate"}))
+            return EXIT_USAGE
+        case = fs.cases_for_candidate(args.candidate_id)
+        if case is None:
+            print(json.dumps({"ok": False,
+                              "error": "candidate has no case package "
+                                       "(never entered verification)"}))
+            return EXIT_USAGE
+        print(json.dumps({
+            "ok": True,
+            "case_id": case.case_id,
+            "state": case.state,
+            "package": case.package,
+            "severity": case.severity,
+            "severity_provenance": case.severity_provenance,
+            "limitations": case.limitations,
+            "recommended_next_step": case.recommended_next_step,
+        }, sort_keys=True))
+        return EXIT_OK
+
+    return EXIT_USAGE
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.command == "run":
@@ -618,6 +805,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_cancel(args)
     if args.command == "campaign":
         return cmd_campaign(args)
+    if args.command == "finding":
+        return cmd_finding(args)
     return EXIT_USAGE
 
 

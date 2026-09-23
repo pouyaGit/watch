@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}WATCH &middot; Findings{% endblock %}
+{% block page %}Findings{% endblock %}
+{% block content %}
+<div class="p-6">
+  <h1 class="page-title mb-2">Candidate Findings &amp; Verification</h1>
+  <p class="text-slate-400 text-sm mb-6">{{ count }} candidate findings from
+    real research jobs. A candidate is a signal awaiting verification —
+    only the authoritative Evidence Gate can make one VERIFIED.
+    {% if duplicate_count %}{{ duplicate_count }} duplicate(s) linked to
+    their canonical candidate (evidence preserved).{% endif %}</p>
+
+  <div class="grid gap-3 mb-6" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
+    <div class="card"><div class="text-slate-400 text-xs">Candidates</div><div class="stat">{{ count }}</div></div>
+    <div class="card"><div class="text-slate-400 text-xs">Gate-verified</div><div class="stat">{{ verified_count }}</div></div>
+    <div class="card"><div class="text-slate-400 text-xs">In verification</div><div class="stat">{{ active_count }}</div></div>
+    <div class="card"><div class="text-slate-400 text-xs">Duplicates</div><div class="stat">{{ duplicate_count }}</div></div>
+    <div class="card"><div class="text-slate-400 text-xs">Case packages</div><div class="stat">{{ case_count }}</div></div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>Candidate</th><th>Class</th><th>Target / endpoint</th>
+          <th>State</th><th>Verification</th><th>Evidence</th>
+          <th>Duplicate</th><th>Severity (provenance)</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in candidates %}
+        <tr>
+          <td class="font-mono">{{ c.candidate_id }}
+            <div class="text-slate-500 text-xs">{{ c.specialist }}</div></td>
+          <td>{{ c.vulnerability_class }}</td>
+          <td>{{ c.target }}
+            <div class="text-slate-500 text-xs mono">{{ c.endpoint }}</div></td>
+          <td>
+            <span class="badge {% if c.state == 'VERIFIED' %}badge-ok{% elif c.state in ('REJECTED', 'BLOCKED', 'EXPIRED') %}badge-bad{% elif c.state in ('VERIFYING', 'VERIFICATION_PENDING', 'VERIFICATION_PLANNED') %}badge-run{% else %}badge-neutral{% endif %}">{{ c.state }}</span>
+            {% if c.priority %}<div class="text-slate-500 text-xs">priority {{ c.priority }}</div>{% endif %}
+          </td>
+          <td>
+            {% if c.verification_state %}
+            <span class="badge {% if c.verification_state == 'VERIFIED' %}badge-ok{% elif c.verification_state in ('FAILED', 'REJECTED', 'BLOCKED') %}badge-bad{% elif c.verification_state in ('EXECUTING', 'WAITING', 'AUTHORIZED') %}badge-run{% else %}badge-neutral{% endif %}">{{ c.verification_state }}</span>
+            {% if c.gate_reason %}<div class="text-slate-500 text-xs">{{ c.gate_reason }}</div>{% endif %}
+            {% else %}<span class="text-slate-500 text-xs">not verified</span>{% endif %}
+          </td>
+          <td>{{ c.evidence_count }} ref{% if c.missing_count %}<div class="text-amber-400 text-xs">{{ c.missing_count }} missing</div>{% endif %}</td>
+          <td class="text-xs">{{ c.duplicate_status or "—" }}</td>
+          <td class="text-xs">{{ c.severity }}
+            <div class="text-slate-500 text-xs">{{ c.severity_provenance }}</div></td>
+          <td><a class="link" href="{{ c.detail_url }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">open →</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="empty">No candidate findings yet — candidates appear here after real research jobs complete and extraction runs.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

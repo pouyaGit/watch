@@ -152,6 +152,32 @@ def ui_soc_campaign_objective(request: Request, campaign_id: str,
             request, **detail, active="soc-campaigns"))
 
 
+@router.get("/ui/soc/findings", response_class=HTMLResponse)
+def ui_soc_findings(request: Request):
+    from backend.soc import findings as soc_findings
+
+    payload = soc_findings.findings_index()
+    return _templates.TemplateResponse(
+        request, "soc/findings.html", _ctx(
+            request, **payload, active="soc-findings"))
+
+
+@router.get("/ui/soc/findings/{candidate_id}", response_class=HTMLResponse)
+def ui_soc_finding_detail(request: Request, candidate_id: str):
+    from backend.soc import findings as soc_findings
+
+    detail = soc_findings.finding_detail(candidate_id)
+    if detail is None:
+        from fastapi.responses import HTMLResponse as HR
+
+        return HR(
+            "<h1>Candidate not found</h1><p>No candidate matches "
+            f"{candidate_id!r}.</p>", status_code=404)
+    return _templates.TemplateResponse(
+        request, "soc/finding_detail.html", _ctx(
+            request, **detail, active="soc-findings"))
+
+
 @router.get("/ui/soc/handoff", response_class=HTMLResponse)
 def ui_soc_handoff(request: Request):
     from backend.soc import handoff as soc_handoff
