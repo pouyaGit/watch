@@ -212,6 +212,35 @@ class CampaignObjective:
                 detail if new_state in OBJECTIVE_TERMINAL
                 else self.termination_detail)
 
+    def correct(self, new_state: str, *, reason: str, detail: str = "",
+                now: str | None = None) -> None:
+        """Sanctioned correction of a mis-labelled terminal objective.
+
+        Only REJECTED->RESOLVED is accepted, and only with an explicit
+        ``authoritative_gate_correction`` reason backed by evidence — the
+        Evidence Gate stays authoritative and this never re-opens
+        execution: the corrected state is terminal and candidates are
+        READY-only, so a corrected objective can never run again.
+        """
+
+        if self.state != "REJECTED" or new_state != "RESOLVED":
+            raise CampaignStateError(
+                f"objective correction supports only REJECTED->RESOLVED "
+                f"(got {self.state}->{new_state})")
+        if not str(reason or "").startswith(
+                "authoritative_gate_correction"):
+            raise CampaignStateError(
+                "objective correction requires an "
+                "authoritative_gate_correction reason")
+        if not str(detail or "").strip():
+            raise CampaignStateError(
+                "objective correction requires evidence")
+        self.state = new_state
+        self.revision += 1
+        self.updated_at = now or utcnow()
+        self.termination_reason = str(reason)[:400]
+        self.termination_detail = str(detail)[:400]
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "rule_version": CAMPAIGN_RULE_VERSION,

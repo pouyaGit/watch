@@ -18,8 +18,9 @@ that delegates every objective to the EXISTING job → Hunt Planner →
 authorization → Observation Runtime → Evidence Gate path, cross-objective
 context, Research Memory integration, honest termination records,
 pause/resume, lease-safe single-coordinator execution, SOC campaign pages, and
-full audit lineage. 126 new tests + the full existing regression (2,519 tests
-across 6 batteries) are green. Free-only LLM enforced through the existing
+full audit lineage. 144 campaign tests (126 + 18 correction) + the full
+existing regression (2,519 tests across 6 batteries) are green. Free-only
+LLM enforced through the existing
 `llm_guard`; no paid path exists.
 
 ## 2. Architecture
@@ -208,6 +209,28 @@ prevented; budget cannot be bypassed (BUDGET_EXHAUSTED, no second job);
 stale authorization rejected (scope guard); campaign state transitions
 validated.
 
+## 16a. Production-validation defect (found & closed)
+
+The first real campaign (§18–19) exposed a mapping defect: the executor
+read gate fields from `research_lineage`, while the runtime persists the
+authoritative gate at `structured["evidence_gate"]`, so the two objectives
+whose gates DID claim cases were initially mis-labelled REJECTED.
+Closure: `_extract_gate()` now prefers the authoritative `evidence_gate`
+record (lineage kept as legacy/fixture fallback); a narrow sanctioned
+`correct_objective_state()` / `CampaignObjective.correct()` API repairs
+only REJECTED→RESOLVED, requires an `authoritative_gate_correction`
+reason plus concrete evidence, and stays terminal — a corrected objective
+can never execute again, and the normal state machine still blocks
+terminal edits (rule 5 upheld: the correction reports reality recorded by
+the Evidence Gate, it does not create evidence). Production data was
+repaired through audited store writes: 2 objective corrections, 2
+`campaign_objective_corrected` audit events, 2 memory supersessions
+(false `rejected_hypothesis` → `confirmed_historical_result`/VERIFIED
+citing both case ids). 18 new tests pin extraction order, mapping
+semantics, and every correction guard (`test_campaign_correction`). One
+safety test was hardened against inherited-shell environment variables
+(free-only semantics unchanged — no code change to the guard).
+
 ## 17. Failure/recovery (Phase 16)
 
 `test_campaign_failure.py` (16 tests): LLM unavailable/timeout/malformed →
@@ -227,16 +250,67 @@ terminations set `ok=False`.
 
 ## 18. Real production campaign
 
-PENDING in this promotion cycle (standing two-promotion flow). Plan: one real
-bounded campaign on the authorized production scope
-(`watch:scope:dell/www.dell.com`) with ≥3 objectives — Objective A (XSS),
-Objective B (CVE_RESEARCH, REQUIRED dependency on A: A's result → context for
-B), Objective C (independent second XSS research question, guarantees >1
-executed objective even if data honestly blocks B) — run with real openrouter/free,
-real Hunt Planner/authorization/Observation Runtime/Evidence Gate/Research
-Memory, through `campaign run --max-objectives N`. Exact campaign/objective/
-job/plan/auth/observation/case/evidence/memory/LLM IDs will be reported in the
-second promotion request; blocked/rejected outcomes preserved honestly.
+**EXECUTED** (post-first-promotion step of the standing two-promotion
+flow). Campaign `camp-df3e1b68a280`, program dell, scope
+`watch:scope:dell/www.dell.com`, execution_mode production, limits
+`max_objectives=4 max_llm_calls=6 max_hunt_plans=8` + defaults:
+
+- **A `obj-4d92de164cbf`** (XSS, priority 80) → job
+  `job-xss-49b9d40fd5` COMPLETED; plans `plan-a5c88b14bb87` +
+  `plan-a57d92d83e38`; observations `obs-34ded789fcbb`,
+  `obs-75fa56bbe20d`, `obs-72570934535e`; hunt rows_added 23,
+  hunt-advisor 2 calls; **authoritative gate `evidence_rules_met`,
+  confidence high, 20 evidence rows → case `case-8fac3faaf462`** →
+  objective **RESOLVED** (via the audited §16a gate correction).
+- **C `obj-82e96893b44c`** (XSS, priority 60, independent research
+  question) → job `job-xss-b1d237d202` COMPLETED; plans
+  `plan-97bfc5e5eea0` + `plan-d22aeeeaa84c`; observations
+  `obs-da4f6dadb3c6`, `obs-94e6314e14ef`, `obs-b8fdfea48b5c`;
+  rows_added 23, hunt-advisor 2; **gate `evidence_rules_met`, high,
+  20 evidence rows → case `case-03f46d7aca02`** → **RESOLVED**
+  (same correction).
+- **B `obj-be92b6e5b22e`** (CVE_RESEARCH, priority 70, REQUIRED
+  dependency on A — satisfied before execution) → job
+  `job-cve_research-28dc826bf3` COMPLETED; plan `plan-34a20550ee52`;
+  observations `obs-c02c3e3e8868`, `obs-a3fd1a7f5b72`; rows_added 1,
+  hunt-advisor 1; gate `confidence_below_threshold` (medium, no case —
+  evidence rules correctly NOT met) + hunt BLOCKED
+  `no_authorized_observation_can_reduce_uncertainty` → objective
+  **BLOCKED** (honest: remaining authorized observations could not
+  reduce uncertainty).
+- **Run sequence**: run1 executed 3/3 objectives (268 s) → `WAITING` /
+  `per_run_objective_limit`; run2 (0.9 s, 0 executed) → **final
+  `BLOCKED` / `no_executable_objectives`** — never fake COMPLETED while
+  B remains non-terminal.
+- **LLM** (prompt `campaign-advisor-v1`; `requested_model` =
+  `resolved_model` = `openrouter/free` on every result): 3 recorded
+  advisor outcomes — (1) honest provider failure
+  `INVALID_PROVIDER_RESPONSE` (R51 taxonomy, no fallback, no paid
+  switch), (2) `used=true`, latency 39 189 ms, advisory reorder
+  `[C, B]` applied only within the deterministic candidate set (A,
+  priority head, ran first — LLM never decided the final order),
+  (3) `advisor_disabled:max_llm_calls` — budget exhaustion disabled the
+  advisor with a recorded outcome (no silent skip).
+- **Budget final (cumulative, before/after ledger)**: llm_calls 9/6
+  (overshoot −3 displayed transparently, never hidden) · hunt_plans 5/8 ·
+  observations 8/12 · objectives 3/4 · runtime 224/600 s · lifetime
+  302/86 400 s · context 558/4000 chars · retries 0 · knowledge 0/20.
+- **Memory**: 3 campaign items at run end; after the §16a correction →
+  **5** total campaign items (2 false `rejected_hypothesis` superseded by
+  `confirmed_historical_result`/VERIFIED citing both case ids; B's
+  `negative_evidence`/OBSERVED untouched; append-only, total 206 items).
+- **Audit event counts**: `campaign_started` 1, `campaign_resumed` 1,
+  `campaign_paused` 1, `campaign_terminated` 1,
+  `campaign_objective_selected/started/terminal` 3 each,
+  `campaign_specialist_selected` 3, `campaign_context_recorded` 3,
+  `campaign_advisor_outcome` 3, plus 2 `objective_correction` transition
+  rows and 2 `campaign_objective_corrected` audit events.
+- **SOC**: routes live post-restart (`openapi 200`; soc/campaigns/
+  objective detail auth-gated 401 = registered); pages serve the
+  corrected RESOLVED/RESOLVED/BLOCKED states from the store.
+  Authenticated live rendering remains unverified (production API key is
+  not in the agent environment); adapter/template rendering is covered
+  by `test_campaign_soc`.
 
 ## 19. Exact objectives/jobs/plans/authorizations/observations
 
@@ -247,8 +321,9 @@ distinct objective ids, run1 → WAITING (per-run limit), run2 → BLOCKED /
 no_executable_objectives, 9 budget ledger rows (5 resources), 4 research-context
 items (all research_context_only), 13 activity actions, 9 audit event kinds.
 Fixture unit runs additionally exercised COMPLETED/RESOLVED/REJECTED/FAILED/
-BUDGET_EXHAUSTED/lease-refused/persistence paths. Real production IDs follow in
-Phase 18 after promotion.
+BUDGET_EXHAUSTED/lease-refused/persistence paths. **Real production IDs:
+§18** (all campaign/objective/job/plan/observation/case/evidence/memory/LLM
+values above come from live production stores, read back after each step).
 
 ## 20. Resource control
 
@@ -262,7 +337,7 @@ counts bounded by store limits + request canonical ≤ 4000.
 
 | Suite | Result |
 | --- | --- |
-| campaign core / safety / failure / soc | **126 OK** |
+| campaign core / safety / failure / soc / correction | **144 OK** (126 + 18) |
 | hunt planner (core/safety/failure/soc) | 118 OK |
 | research intelligence ×4 + agent intelligence | 93 OK |
 | runtime core + e2e_soc + security_llm | 77 OK |
@@ -285,8 +360,12 @@ production validation plan, known limitations (§23).
 
 ## 23. Known limitations
 
-- The real production campaign (Phases 18/19) is intentionally not part of
-  this first promotion cycle (standing flow: validate after promote).
+- ~~The real production campaign (Phases 18/19) is intentionally not part of
+  this first promotion cycle~~ — **executed post-promotion; see §18–19.**
+- `correct_objective_state()` is deliberately one-way (REJECTED→RESOLVED
+  only) and evidence-gated; it is a defect-recovery API, not a general
+  state editor — other mislabels must be fixed at the source, not via
+  corrections.
 - Per-run `--max-objectives` parks the campaign WAITING (resumable); it does
   not background-loop — matches the no-persistent-worker constraint.
 - Prioritization is a transparent heuristic (labeled), not an optimizer.
@@ -301,16 +380,24 @@ production validation plan, known limitations (§23).
 
 Work on `agent/daily-development` (worktree); explicit file staging only
 (16 new + 5 modified; the 183-dirty leftovers and the runtime-generated
-security-case markdown stay behind); production baseline verified
+security-case markdown stay behind); the §16a fix commit stages exactly 7
+files (campaign `executor`/`models`/`store`, fixtures, safety test, new
+correction test, this report); production baseline verified
 (main `26c255e`, dirty 27 untouched); push via `push_safe.sh`; promotion
 request via the sanctioned workflow; STOP at Telegram APPROVE. No stash/reset/
 force-push; no gate bypass.
 
 ## 25. Production commit(s)
 
-Pending (commit created in the delivery step of this cycle).
+- Cycle 1: `4a1e62d` → promoted, production main = **`e09377b`**
+  (verified: report + 11 campaign files tracked, dirty 27 untouched,
+  `watch-api` restarted, `openapi 200`).
+- Cycle 2: pending — the §16a defect-closure commit of this report's
+  branch tip (created in the delivery step below).
 
 ## 26. Promotion request ID(s)
 
-Pending (created after commit + gates in this cycle; real-campaign second
-request follows post-promotion).
+- Cycle 1: `PROMOTION-REQUEST-20260922-1907` — APPROVED and promoted
+  (production `e09377b`).
+- Cycle 2: created by `request.sh` after the final gate of this cycle;
+  the exact request id is stated in the delivery message.

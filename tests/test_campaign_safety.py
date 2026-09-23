@@ -207,9 +207,18 @@ class TestFreeOnlyPolicy(unittest.TestCase):
                                 timeout_seconds=30)
 
     def test_missing_model_rejected(self):
-        with self.assertRaises(FreeOnlyViolation):
-            resolve_free_config(provider_kind="OPENROUTER",
-                                requested_model="", timeout_seconds=30)
+        # env-independent: clear every model-configuration channel so
+        # "missing" genuinely means missing (no inherited shell/export)
+        import os
+        from unittest import mock
+        scrubbed = {k: v for k, v in os.environ.items()
+                    if k not in ("OPENROUTER_MODEL", "OPENROUTER_BASE_URL",
+                                 "OPENROUTER_API_KEY",
+                                 "WATCH_AGENT_LLM_MODE")}
+        with mock.patch.dict(os.environ, scrubbed, clear=True):
+            with self.assertRaises(FreeOnlyViolation):
+                resolve_free_config(provider_kind="OPENROUTER",
+                                    requested_model="", timeout_seconds=30)
 
     def test_missing_provider_configuration_rejected(self):
         with self.assertRaises(FreeOnlyViolation):

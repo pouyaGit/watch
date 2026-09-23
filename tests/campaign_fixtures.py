@@ -98,6 +98,15 @@ def _structured(gate_reason: str, case_id: str,
     structured: dict[str, Any] = {
         "research_lineage": {"gate_reason": gate_reason,
                              "case_id": case_id},
+        # production runtime shape: the authoritative Evidence Gate
+        # record at structured["evidence_gate"] (primary extraction path)
+        "evidence_gate": {
+            "authoritative": True,
+            "confidence": "high"
+            if gate_reason == "evidence_rules_met" else "medium",
+            "created_case": bool(case_id),
+            "reason": gate_reason,
+        },
     }
     if hunt is not None:
         structured["hunt"] = hunt
