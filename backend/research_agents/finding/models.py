@@ -207,6 +207,13 @@ class CandidateFinding:
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> CandidateFinding:
+        # Round-2 production fix: endpoint may be the spec'd dict
+        # {url, method, parameter} OR a raw URL string (production rows).
+        # str()-ing a dict mangled the round trip and silently broke the
+        # correlation shape/parameter signals against loaded rows.
+        endpoint_raw = row.get("endpoint")
+        endpoint = (dict(endpoint_raw) if isinstance(endpoint_raw, dict)
+                    else str(endpoint_raw or ""))
         return cls(
             candidate_id=str(row.get("candidate_id") or ""),
             source_job=str(row.get("source_job") or ""),
@@ -215,7 +222,7 @@ class CandidateFinding:
             specialist=str(row.get("specialist") or ""),
             scope_ref=str(row.get("scope_ref") or ""),
             target=str(row.get("target") or ""),
-            endpoint=str(row.get("endpoint") or ""),
+            endpoint=endpoint,
             parameter=str(row.get("parameter") or ""),
             vulnerability_class=str(row.get("vulnerability_class") or ""),
             hypothesis=str(row.get("hypothesis") or ""),
@@ -514,6 +521,11 @@ class CasePackage:
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> CasePackage:
+        # Round-2 production fix (same as CandidateFinding): never str()
+        # a dict endpoint — keep the spec'd {url, method, parameter} shape.
+        endpoint_raw = row.get("endpoint")
+        endpoint = (dict(endpoint_raw) if isinstance(endpoint_raw, dict)
+                    else str(endpoint_raw or ""))
         return cls(
             case_id=str(row.get("case_id") or ""),
             candidate_id=str(row.get("candidate_id") or ""),
@@ -521,7 +533,7 @@ class CasePackage:
             title=str(row.get("title") or ""),
             vulnerability_class=str(row.get("vulnerability_class") or ""),
             target=str(row.get("target") or ""),
-            endpoint=str(row.get("endpoint") or ""),
+            endpoint=endpoint,
             state=str(row.get("state") or "TRIAGED"),
             severity=str(row.get("severity") or SEVERITY_UNASSESSED),
             severity_provenance=str(

@@ -64,7 +64,18 @@ def deduplicate(store: Any,
                             "INDEPENDENT", ["no_dup_class_correlation"],
                             list(candidate.evidence_refs), "kept_independent")
 
-    by_id = {o.candidate_id: o for o in others
+    # Round-2 production fix: callers pass candidates captured from an
+    # earlier snapshot (the executor's `existing` cache holds entries as
+    # they were when first appended).  Rank and demotion must use
+    # PERSISTED truth: a verification-bound twin must never be demoted,
+    # and stale objects must never be written back over live rows (that
+    # clobbered case back-links in production).
+    def _fresh(c: CandidateFinding) -> CandidateFinding:
+        return store.get_candidate(c.candidate_id) or c
+
+    candidate = _fresh(candidate)
+    pool = [_fresh(o) for o in others]
+    by_id = {o.candidate_id: o for o in pool
              if o.candidate_id != candidate.candidate_id}
     pair = dup_class[0]
     other_id = (pair.right_id if pair.left_id == candidate.candidate_id
