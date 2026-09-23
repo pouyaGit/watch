@@ -486,6 +486,58 @@ class CampaignStore:
             })
         return objective
 
+    # -- sanctioned state correction (defect recovery) --------------------
+
+    def correct_objective_state(self, objective_id: str, *, new_state: str,
+                                reason: str, evidence: str,
+                                actor: str = "agent") -> CampaignObjective:
+        """Repair a mis-labelled objective from authoritative Evidence Gate
+        evidence recorded during normal execution.
+
+        Narrow by design: ONLY a terminal REJECTED -> RESOLVED correction
+        is accepted (the gate-misread defect class), it requires an explicit
+        ``authoritative_gate_correction:`` reason plus concrete evidence,
+        and the corrected state is still terminal — a corrected objective is
+        NEVER executable again (candidates remain READY-only), so this API
+        cannot resurrect work, widen scope, or bypass the Evidence Gate.
+        Every correction is appended to the transitions chain (kind
+        ``objective_correction``) for audit.
+        """
+
+        with self._locked():
+            objective = self.get_objective(objective_id)
+            if objective is None:
+                raise CampaignStoreError(
+                    f"unknown objective: {objective_id}")
+            if objective.state != "REJECTED" or new_state != "RESOLVED":
+                raise CampaignStoreError(
+                    "correct_objective_state supports only "
+                    f"REJECTED->RESOLVED (got {objective.state}->{new_state})"
+                )
+            if not str(reason or "").startswith(
+                    "authoritative_gate_correction"):
+                raise CampaignStoreError(
+                    "correction requires an authoritative_gate_correction "
+                    "reason")
+            if not str(evidence or "").strip():
+                raise CampaignStoreError("correction requires evidence")
+            old = objective.state
+            objective.correct(new_state, reason=str(reason),
+                              detail=str(evidence))
+            self._append(_FILE_OBJECTIVES, objective.to_dict())
+            self._append(_FILE_TRANSITIONS, {
+                "kind": "objective_correction",
+                "id": objective_id,
+                "campaign_id": objective.campaign_id,
+                "old": old,
+                "new": new_state,
+                "reason": str(reason)[:400],
+                "detail": str(evidence)[:400],
+                "actor": str(actor)[:80],
+                "at": objective.updated_at,
+            })
+        return objective
+
     # -- budget ledger (Phase 7) ------------------------------------------
 
     def record_budget(self, campaign_id: str, *, resource: str,

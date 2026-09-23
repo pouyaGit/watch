@@ -155,6 +155,26 @@ def build_objective_job(
     )
 
 
+def _extract_gate(structured: dict[str, Any]) -> tuple[str, bool, str]:
+    """Authoritative gate fields from a persisted result (production shape).
+
+    The runtime persists the Evidence Gate decision at
+    ``structured["evidence_gate"]`` (authoritative/reason/created_case/
+    confidence).  Legacy + fixture results may instead carry gate fields
+    inside ``structured["research_lineage"]`` — both shapes are honoured;
+    the authoritative record always wins when present.
+    """
+
+    gate = structured.get("evidence_gate") or {}
+    lineage = structured.get("research_lineage") or {}
+    if gate.get("authoritative") is True:
+        return (str(gate.get("reason") or ""),
+                bool(gate.get("created_case")),
+                str(lineage.get("case_id") or ""))
+    reason = str(lineage.get("gate_reason") or "")
+    return reason, reason == "evidence_rules_met", str(lineage.get("case_id") or "")
+
+
 def _map_objective_outcome(
     job: Any,
     result: Any,
@@ -1010,9 +1030,17 @@ def execute_campaign(
             structured = (getattr(result, "structured", None)
                           if result else None) or {}
             hunt = structured.get("hunt") or {}
-            lineage = structured.get("research_lineage") or {}
-            gate_reason = str(lineage.get("gate_reason") or "")
-            case_id = str(lineage.get("case_id") or "")
+            gate_reason, case_claimed, case_id = _extract_gate(structured)
+            if not case_id and case_claimed:
+                # authoritative gate created a case; resolve its real id
+                # for audit + learning references (lineage may omit it)
+                try:
+                    case_id = str(next(
+                        (str(c.get("id") or "")
+                         for c in store.list_cases()
+                         if str(c.get("job_id") or "") == str(job.id)), ""))
+                except Exception:  # noqa: BLE001 - lookup is best effort
+                    case_id = ""
             confidence = str(getattr(result, "confidence", "")
                              if result else "") or "insufficient"
             evidence_rows = store.list_evidence(job_id=job.id)
