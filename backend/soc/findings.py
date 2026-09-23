@@ -362,7 +362,7 @@ def finding_detail(candidate_id: str) -> dict[str, Any] | None:
 
     missing = [dict(m) if isinstance(m, dict) else _text(m)
                for m in (cand.missing_evidence or [])]
-    return {
+    out: dict[str, Any] = {
         "candidate": cand.to_dict(),
         "candidate_id": cand.candidate_id,
         "hypothesis": cand.hypothesis,
@@ -424,3 +424,20 @@ def finding_detail(candidate_id: str) -> dict[str, Any] | None:
         "handoff_ready": bool(case is not None and case.state in
                               ("READY_FOR_REVIEW", "HANDED_OFF")),
     }
+    # ONE authoritative analyst workspace (candidate/finding detail
+    # UX + data-contract correction).  Header/current state, grouped
+    # observations, verification vs what-was-NOT-verified, case
+    # package, timeline, deduplicated relations and navigation all come
+    # from this single read-model — templates hold no business logic.
+    # Fail-closed: a projection error degrades to an honest envelope.
+    try:
+        from backend.soc.candidate_workspace import build_workspace
+
+        out["workspace"] = build_workspace(out, fs=fs)
+    except Exception as exc:                     # noqa: BLE001
+        out["workspace"] = {
+            "schema": "watch-candidate-workspace-v1",
+            "available": False,
+            "error": f"{type(exc).__name__}: {str(exc)[:200]}",
+        }
+    return out
