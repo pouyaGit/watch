@@ -63,6 +63,7 @@ SOC_LINKS = [
     ("Overview", "/ui/soc/"),
     ("Agents", "/ui/soc/agents"),
     ("Campaigns", "/ui/soc/campaigns"),
+    ("Findings", "/ui/soc/findings"),
     ("Missions / Activity", "/ui/soc/activity"),
     ("Cases", "/ui/soc/cases"),
     ("Evidence", "/ui/soc/cases"),

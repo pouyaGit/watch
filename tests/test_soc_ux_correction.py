@@ -41,7 +41,7 @@ SOC_PAGES = ["/ui/soc/", "/ui/soc/agents", "/ui/soc/cases", "/ui/soc/activity",
              "/ui/soc/handoff"]
 
 #: the approved primary product navigation
-SOC_PRIMARY_LABELS = ["Overview", "Agents", "Campaigns",
+SOC_PRIMARY_LABELS = ["Overview", "Agents", "Campaigns", "Findings",
                       "Missions / Activity", "Cases",
                       "Evidence", "Knowledge", "Handoff"]
 #: restored core Recon Operations navigation (second product surface)

@@ -25,6 +25,7 @@ def cases_index() -> dict[str, Any]:
         for row in view.get("cases", []):
             case = _clean_case(row)
             case["detail_url"] = f"/ui/soc/cases/{_text(row.get('case_id'))}"
+            case["kind"] = _text(row.get("kind")) or "aec-case"
             rows.append(case)
     except Exception:
         rows = []
@@ -44,9 +45,45 @@ def cases_index() -> dict[str, Any]:
                     "research_state": _text(case.get("status")),
                     "next_action": "analyst review",
                     "source": "agent-runtime",
+                    "kind": "gate-case",
+                    "severity": "",
+                    "severity_provenance": "",
                     "execution_mode": _text(case.get("execution_mode")),
                     "detail_url": f"/ui/soc/cases/{_text(case.get('id'))}",
                 })
+    except Exception:
+        pass
+    # Finding Verification case packages: candidate vs VERIFIED distinct
+    try:
+        from backend.research_agents.finding.store import FindingStore
+
+        fs = FindingStore(store.base)
+        for case in fs.list_cases():
+            cand = fs.get_candidate(case.candidate_id)
+            verified = case.state in ("VERIFIED", "READY_FOR_REVIEW",
+                                      "HANDED_OFF")
+            rows.append({
+                "case_id": case.case_id,
+                "target": cand.target if cand else "",
+                "category": (cand.vulnerability_class if cand else ""),
+                "specialist": cand.specialist if cand else "",
+                "evidence_state": (
+                    f"{len((case.package or {}).get('evidence_ids') or [])}"
+                    " verified refs"
+                    if (case.package or {}).get("evidence_ids") else (
+                        f"{len(cand.evidence_refs or [])} candidate refs"
+                    if cand else "")),
+                "research_state": case.state,
+                "next_action": (case.recommended_next_step
+                                or ("analyst review" if verified
+                                    else "awaiting verification"))[:160],
+                "source": "finding-verification",
+                "kind": "verified-case" if verified else "candidate-case",
+                "severity": case.severity,
+                "severity_provenance": case.severity_provenance,
+                "execution_mode": "production",
+                "detail_url": f"/ui/soc/findings/{case.candidate_id}",
+            })
     except Exception:
         pass
     return {"count": len(rows), "cases": _bounded(rows, 100)}

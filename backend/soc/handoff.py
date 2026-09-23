@@ -59,15 +59,20 @@ def _report_document(job_id: str) -> dict | None:
 
 
 def handoff_index() -> dict[str, Any]:
-    """All handoff-eligible investigation reports (read-only)."""
-    reports: list[dict[str, Any]] = []
+    """All handoff-eligible reports + finding case rows (read-only).
+
+    Finding rows are appended AFTER the legacy bound is applied so the
+    additive finding section can never be starved out of the list by the
+    100-row cap on investigation reports.
+    """
+    legacy: list[dict[str, Any]] = []
     for report in _reports():
         if not isinstance(report, Mapping):
             continue
         job_id = _text(report.get("job_id"))
         if not job_id:
             continue
-        reports.append({
+        legacy.append({
             "job_id": job_id,
             "report_id": _text(report.get("report_id")),
             "target": _text(report.get("target")),
@@ -79,8 +84,154 @@ def handoff_index() -> dict[str, Any]:
             "generated_at": _text(report.get("generated_at")),
             "view_url": f"/ui/soc/handoff/{job_id}",
         })
-    return {"count": len(reports), "reports": _bounded(reports, _INDEX_LIMIT),
+    finding_rows = _finding_handoff_rows()
+    reports = _bounded(
+        legacy, max(_INDEX_LIMIT - len(finding_rows), 0)) + finding_rows
+    return {"count": len(legacy) + len(finding_rows),
+            "reports": reports,
             "source_available": _source_available()}
+
+
+def _finding_cases() -> tuple[Any, list[Any]]:
+    """(FindingStore, case packages) or (None, []) — never raises."""
+    try:
+        from backend.research_agents.finding.store import FindingStore
+        from backend.research_agents.runtime_store import default_store
+
+        store = default_store()
+        return FindingStore(store.base), FindingStore(store.base).list_cases()
+    except Exception:
+        return None, []
+
+
+def _finding_handoff_rows() -> list[dict[str, Any]]:
+    """Read-only handoff rows for finding case packages (Phase 14).
+
+    Additive: only persisted case packages reach this list, keyed by
+    their real verification/source job; no external-submission
+    automation exists anywhere in this path.
+    """
+    rows: list[dict[str, Any]] = []
+    try:
+        fs, cases = _finding_cases()
+        if fs is None:
+            return rows
+        for case in cases:
+            cand = fs.get_candidate(case.candidate_id)
+            if cand is None:
+                continue
+            vers = fs.list_verifications(candidate_id=cand.candidate_id)
+            ver = vers[-1] if vers else None
+            job_id = _text(ver.job_id if ver else "") or _text(
+                cand.source_job)
+            rows.append({
+                "job_id": job_id,
+                "report_id": _text(case.case_id),
+                "target": _text(cand.target),
+                "subdomain": _text(cand.target),
+                "endpoint": _text(
+                    (cand.endpoint or {}).get("url", ""))
+                if isinstance(cand.endpoint, Mapping) else "",
+                "category": _text(cand.vulnerability_class),
+                "status": _text(case.state),
+                "agent": _text(cand.specialist),
+                "generated_at": _text(case.updated_at),
+                "view_url": f"/ui/soc/findings/{cand.candidate_id}",
+            })
+    except Exception:
+        return []
+    return rows
+
+
+def _finding_detail_for_job(job_id: str) -> dict[str, Any] | None:
+    """Read-only handoff view of a finding case package for one job."""
+    try:
+        fs, cases = _finding_cases()
+        if fs is None:
+            return None
+        for case in cases:
+            cand = fs.get_candidate(case.candidate_id)
+            if cand is None:
+                continue
+            vers = fs.list_verifications(candidate_id=cand.candidate_id)
+            ver = vers[-1] if vers else None
+            jobs = {_text(cand.source_job),
+                    _text(ver.job_id if ver else "")}
+            if job_id not in jobs:
+                continue
+            package = case.package or {}
+            missing = [str((m or {}).get("description", m))
+                       if isinstance(m, dict) else str(m)
+                       for m in (cand.missing_evidence or [])]
+            verified = case.state in ("VERIFIED", "READY_FOR_REVIEW",
+                                      "HANDED_OFF")
+            disclaimer = (
+                "Authoritative verification: Evidence Gate VERIFIED "
+                f"({case.gate_result})."
+                if verified else
+                f"Authoritative verification state: {case.state} — this "
+                "candidate is NOT a confirmed vulnerability.")
+            evidence_summary = [
+                {"type": _text(e.get("type")),
+                 "status": _text(e.get("state") or "recorded"),
+                 "label": _text(e.get("label") or e.get("type")),
+                 "timestamp": _text(e.get("created_at")),
+                 "integrity_hash": "",
+                 "status_code": None}
+                for e in (package.get("evidence_timeline") or [])
+                if isinstance(e, Mapping)][:20]
+            return {
+                "job_id": job_id,
+                "report_id": _text(case.case_id),
+                "verified_status": _text(case.state),
+                "verified": verified,
+                "target": _text(cand.target),
+                "endpoint": {
+                    "url": _text((cand.endpoint or {}).get("url", ""))
+                    if isinstance(cand.endpoint, Mapping) else "",
+                    "method": _text((cand.endpoint or {}).get("method"))
+                    if isinstance(cand.endpoint, Mapping) else "",
+                    "parameter": _text(
+                        (cand.endpoint or {}).get("parameter"))
+                    if isinstance(cand.endpoint, Mapping) else "",
+                    "subdomain": _text(cand.target),
+                },
+                "context": {
+                    "why_interesting": [_text(cand.hypothesis)],
+                    "disclaimer": disclaimer,
+                },
+                "evidence_summary": evidence_summary,
+                "agent_reasoning": {
+                    "agent": _text(cand.specialist),
+                    "confidence": (
+                        f"{_text(cand.confidence) or 'not_recorded'} "
+                        f"(provenance: "
+                        f"{_text(cand.confidence_provenance) or 'none'}; "
+                        "the gate decides, not this value)"),
+                    "strategy": [
+                        _text(p) for p in
+                        (case.recommended_next_step or "").split("; ")
+                        if _text(p)][:4],
+                    "researcher_notes": _text(
+                        case.recommended_next_step, 400),
+                },
+                "suggested_tests": [
+                    {"kind": "verification",
+                     "suggestion": _text(
+                         case.recommended_next_step or
+                         "re-run authorized verification within scope",
+                         400)},
+                ] + [{"kind": "missing-evidence",
+                      "suggestion": _text(m, 200)} for m in missing[:5]],
+                "questions": [
+                    f"Can you provide {m}?" for m in missing[:6]
+                ] or ["No open evidence gaps recorded — validate the "
+                      "gate-verified finding against the target."],
+                "generated_at": _text(case.updated_at),
+            }
+    except Exception:
+        return None
+    return None
 
 
 def _safe_suggestions(report: Mapping) -> list[dict[str, str]]:
@@ -142,7 +293,9 @@ def handoff_detail(job_id: str) -> dict[str, Any] | None:
         return None
     report = _report_document(job_id)
     if report is None:
-        return None
+        # finding case packages expose a read-only handoff for the same
+        # job id (verification job or its source job)
+        return _finding_detail_for_job(job_id)
     if not isinstance(report, Mapping):
         return None
 
