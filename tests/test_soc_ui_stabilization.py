@@ -42,7 +42,8 @@ UNDEPLOYED = ("backend.research_agents", "backend.investigation_engine")
 SOC_PAGES = ["/ui/soc/", "/ui/soc/agents", "/ui/soc/cases", "/ui/soc/activity",
              "/ui/soc/handoff"]
 
-SOC_PRIMARY_LABELS = ["Overview", "Agents", "Missions / Activity", "Cases",
+SOC_PRIMARY_LABELS = ["Overview", "Agents", "Targets",
+                      "Missions / Activity", "Cases",
                       "Evidence", "Knowledge", "Handoff"]
 
 #: Legacy pages that must NOT be primary navigation anymore (still reachable).

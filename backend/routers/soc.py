@@ -19,6 +19,15 @@ from fastapi.templating import Jinja2Templates
 
 router = APIRouter()
 
+# Epic8: mount the Production Intelligence JSON API inside the already-
+# mounted SOC router so api.py (which carries an uncommitted operator
+# edit in production) never has to change. Auth stays on the global
+# API-key gate (handled by the shared app layer); routes appear in the
+# app OpenAPI schema.
+from backend.routers.intel import router as _intel_router  # noqa: E402
+
+router.include_router(_intel_router)
+
 _templates = Jinja2Templates(directory=str(
     __import__("pathlib").Path(__file__).resolve().parents[2] / "web" / "templates"  # noqa: E501
 ))
@@ -43,6 +52,13 @@ def ui_soc_overview(request: Request):
     from backend.soc import overview as soc_overview
 
     payload = soc_overview.overview_payload()
+    # Epic8: same authoritative projection as /api/intel/overview
+    try:
+        from backend.prod_intel.overview import overview as pi_overview
+        payload["intel"] = pi_overview()
+    except Exception as exc:                     # honest degrade, no crash
+        payload["intel"] = {"state": "unavailable",
+                            "reason": f"{type(exc).__name__}"}
     return _templates.TemplateResponse(
         request, "soc/home.html", _ctx(
             request, **payload, active="soc-overview"))
@@ -69,6 +85,14 @@ def ui_soc_agent_detail(request: Request, slug: str):
         return HR(
             "<h1>Agent not found</h1><p>No agent matches "
             f"{slug!r}.</p>", status_code=404)
+    # Epic8: same authoritative projection as /api/intel/agents/{slug}
+    try:
+        from backend.prod_intel.agents_intel import (
+            agent_detail as pi_agent_detail)
+        detail["intel"] = pi_agent_detail(slug)
+    except Exception as exc:
+        detail["intel"] = {"state": "unavailable",
+                           "reason": f"{type(exc).__name__}"}
     return _templates.TemplateResponse(
         request, "soc/agent_detail.html", _ctx(
             request, **detail, active="soc-agents"))
@@ -95,6 +119,14 @@ def ui_soc_case_detail(request: Request, case_id: str):
         return HR(
             "<h1>Case not found</h1><p>No case matches "
             f"{case_id!r}.</p>", status_code=404)
+    # Epic8: complete analyst package (same projection as
+    # /api/intel/cases/{id}); absent package renders the honest reason
+    try:
+        from backend.prod_intel.case_intel import case_intelligence
+        detail["case_intel"] = case_intelligence(case_id)
+    except Exception as exc:
+        detail["case_intel"] = {"found": False, "state": "unavailable",
+                                "reason": f"{type(exc).__name__}"}
     return _templates.TemplateResponse(
         request, "soc/case_detail.html", _ctx(
             request, **detail, active="soc-cases"))
@@ -105,6 +137,19 @@ def ui_soc_activity(request: Request):
     from backend.soc import activity as soc_activity
 
     payload = soc_activity.activity_payload()
+    # Epic8: same authoritative projections as /api/intel/activity|now
+    try:
+        from backend.prod_intel.activity import (
+            build_feed, current_activity)
+        payload["intel_feed"] = build_feed(hours=168.0, limit=40)
+        payload["intel_now"] = current_activity()
+    except Exception as exc:
+        payload["intel_feed"] = {"state": "unavailable",
+                                 "reason": f"{type(exc).__name__}",
+                                 "value": [], "categories": []}
+        payload["intel_now"] = {"state": "UNKNOWN",
+                                "basis": f"{type(exc).__name__}",
+                                "running_jobs": [], "worker": {}}
     return _templates.TemplateResponse(
         request, "soc/activity.html", _ctx(
             request, **payload, active="soc-activity"))
@@ -173,9 +218,37 @@ def ui_soc_finding_detail(request: Request, candidate_id: str):
         return HR(
             "<h1>Candidate not found</h1><p>No candidate matches "
             f"{candidate_id!r}.</p>", status_code=404)
+    # Epic8: full analyst package for the finding-family case
+    try:
+        fcid = str(detail.get("finding_case_id")
+                   or (detail.get("gate") or {}).get("finding_case_id")
+                   or (detail.get("case") or {}).get("case_id")
+                   or "")
+        if fcid:
+            from backend.prod_intel.case_intel import case_intelligence
+            detail["case_intel"] = case_intelligence(fcid)
+    except Exception as exc:
+        detail["case_intel"] = {"found": False, "state": "unavailable",
+                                "reason": f"{type(exc).__name__}"}
     return _templates.TemplateResponse(
         request, "soc/finding_detail.html", _ctx(
             request, **detail, active="soc-findings"))
+
+
+@router.get("/ui/soc/targets", response_class=HTMLResponse)
+def ui_soc_targets(request: Request):
+    # Epic8: same authoritative projection as /api/intel/targets
+    hours_raw = request.query_params.get("hours")
+    try:
+        hours = float(hours_raw) if hours_raw not in (None, "") else 168.0
+    except (TypeError, ValueError):
+        hours = 168.0
+    from backend.prod_intel.targets import target_intelligence
+    payload = target_intelligence(hours=hours)
+    payload["hours"] = hours
+    return _templates.TemplateResponse(
+        request, "soc/targets.html", _ctx(
+            request, **payload, active="soc-targets"))
 
 
 @router.get("/ui/soc/handoff", response_class=HTMLResponse)

@@ -25,6 +25,58 @@
     <div class="panel p-4"><div class="text-3xl font-bold">{{ counts.waiting_review }}</div><div class="text-slate-400 text-sm">Waiting review</div></div>
   </div>
 
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Right now</h2>
+      <a class="text-xs text-cyan-400 hover:underline"
+         href="/api/intel/now{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">JSON</a>
+    </div>
+    {% if intel_now %}
+    <div class="flex flex-wrap gap-4 text-sm">
+      <div><span class="text-slate-400">State:</span>
+        <span class="font-mono">{{ intel_now.state }}</span></div>
+      <div><span class="text-slate-400">Basis:</span>
+        <span class="text-slate-500">{{ intel_now.basis }}</span></div>
+      <div><span class="text-slate-400">Worker:</span>
+        <span class="text-slate-500">{{ intel_now.worker.reason if intel_now.worker else 'unavailable' }}</span></div>
+    </div>
+    {% if intel_now.running_jobs %}
+    <ul class="text-xs space-y-1 mt-2">
+      {% for j in intel_now.running_jobs %}
+      <li class="flex gap-2"><span class="font-mono">{{ j.job_id }}</span>
+        <span>{{ j.agent }} · {{ j.category }} · {{ j.target }} · {{ j.status }}</span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <p class="text-slate-600 text-xs mt-1">UNKNOWN/PLANNED are honest
+      states — a fake ACTIVE is never rendered.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel p-4 mb-6">
+    <div class="panel-head"><h2>Meaningful activity</h2>
+      <a class="text-xs text-cyan-400 hover:underline"
+         href="/api/intel/activity{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">JSON</a>
+    </div>
+    {% if intel_feed.state == 'ok' and intel_feed.value %}
+    <ul class="text-sm space-y-1">
+      {% for a in intel_feed.value %}
+      <li class="flex gap-3 text-xs">
+        <span class="font-mono text-slate-500 w-32 shrink-0">{{ a.at[5:19] }}</span>
+        <span class="w-48 shrink-0 {% if a.kind == 'failure' %}text-red-400{% elif a.kind == 'denied' %}text-amber-400{% elif a.kind == 'blocked' %}text-amber-300{% else %}text-slate-300{% endif %}">{{ a.category }}</span>
+        <span class="text-slate-500 font-mono text-[10px]">{{ a.event }}</span>
+        {% if a.link %}<a class="text-cyan-400 hover:underline" href="{{ a.link }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">open</a>{% endif %}
+        <span class="text-slate-600">{{ a.context.job_id or a.context.candidate_id or a.context.case_id or '' }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="text-slate-600 text-xs mt-2">Taxonomy:
+      {{ intel_feed.categories|join(', ') }}</p>
+    {% else %}
+    <p class="text-slate-500 text-sm">{{ intel_feed.state or 'unavailable' }}
+      — {{ intel_feed.reason if intel_feed.reason is defined else 'no meaningful activity in window' }}.</p>
+    {% endif %}
+  </section>
+
   <section class="panel p-4">
     <div class="panel-head"><h2>Agent timeline</h2></div>
     <ul class="text-sm space-y-2">

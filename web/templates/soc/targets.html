@@ -1,0 +1,145 @@
+{# soc/targets.html — Epic8 target intelligence (section 7C).
+
+   Renders the SAME authoritative projection as /api/intel/targets
+   (backend.prod_intel.targets.target_intelligence): every metric block
+   already carries source/population/aggregation provenance, and
+   unavailable/unavailable states render honestly — no counters are
+   computed here. #}
+{% extends "base.html" %}
+{% block title %}WATCH &middot; Targets{% endblock %}
+{% block page %}Targets{% endblock %}
+{% block content %}
+<div class="p-6">
+  <h1 class="page-title mb-2">Target Intelligence</h1>
+  <p class="text-slate-400 text-sm mb-2">What Watch knows about each
+    target — derived only from persisted research, campaign, hunt,
+    finding, case and memory records.</p>
+  <p class="text-slate-500 text-xs mb-6">
+    Window: {{ '%.0f'|format(hours) }}h rolling ·
+    {{ count }} target{{ 's' if count != 1 }} discovered
+    {% if unavailable_sources %} · unavailable sources:
+      {{ unavailable_sources|join(', ') }}{% endif %}
+  </p>
+
+  {% if not count %}
+  <section class="panel p-4">
+    <p class="text-slate-400 text-sm">No target is present in any
+      persisted record — nothing observed, nothing invented.</p>
+  </section>
+  {% endif %}
+
+  {% for t in targets %}
+  <section class="panel p-4 mb-6" id="target-{{ t.target }}">
+    <div class="panel-head">
+      <h2>{{ t.target }}</h2>
+      <span class="text-slate-500 text-xs">
+        programs: {{ t.programs|join(', ') or '—' }} ·
+        last meaningful activity:
+        {{ t.last_meaningful_activity[:19] if t.last_meaningful_activity else 'not_observed' }}
+      </span>
+    </div>
+
+    {% if t.scopes %}
+    <p class="text-slate-500 text-xs mb-3">scopes:
+      <code>{{ t.scopes|join(' · ') }}</code></p>
+    {% endif %}
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if t.attack_surface.state == 'ok' %}
+            {{ t.attack_surface.value.urls }} / {{ t.attack_surface.value.endpoints }}
+          {% else %}{{ t.attack_surface.state }}{% endif %}
+        </div>
+        <div class="text-slate-400 text-xs">Urls / Endpoints (attack surface)</div>
+        <div class="text-slate-600 text-[10px]">{{ t.attack_surface.source }}</div>
+      </div>
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if t.research.state == 'ok' %}{{ t.research.value.total }}{% else %}{{ t.research.state }}{% endif %}
+        </div>
+        <div class="text-slate-400 text-xs">Research jobs
+          {% if t.research.state == 'ok' %}({{ t.research.value.recent }} recent){% endif %}</div>
+        <div class="text-slate-600 text-[10px]">{{ t.research.source }}</div>
+      </div>
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if t.findings.state == 'ok' %}{{ t.findings.value.values()|sum }}{% else %}{{ t.findings.state }}{% endif %}
+        </div>
+        <div class="text-slate-400 text-xs">Candidates
+          {% if t.findings.state == 'ok' %}({{ t.findings.value|tojson }}){% endif %}</div>
+        <div class="text-slate-600 text-[10px]">{{ t.findings.source }}</div>
+      </div>
+      <div class="panel p-3">
+        <div class="text-2xl font-bold">
+          {% if t.memory.state == 'ok' %}{{ t.memory.value.count }}{% else %}{{ t.memory.state }}{% endif %}
+        </div>
+        <div class="text-slate-400 text-xs">Memory items</div>
+        <div class="text-slate-600 text-[10px]">{{ t.memory.source }}</div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+      <div>
+        <h3 class="text-sm text-slate-300 mb-1">Campaigns</h3>
+        {% if t.campaigns.state == 'ok' and t.campaigns.value %}
+        <ul class="text-xs space-y-1">
+          {% for c in t.campaigns.value %}
+          <li><a class="text-cyan-400 hover:underline"
+                 href="{{ c.link }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">{{ c.campaign_id }}</a>
+            — {{ c.state }}</li>
+          {% endfor %}
+        </ul>
+        {% else %}<p class="text-slate-600 text-xs">{{ t.campaigns.state }}</p>{% endif %}
+      </div>
+      <div>
+        <h3 class="text-sm text-slate-300 mb-1">Verifications</h3>
+        {% if t.verifications.state == 'ok' %}
+        <p class="text-xs text-slate-400">{{ t.verifications.value|tojson }}</p>
+        {% else %}<p class="text-slate-600 text-xs">{{ t.verifications.state }}</p>{% endif %}
+        <h3 class="text-sm text-slate-300 mb-1 mt-2">Cases</h3>
+        {% if t.cases.state == 'ok' %}
+        <p class="text-xs text-slate-400">{{ t.cases.value|tojson }}</p>
+        {% else %}<p class="text-slate-600 text-xs">{{ t.cases.state }}</p>{% endif %}
+      </div>
+      <div>
+        <h3 class="text-sm text-slate-300 mb-1">Knowledge used</h3>
+        {% if t.knowledge.state == 'ok' %}
+        <p class="text-xs text-slate-400">{{ t.knowledge.value.uses }} uses ·
+          {{ t.knowledge.value.distinct_documents }} distinct documents</p>
+        {% else %}<p class="text-slate-600 text-xs">{{ t.knowledge.state }}</p>{% endif %}
+        <h3 class="text-sm text-slate-300 mb-1 mt-2">Evidence</h3>
+        {% if t.evidence.state == 'ok' %}
+        <p class="text-xs text-slate-400">{{ t.evidence.value }} rows</p>
+        {% else %}<p class="text-slate-600 text-xs">{{ t.evidence.state }}</p>{% endif %}
+      </div>
+    </div>
+
+    {% if t.learning.state == 'ok' and t.learning.value.count %}
+    <div class="mb-3">
+      <div class="text-slate-600 text-[10px]">Learning signals</div>
+      <div class="text-base text-amber-300">{{ t.learning.value.count }} signals</div>
+      <div class="text-slate-600 text-[10px]">{{ t.learning.source }}</div>
+    </div>
+    {% endif %}
+
+    <h3 class="text-sm text-slate-300 mb-2">Recent meaningful activity
+      <span class="text-slate-600 text-xs">(id-attributed, newest first)</span></h3>
+    {% if t.activity.state == 'ok' and t.activity.value %}
+    <ul class="text-xs space-y-1">
+      {% for a in t.activity.value[:8] %}
+      <li class="flex gap-2">
+        <span class="text-slate-600 font-mono">{{ a.at[:19] }}</span>
+        <span class="{% if a.kind == 'failure' %}text-red-400{% elif a.kind == 'denied' %}text-amber-400{% else %}text-slate-300{% endif %}">{{ a.category }}</span>
+        {% if a.link %}<a class="text-cyan-400 hover:underline" href="{{ a.link }}{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">open</a>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-slate-600 text-xs">{{ t.activity.state }} — no meaningful
+      activity attributed to this target in the window.</p>
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}
