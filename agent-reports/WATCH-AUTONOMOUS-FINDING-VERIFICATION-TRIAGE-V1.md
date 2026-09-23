@@ -348,21 +348,33 @@ new pages self-describe honest states (advisory banners, empty states).
 ## 26. Git / delivery
 
 Branch: `agent/daily-development`, base `dc3376d` (= production `f3c1fc1`
-content). Explicit-file staging only (NEVER `git add -A`); ~183 unrelated
-worktree leftovers and production's 27 dirty entries untouched.
-Flow: full battery -> explicit stage list -> commit -> `push_safe.sh`
-(fail-closed) -> `report.sh` baseline refresh -> `check.sh` ->
-`promotion/request.sh` -> STOP at Telegram APPROVE (rule 34/33). Exact
-commit IDs, push result and check.sh verdict are appended after the
-commit lands.
+content). Explicit-file staging only (NEVER `git add -A`): exactly 32
+files staged from a reviewed list (+8588/-8); the ~168 unrelated worktree
+leftovers and production's 27 dirty entries untouched (verified:
+`web/templates/command_center.html` and other pre-existing dirt stayed
+out of the staged set). Delivery flow executed:
+1. 2999-test battery all green (isolated suites),
+2. explicit 32-file stage + staged-set verification (32 == 32),
+3. commit `ca9a6d5` ("finding: Autonomous Finding Verification & Triage
+   v1 (bounded candidate layer)"),
+4. `push_safe.sh origin agent/daily-development` -> `dc3376d..ca9a6d5`
+   (fail-closed push),
+5. `report.sh` baseline refresh (DELIVERY-REPORT-2026-09-23 written),
+6. `check.sh` -> **READY FOR PROMOTION**: PASS BRANCH, PASS COMMIT
+   (1 ahead of main), PASS TESTS (82 OK), PASS PATH_GUARD (no forbidden
+   path/secret/environment file; LARGE_DIFF advisory only), PASS REPORT
+   (this report included), PASS PRODUCTION (unchanged: f3c1fc1, 27 dirty).
+   WARN only: 168 unrelated uncommitted entries stay behind (by design).
+7. `promotion/request.sh` -> STOP at Telegram APPROVE (rules 33/34).
 
 ## 27. Exact production commit(s)
 
-- Cycle 1 (this report): agent commit `PENDING_COMMIT` (pushed to
-  `agent/daily-development`; production untouched at `f3c1fc1` until
-  APPROVE).
-- Cycle 2 (post-approval): promotion merge + restart + real validation,
-  appended with exact IDs.
+- Cycle 1: agent commit **`ca9a6d5`** on `agent/daily-development`
+  (pushed, `dc3376d..ca9a6d5`). Production remains **`f3c1fc1`** until
+  Telegram APPROVE (rule 34); no merge, push to main, or deploy has
+  happened.
+- Cycle 2 (post-approval): promotion merge + service restart + real
+  production validation (sections 19-21) — exact IDs appended then.
 
 ## 28. Promotion request ID(s)
 
