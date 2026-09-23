@@ -22,6 +22,12 @@ from pathlib import Path
 from typing import Callable, Iterator
 from zoneinfo import ZoneInfo
 
+from backend.ai_ops.window import (          # EPIC9: single authoritative
+    DEFAULT_WINDOW as AI_DEFAULT_WINDOW,     # AI operations window
+    is_open_local,
+    next_open_local,
+)
+
 __all__ = [
     "SchedulerConfig",
     "ResearchScheduler",
@@ -89,15 +95,11 @@ def _parse_bool(value: str | None, default: bool = False) -> bool:
 
 
 def parse_hhmm(value: str) -> int:
-    """Parse ``"HH:MM"`` -> minutes since midnight. Raises on malformed input."""
-    text = str(value or "").strip()
-    parts = text.split(":")
-    if len(parts) != 2:
-        raise ValueError(f"expected HH:MM, got {value!r}")
-    hour, minute = int(parts[0]), int(parts[1])
-    if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        raise ValueError(f"invalid time of day: {value!r}")
-    return hour * 60 + minute
+    """EPIC9: delegation point — time-of-day parsing has ONE authority
+    (``backend.ai_ops.window``) shared with the AI operations
+    dispatcher, so no module restates the semantics."""
+    from backend.ai_ops.window import parse_hhmm as _parse_hhmm
+    return _parse_hhmm(value)
 
 
 def in_window(
@@ -108,26 +110,16 @@ def in_window(
     Supports windows crossing midnight (e.g. 12:00 -> 00:00 or 22:00 -> 06:00).
     A zero-length window (start == end) is always closed.
     """
-    start = parse_hhmm(window_start)
-    end = parse_hhmm(window_end)
-    if start == end:
-        return False
-    current = now.hour * 60 + now.minute
-    if start < end:
-        return start <= current < end
-    return current >= start or current < end
+    # EPIC9: single authority — identical semantics for every caller.
+    return is_open_local(now, window_start, window_end)
 
 
 def next_window_start(
     now: datetime, window_start: str, window_end: str
 ) -> datetime:
     """Next occurrence of the window start at/after ``now`` (same tz)."""
-    start = parse_hhmm(window_start)
-    hh, mm = divmod(start, 60)
-    candidate = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-    if candidate <= now:
-        candidate = candidate + timedelta(days=1)
-    return candidate
+    # EPIC9: single authority (backend.ai_ops.window).
+    return next_open_local(now, window_start, window_end)
 
 
 def priority_rank(priority_level: str | None) -> int:
@@ -195,11 +187,11 @@ def acquire_lock(path: str | Path) -> Iterator[bool]:
 @dataclass
 class SchedulerConfig:
     enabled: bool = False
-    window_start: str = "12:00"
-    window_end: str = "00:00"
+    window_start: str = AI_DEFAULT_WINDOW.start
+    window_end: str = AI_DEFAULT_WINDOW.end
     max_minutes: int = 300
     max_plans: int = 5
-    timezone: str = "Asia/Tehran"
+    timezone: str = AI_DEFAULT_WINDOW.timezone
     # Bounded public research fetching is on by default (the agent's purpose);
     # disable with WATCH_RESEARCH_NETWORK=false or --no-network. Dry-run is
     # always zero-network regardless.
@@ -243,11 +235,14 @@ class SchedulerConfig:
 
         return cls(
             enabled=_parse_bool(get("WATCH_RESEARCH_ENABLED"), False),
-            window_start=str(get("WATCH_RESEARCH_WINDOW_START", "12:00")),
-            window_end=str(get("WATCH_RESEARCH_WINDOW_END", "00:00")),
+            window_start=str(get("WATCH_RESEARCH_WINDOW_START",
+                                 AI_DEFAULT_WINDOW.start)),
+            window_end=str(get("WATCH_RESEARCH_WINDOW_END",
+                               AI_DEFAULT_WINDOW.end)),
             max_minutes=_parse_int(get("WATCH_RESEARCH_MAX_MINUTES"), 300),
             max_plans=_parse_int(get("WATCH_RESEARCH_MAX_PLANS"), 5),
-            timezone=str(get("WATCH_RESEARCH_TIMEZONE", "Asia/Tehran")),
+            timezone=str(get("WATCH_RESEARCH_TIMEZONE",
+                             AI_DEFAULT_WINDOW.timezone)),
             network=_parse_bool(get("WATCH_RESEARCH_NETWORK"), True),
             llm=_parse_bool(get("WATCH_RESEARCH_LLM"), False),
             max_sources=_parse_int(get("WATCH_RESEARCH_MAX_SOURCES"), 12),

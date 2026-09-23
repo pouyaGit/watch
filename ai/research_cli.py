@@ -2862,6 +2862,21 @@ def _activate_cases(config) -> dict | None:
         return None
 
 
+def _ai_ops_after_research() -> dict | None:
+    """EPIC9 §10: ONE hourly tick = bounded research pass (above) +
+    bounded AI operations dispatch. Opt-in only
+    (``WATCH_AI_OPS_ENABLED=true`` set by the scheduling service), so a
+    manual ``agent run`` never dispatches autonomous work. Dispatcher
+    failures are contained here and reported honestly — they never
+    change the research scheduler's exit semantics."""
+    try:
+        from backend.ai_ops.dispatcher import maybe_run_from_scheduler
+        return maybe_run_from_scheduler()
+    except Exception as exc:  # noqa: BLE001 - bounded, honest report
+        return {"outcome": "FAILED",
+                "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+
 def run_agent_run(args: argparse.Namespace) -> int:
     from ai.research_agent.scheduler import (
         CASE_AWARE_DISABLED,
@@ -2891,6 +2906,9 @@ def run_agent_run(args: argparse.Namespace) -> int:
         payload = dict(record)
         if activation is not None:
             payload["case_activation"] = activation
+        ai_ops = _ai_ops_after_research()
+        if ai_ops is not None:
+            payload["ai_ops"] = ai_ops
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     print(f"RUN: {record['run_id']}")
@@ -2927,6 +2945,21 @@ def run_agent_run(args: argparse.Namespace) -> int:
             f"rejected={activation['build_rejected']} "
             f"errors={activation['errors']}"
         )
+    ai_ops = _ai_ops_after_research()
+    if ai_ops is not None:
+        if ai_ops.get("error"):
+            print(f"AI-OPS: FAILED {ai_ops['error']}")
+        else:
+            counts = ai_ops.get("discovered") or {}
+            print(
+                f"AI-OPS: outcome={ai_ops.get('outcome', '')} "
+                f"state={ai_ops.get('operations_state', '')} "
+                f"discovered={counts.get('discovered', 0)} "
+                f"executable={counts.get('executable', 0)} "
+                f"waiting={counts.get('waiting', 0)} "
+                f"blocked={counts.get('blocked', 0)} "
+                f"executed={len(ai_ops.get('executed') or [])}"
+            )
     return 0
 
 

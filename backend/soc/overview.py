@@ -74,6 +74,23 @@ def overview_payload() -> dict[str, Any]:
 
     from backend.soc.activity import _runtime_status
 
+    # EPIC9 §14: AI operations panel — window / operations state /
+    # process liveness as three separate, read-only facts.
+    try:
+        from backend.ai_ops.state import panel as ai_ops_panel
+        ai_ops = ai_ops_panel()
+    except Exception as exc:  # noqa: BLE001 - honest unavailability
+        ai_ops = {"rule_version": "ai-ops-state-v1",
+                  "operations_state": "UNAVAILABLE",
+                  "operations_display": "UNAVAILABLE",
+                  "window": {"label": "12:00-00:00 Asia/Tehran",
+                             "open": None},
+                  "source_error": type(exc).__name__,
+                  "last_tick": None, "current_tick": None,
+                  "next_tick_at": None, "work": {},
+                  "process": {"alive": False,
+                              "reason": "ai-ops source unavailable"}}
+
     return {
         "agents": agents,
         "agent_counts": agent_counts,
@@ -82,4 +99,5 @@ def overview_payload() -> dict[str, Any]:
         "reports": reports,
         "knowledge": knowledge,
         "runtime": _runtime_status(),
+        "ai_ops": ai_ops,
     }
