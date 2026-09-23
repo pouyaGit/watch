@@ -46,6 +46,9 @@
       <p class="text-slate-300 text-sm">{{ gate.reason }}</p>
       {% if gate.case_id %}<div class="text-slate-500 text-xs mt-1">gate case
         <span class="mono">{{ gate.case_id }}</span></div>{% endif %}
+      {% if gate.finding_case_id and gate.finding_case_id != gate.case_id %}
+      <div class="text-slate-500 text-xs">finding case
+        <span class="mono">{{ gate.finding_case_id }}</span></div>{% endif %}
       <div class="text-slate-500 text-xs">decided {{ gate.decided_at[:19] if gate.decided_at else '—' }}</div>
       {% else %}
       <p class="text-slate-400 text-sm">No gate decision yet — this candidate

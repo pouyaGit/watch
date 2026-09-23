@@ -778,6 +778,24 @@ def run_findings(
                     hunt.get("observation_ids") or [])
             ver = fs.save_verification(ver)
 
+        # Round-2 production fix: hunt's structured block carries no
+        # authorization ids — the authoritative GRANTED authz ids live in
+        # hunt_authorization audit events (Phase 16 provenance).  Harvest
+        # them for this verification's job; never invent them.
+        if not ver.authorization_ids:
+            try:
+                auth_ids = [str(row.get("auth_id") or "")
+                            for row in store.audit_events(limit=5000)
+                            if row.get("event") == "hunt_authorization"
+                            and str(row.get("job_id") or "") == job.id
+                            and row.get("auth_id")]
+                auth_ids = [x for x in dict.fromkeys(auth_ids) if x]
+            except Exception:  # noqa: BLE001 - honest empty on unread
+                auth_ids = []
+            if auth_ids:
+                ver.authorization_ids = auth_ids
+                ver = fs.save_verification(ver)
+
         # Phase 21 accounting: real observations from this verification
         obs_count = len(ver.observation_ids or [])
         if obs_count:

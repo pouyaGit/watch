@@ -26,8 +26,10 @@ from typing import Any, Iterator
 
 from backend.research_agents.finding.models import (
     CASE_TERMINAL,
+    CASE_TRANSITIONS,
     CANDIDATE_TERMINAL,
     VERIFICATION_TERMINAL,
+    VERIFICATION_TRANSITIONS,
     CandidateFinding,
     CasePackage,
     FindingStateError,
@@ -196,7 +198,61 @@ class FindingStore:
                 "gate_result": str(gate_result or ""),
                 "at": candidate.updated_at,
             })
+            if new_state == "DUPLICATE":
+                self._cascade_duplicate_locked(candidate,
+                                               reason=reason)
         return candidate
+
+    def _cascade_duplicate_locked(self, candidate: CandidateFinding, *,
+                                  reason: str) -> None:
+        """Call only while holding the store lock (no re-entrancy).
+
+        A DUPLICATE candidate may never leave live work behind: its bound
+        case package moves to the DUPLICATE terminal state and every
+        non-terminal verification objective expires — a duplicate is
+        never verified and never sits in SOC as pending work.  Both
+        cascades use the normal append + transition-row writers; states
+        the transition map does not allow are left untouched, never
+        forced.
+        """
+        stamp = f"duplicate_artifact_cascade:{candidate.candidate_id}"
+        if candidate.case_id:
+            case = self.get_case(candidate.case_id)
+            if (case is not None
+                    and case.state not in CASE_TERMINAL
+                    and "DUPLICATE" in CASE_TRANSITIONS.get(
+                        case.state, frozenset())):
+                old = case.state
+                case.transition("DUPLICATE",
+                                reason=reason or "duplicate")
+                self._append(_FILE_CASES, case.to_dict())
+                self._append(_FILE_TRANSITIONS, {
+                    "kind": "case", "id": case.case_id,
+                    "candidate_id": case.candidate_id,
+                    "old": old, "new": "DUPLICATE",
+                    "reason": reason or "duplicate",
+                    "detail": stamp[:400],
+                    "at": case.updated_at,
+                })
+        for ver in self.list_verifications(
+                candidate_id=candidate.candidate_id):
+            if ver.state in VERIFICATION_TERMINAL:
+                continue
+            if "EXPIRED" not in VERIFICATION_TRANSITIONS.get(
+                    ver.state, frozenset()):
+                continue
+            old_v = ver.state
+            ver.transition("EXPIRED", reason=reason or "duplicate",
+                           detail=stamp)
+            self._append(_FILE_VERIFICATIONS, ver.to_dict())
+            self._append(_FILE_TRANSITIONS, {
+                "kind": "verification", "id": ver.verification_id,
+                "candidate_id": ver.candidate_id,
+                "old": old_v, "new": "EXPIRED",
+                "reason": reason or "duplicate",
+                "detail": stamp[:400],
+                "at": ver.updated_at,
+            })
 
     # -- verification objectives ------------------------------------------
 

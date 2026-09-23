@@ -255,30 +255,92 @@ recorded), handoff generation failure (handoff_view raises -> empty
 handoff dict, detail still renders). Expected outcomes honored: honest
 state, no fake verification/case/evidence anywhere.
 
-## 19. Real XSS validation
+## 19. Real XSS validation — DONE (cycle 2, production, 2026-09-23)
 
-PENDING — scheduled for post-promotion (Phase 24 ordering: "After APPROVE:
-... run production validation"). Plan: JOB A real XSS result ->
-candidate -> triage -> verification -> gate, reporting exact candidate,
-verification, plan, job, authorization, observation and evidence IDs, gate
-result, final lifecycle state, case ID if created. Result may be VERIFIED /
-REJECTED / INCONCLUSIVE / BLOCKED per real evidence — never forced.
+`finding run --job job-xss-49b9d40fd5 --job job-xss-b1d237d202 --hunt
+--hunt-plans 2 --hunt-observations 4 --hunt-iterations 3 --hunt-llm-plans 1
+--hunt-seconds 60 --llm OPENROUTER --model openrouter/free` against LIVE
+Watch scope `watch:scope:dell/www.dell.com`:
 
-## 20. Real CVE validation
+- Candidates: `cand-7c229c48c455` (canonical, VERIFIED),
+  `cand-c7d1753d5a22`, `cand-7d69cf1677e9`, `cand-c4181c67e58a`
+  (DUPLICATE) — 4 extracted, 3 deduplicated (see section 21).
+- Verification objective `ver-819fc7025cbc` -> state **VERIFIED**
+  (gate result `evidence_rules_met`, detail "confidence=high
+  supporting=20 case=case-697ba6c6e03f").
+- Real verification job `job-xss-ffe3afca68`; real Hunt plans
+  `plan-829fb0f303b3`, `plan-9a2476238ae4`; real GRANTED authorizations
+  `authz-35e609a42d32`, `authz-42bf89ffbcce` (hunt_authorization audit
+  rows); real observations `obs-c56d0afa7e00`, `obs-65fd0d0b18ee`,
+  `obs-f94a31de83aa`; 10 new verification evidence rows
+  (`ev-e90e717cf4c5` … `ev-0a996e5ddae7`).
+- Runtime case created by the gate: `case-697ba6c6e03f`; finding case
+  package `fcase-7349be646c50` -> **READY_FOR_REVIEW** with full Phase-13
+  package (evidence timeline 40 rows, knowledge consulted, limitations,
+  recommended next step).
+- Real openrouter/free advisor: used=true, latency 32,251 ms,
+  prompt `finding-verification-advisor-v1`, 5 unhandled-code
+  recommendations recorded as `rejected` (advisory_only — never acted on);
+  model_requested = model_resolved = `openrouter/free`, zero paid calls.
+- Budget consumed: candidates 4/60, objectives 2/6, observations 3/12,
+  llm 1/6 (ledger rows written for each).
 
-PENDING — same sequencing, JOB B with the CVE_RESEARCH specialist against
-real Watch research state + real Knowledge. Exact IDs reported in the
-cycle-2 addendum. No VERIFIED will be forced.
+Final lifecycle: candidate **VERIFIED**, verification **VERIFIED**, case
+**READY_FOR_REVIEW** — produced by the authoritative Evidence Gate on real
+evidence; nothing was forced.
 
-## 21. Real deduplication validation
+## 20. Real CVE validation — DONE (cycle 2, production, honest BLOCKED)
 
-PENDING — same sequencing: the two real XSS research jobs already in
-production (`job-xss-49b9d40fd5`, `job-xss-b1d237d202` — same class,
-same scope) give a genuine cross-job duplicate pair; canonical choice,
-DUPLICATE marking, evidence/provenance preservation and "no duplicate
-verified case" will be demonstrated on real persisted data (Phase 20),
-not fabricated. The deterministic logic is already exercised by
-extract-twice dedup tests in all four suites.
+`finding run --job job-cve_research-28dc826bf3 --hunt … --llm OPENROUTER
+--model openrouter/free` (same free-only, bounded flags):
+
+- Candidates: `cand-4f47ba075b23` (canonical) and `cand-9c5648da0ebf`
+  (DUPLICATE of it — real dedup on the CVE pair too).
+- Verification objective `ver-9cb7a94d1994`; real verification job
+  `job-cve_research-12c81cf874` ran the real Hunt Planner (2 iterations,
+  1 real LLM call, real plans + GRANTED authorizations `authz-8f8224dd1919`,
+  `authz-0ba3f93d71db`, `authz-331715c200c6`, 3 evidence rows).
+- Hunt could not close the gap — persisted missing codes
+  `confidence_below_required_high`, `observation_evidence_count_gap` —
+  and the job then hit the runtime budget: `job_timeout (exceeded 120s,
+  attempt 3) -> timeouts exhausted -> TERMINAL_FAILED`.
+- Gate decision: verification **FAILED** (`job_terminal_failed`), candidate
+  **BLOCKED**, finding case `fcase-3357949469fa` **BLOCKED** — honest
+  state: verification could not safely proceed, NO VERIFIED was forced,
+  no evidence was invented. Audit rows `finding_verification_gate_decided`
+  (decision FAILED) + `finding_lineage` record the full chain.
+
+Final lifecycle: candidate **BLOCKED** (truthful, resumable design
+limitation documented in section 25 — not auto-resumed).
+
+## 21. Real deduplication validation — DONE (cycle 2, production)
+
+Real cross-job scenario: `job-xss-49b9d40fd5` + `job-xss-b1d237d202`
+(same class, same scope, same endpoint shape, 20 shared evidence refs)
+extracted in ONE bounded run:
+
+- **6 correlations recorded, 3 candidates deduplicated** to canonical
+  `cand-7c229c48c455` (deterministic: oldest-created wins, ids break
+  ties) — duplicates `cand-7d69cf1677e9`, `cand-c4181c67e58a`
+  (cross-job) and `cand-c7d1753d5a22` (same-job), each with reason codes
+  (`same_scope_ref`, `same_vulnerability_class`,
+  `same_endpoint_shape:support`, `same_normalized_target`,
+  `shared_evidence_refs:20`, `older_canonical:` / `canonical_retained`)
+  + provenance rows in the correlation ledger.
+- Evidence preserved on every duplicate (each keeps its own 20 evidence
+  refs and full source provenance — nothing deleted, nothing merged).
+- **No duplicate verified case**: exactly one verified case family
+  (`fcase-7349be646c50`); CVE pair deduplicated the same way
+  (`cand-9c5648da0ebf` -> `cand-4f47ba075b23`).
+- Production validation EXPOSED a real defect this section's happy path
+  alone would not have caught: the same-job duplicate carried a stale
+  snapshot through dedupe, keeping a dead-end TRIAGED case + pending
+  verification (SOC showed "awaiting verification" for a duplicate).
+  Fixed in cycle 2 (section 26): dedupe now re-reads persisted truth
+  before ranking, and a candidate -> DUPLICATE transition cascades its
+  case -> DUPLICATE and its non-terminal objective -> EXPIRED (store
+  level, audited). Regression suite:
+  `tests/test_finding_cycle2_fixes.py` (9 tests).
 
 ## 22. Resource usage
 
@@ -289,8 +351,16 @@ max_verification_observations 12, max_llm_calls 6, max_context_chars
 max_verification_runtime_seconds 600, max_retries 3, worker concurrency 1.
 Every consumption records before/after/reason rows (finding budget ledger
 file); exhaustion raises BudgetExhausted and the run records an honest
-limit reason instead of proceeding. Runtime/CPU/RSS instrumentation comes
-from the real production runs (cycle 2 report section 22).
+limit reason instead of proceeding.
+
+Cycle-2 real production consumption (both runs, cumulative ledger):
+candidates 6/60, verification objectives 3/6, observations 3/12, LLM
+calls 2/6 (XSS advisor 32,251 ms + CVE hunt advisor — both
+`openrouter/free`, zero paid), contexts <= 4000 chars, verification
+runtime XSS ~62 s wall within the 600 s cap, CVE job bounded by the
+existing 120 s job timeout (3 attempts -> TERMINAL_FAILED, honestly
+recorded). One CLI invocation at a time, worker concurrency 1, no
+persistent worker, no systemd change.
 
 ## 23. Tests
 
@@ -309,9 +379,26 @@ isolated in its own process — no cross-module shadowing):
 - Regression: campaign 144, hunt 118, intelligence 93 (research 70 +
   agent_intelligence 23), runtime 77, SOC/nav 52 = **484 OK**
 - AEC discover: **2149 OK**
-- **GRAND TOTAL: 2999 tests green, zero failures, zero errors, no
-  hidden baseline failures** (the only baseline issue ever seen was the
-  R53 isolation guard above, caused by this Epic and fixed in it).
+- Cycle 2 (this promotion): NEW `tests/test_finding_cycle2_fixes.py`
+  **9 OK** (stale-snapshot dedupe protection, duplicate cascade incl.
+  illegal-state guard, authorization-id harvest, SOC derivation +
+  gate-case link, same-job batch invariants) — every test RED against
+  the pre-fix code, GREEN after. Full battery re-run, per-suite ISOLATED
+  (cycle-1 protocol): **34/34 suites OK — 859 unit tests green + AEC
+  discover 2149 OK = 3,008 tests green, zero failures, zero errors.**
+  One diagnostic note: a single combined one-process run of all 34
+  suites showed 2 failures (intel case-detail + sidebar api_key shape)
+  — both suites pass isolated AND as a pair, on BOTH this worktree and
+  the untouched production baseline: that is the pre-existing
+  cross-module import shadowing this project already documents
+  ("batch unittest runs hit cross-module backend shadowing — isolated
+  = green"), not a product defect; no fix was needed and no guard was
+  weakened.
+- **GRAND TOTAL (cycle 1): 2999 tests green**; **cycle 2: 3,008 green**
+  (2999 +9 new cycle-2 tests, same suites) — zero failures, zero
+  errors, no hidden baseline failures (the only baseline issue ever
+  seen was the R53 isolation guard above, caused by this Epic and fixed
+  in it).
 Delivery gates (check.sh / diff guard / secret scan) run at commit time —
 their exact output is quoted in section 26.
 
@@ -342,8 +429,16 @@ new pages self-describe honest states (advisory banners, empty states).
    claim-safety build) is untouched and complementary: R53 = offline
    within-research claim safety; this Epic = persisted cross-run
    verification lifecycle. No feature of either duplicates the other.
-7. Runtime CPU/RSS and live advisor latency are recorded in cycle 2 (real
-   production runs), not fabricated here.
+7. Runtime CPU/RSS sampling was not instrumented (none was invented);
+   live advisor latency IS recorded from the real cycle-2 runs (32,251 ms
+   on `openrouter/free`).
+8. One pre-existing production inconsistency — the dead-end TRIAGED case
+   + pending verification left on the already-DUPLICATE
+   `cand-c7d1753d5a22` — is repaired via the sanctioned store transition
+   APIs right after the cycle-2 promotion lands (reason-coded
+   `duplicate_artifact_cascade:` transitions + integrity audit rows; no
+   JSONL file is ever hand-edited). The cycle-2 code fix prevents any new
+   occurrence.
 
 ## 26. Git / delivery
 
@@ -369,20 +464,25 @@ out of the staged set). Delivery flow executed:
 
 ## 27. Exact production commit(s)
 
-- Cycle 1: agent commit **`ca9a6d5`** on `agent/daily-development`
-  (pushed, `dc3376d..ca9a6d5`). Production remains **`f3c1fc1`** until
-  Telegram APPROVE (rule 34); no merge, push to main, or deploy has
-  happened.
-- Cycle 2 (post-approval): promotion merge + service restart + real
-  production validation (sections 19-21) — exact IDs appended then.
+- Cycle 1: agent commit **`ca9a6d5`** (+ report record `5b1eb9a`),
+  promoted to main via **PROMOTION-REQUEST-20260923-0415** (Telegram
+  APPROVE): production main = **`7bbec46`** (was `f3c1fc1`), service
+  restarted and verified (openapi 200, soc 401, findings routes live,
+  dirty 27 untouched). Real validation (sections 19-21) ran on this
+  production commit and found the cycle-2 defects below.
+- Cycle 2: this fix set (dedupe persisted-truth reads, DUPLICATE
+  cascade, authorization-id harvest + SOC derivation, gate-case link,
+  endpoint round-trip) — agent commit + push + gates recorded in
+  section 26; production stays **`7bbec46`** until the cycle-2 Telegram
+  APPROVE (rule 34).
 
 ## 28. Promotion request ID(s)
 
-- Cycle 1: created by `promotion/request.sh` AFTER the delivery gates
-  PASS; the authoritative ID lives in `agent-reports/promotions/` and is
-  quoted verbatim in the Telegram delivery message (rules 33/34 — the
-  agent performs commit/push/promotion and stops for APPROVE).
-- Cycle 2: to be created if the post-promotion validation requires it.
+- Cycle 1: **PROMOTION-REQUEST-20260923-0415** — APPROVE received,
+  promoted (main `7bbec46`), service restarted, verified.
+- Cycle 2: created by `promotion/request.sh` after the delivery gates
+  PASS for this fix set; the exact ID is quoted verbatim in the Telegram
+  delivery message (rules 33/34 — STOP at APPROVE).
 
 ---
 

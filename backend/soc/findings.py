@@ -38,6 +38,43 @@ def _case_state_kind(state: str) -> str:
     return "candidate-case"
 
 
+def _runtime_auth_ids(store: Any, job_id: str) -> list[str]:
+    """Authoritative GRANTED authorization ids for a verification job.
+
+    The hunt_authorization audit rows are the source of truth (round-2
+    production fix: stored objectives written before harvest carry an
+    empty list, so projections derive the real ids — never invent them).
+    """
+    if not job_id:
+        return []
+    try:
+        ids = [str(r.get("auth_id") or "")
+               for r in store.audit_events(limit=5000)
+               if r.get("event") == "hunt_authorization"
+               and str(r.get("job_id") or "") == job_id
+               and r.get("auth_id")]
+        return [x for x in dict.fromkeys(ids) if x]
+    except Exception:  # noqa: BLE001 - honest empty, never invented
+        return []
+
+
+def _runtime_gate_case(store: Any, job_id: str) -> str:
+    """Runtime case id the Evidence Gate created for this job
+    (finding_verification_gate_decided audit row)."""
+    if not job_id:
+        return ""
+    try:
+        rows = store.audit_events(limit=5000)
+    except Exception:  # noqa: BLE001 - honest empty
+        return ""
+    for row in reversed(rows):
+        if (row.get("event") == "finding_verification_gate_decided"
+                and str(row.get("job_id") or "") == job_id
+                and row.get("case_id")):
+            return str(row.get("case_id"))
+    return ""
+
+
 def findings_index() -> dict[str, Any]:
     """Candidates page: every persisted candidate, honest lifecycle."""
     rows: list[dict[str, Any]] = []
@@ -229,6 +266,18 @@ def finding_detail(candidate_id: str) -> dict[str, Any] | None:
                 "gate_reason": ver.gate_reason,
                 "reason": ver.termination_reason, "case_id": "",
                 "decided_at": ver.completed_at or ver.updated_at}
+    if gate:
+        # Round-2 production fix: transition rows carry no case id and the
+        # gate's runtime case lives in the audit — resolve a real link
+        # (runtime gate case first, then the finding case package) so the
+        # detail page never shows an empty gate case for a decided gate.
+        runtime_gate_case = _runtime_gate_case(
+            runtime, ver.job_id if ver else "")
+        gate["case_id"] = (str(gate.get("case_id") or "")
+                           or runtime_gate_case
+                           or _text(cand.case_id))
+        gate["finding_case_id"] = _text(cand.case_id)
+        gate["runtime_case_id"] = runtime_gate_case
 
     # ---- related candidates / duplicates -----------------------------
     related: list[dict[str, Any]] = []
@@ -330,7 +379,10 @@ def finding_detail(candidate_id: str) -> dict[str, Any] | None:
         "duplicate_of": _text(cand.duplicate_of),
         "hunt": hunt_bundle,
         "plan_ids": list(ver.plan_ids or []) if ver else [],
-        "authorization_ids": list(ver.authorization_ids or []) if ver else [],
+        "authorization_ids": (
+            list(ver.authorization_ids or [])
+            or _runtime_auth_ids(runtime, ver.job_id if ver else [])
+        ) if ver else [],
         "observation_ids": list(ver.observation_ids or []) if ver else [],
         "lineage": _bounded(
             [{"stage": _text(row.get("kind") or "") + ":" +
