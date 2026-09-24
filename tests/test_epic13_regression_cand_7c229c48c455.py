@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.dont_write_bytecode = True
 
+from backend.research_agents.verification import actions as ac  # noqa: E402
 from backend.research_agents.verification import chains as ch  # noqa: E402
 from backend.research_agents.verification import engine as en  # noqa: E402
 from backend.research_agents.verification import projection as pj  # noqa: E402
@@ -332,9 +333,21 @@ class TestHonestLimitsAreRecorded(unittest.TestCase):
         self.assertNotIn("ACTIVE_PAYLOAD_EXECUTION", str(document))
         self.assertIn("not a generic scanner", str(document["statements"]))
 
-    def test_dom_analysis_is_recorded_as_unavailable(self):
+    def test_dom_analysis_is_acquirable_only_as_a_served_document_trace(self):
+        """EPIC15 moved this boundary honestly: the DOM stage is now acquirable
+        by a read-only trace of the served document (no browser, no
+        JavaScript execution), so it left UNAVAILABLE_EVIDENCE — while
+        execution and exploitability remain unavailable."""
         run = run_acquisition(RecordingTransport(body_from_request=True))
-        self.assertIn("DOM_SINK_IDENTIFIED", pl.UNAVAILABLE_EVIDENCE)
+        self.assertNotIn("DOM_SINK_IDENTIFIED", pl.UNAVAILABLE_EVIDENCE)
+        self.assertEqual(pl.ACQUISITION_FOR_EVIDENCE["DOM_SINK_IDENTIFIED"],
+                         ac.TRACE_DOM_SINK)
+        self.assertIn("PAYLOAD_EXECUTION", pl.UNAVAILABLE_EVIDENCE)
+        self.assertIn("EXPLOITABILITY_ESTABLISHED", pl.UNAVAILABLE_EVIDENCE)
+
+    def test_browser_execution_is_still_declared_unavailable(self):
+        self.assertIn("PAYLOAD_EXECUTION", pl.UNAVAILABLE_EVIDENCE)
+        self.assertIn("LIVE_BROWSER", pl.UNAVAILABLE_EVIDENCE["PAYLOAD_EXECUTION"])
 
     def test_the_acquisition_layer_never_revives_the_legacy_verifier(self):
         import pathlib

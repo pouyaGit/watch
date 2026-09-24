@@ -64,13 +64,19 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         vulnerability_class="XSS",
         capability=IMPLEMENTED,
         actions=(ac.SEND_MARKER, ac.CHECK_REFLECTION,
-                 ac.CLASSIFY_REFLECTION_CONTEXT),
+                 ac.CLASSIFY_REFLECTION_CONTEXT, ac.TRACE_DOM_SOURCE,
+                 ac.TRACE_DOM_SINK),
         evidence=("REFLECTION_OBSERVED", "OUTPUT_CONTEXT_IDENTIFIED",
-                  "NEGATIVE_EVIDENCE"),
-        not_acquirable=("DOM_SINK_IDENTIFIED", "PAYLOAD_EXECUTION",
-                        "EXPLOITABILITY_ESTABLISHED", "IMPACT_ESTABLISHED"),
-        limitation=(_LIVE_GATE + "; payload execution is never attempted: "
-                    "reflection is evidence of reflection, not of execution")),
+                  "DOM_SINK_IDENTIFIED", "NEGATIVE_EVIDENCE"),
+        not_acquirable=("PAYLOAD_EXECUTION", "EXPLOITABILITY_ESTABLISHED",
+                        "IMPACT_ESTABLISHED"),
+        limitation=(_LIVE_GATE + "; DOM source→sink analysis is a read-only "
+                    "trace of the served document (EPIC15: no browser is "
+                    "launched, no JavaScript runs, so it establishes a "
+                    "source→sink flow in the served material and never that "
+                    "the sink executed); payload execution is never "
+                    "attempted: reflection is evidence of reflection, not of "
+                    "execution")),
     CapabilityContract(
         vulnerability_class="CORS",
         capability=NOT_IMPLEMENTED,
