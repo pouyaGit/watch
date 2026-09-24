@@ -731,12 +731,36 @@ def _integrity_section(detail: dict[str, Any]) -> dict[str, Any]:
     """
     raw = detail.get("integrity") if isinstance(detail.get("integrity"),
                                                 dict) else {}
-    if not raw:
+    # §21: only a RECORDED contract may present an authoritative state.
+    # A synthesized or legacy block (no contract row persisted) is not a
+    # verdict: it is reported with its historical states and the
+    # assessment re-projected from the persisted evidence.  The explicit
+    # ``recorded`` flag wins; a block that never carried the flag is
+    # judged by whether it actually carries contract content.
+    if "recorded" in raw:
+        recorded = bool(raw.get("recorded"))
+    else:
+        # contract CONTENT is what counts: a bare state label (or a bare
+        # ``confirmed`` flag) is exactly the unsupported verdict this
+        # section must not present
+        recorded = bool(raw.get("claim_evidence_matrix")
+                        or raw.get("gate_reason")
+                        or raw.get("confirmation_status")
+                        or raw.get("evidence_basis")
+                        or raw.get("stage_reached"))
+    if not raw or not recorded:
         return {
             "available": False,
+            "recorded": False,
             "note": ("No claim/evidence contract is recorded for this "
                      "candidate (pre-EPIC11 record). No verdict is implied "
                      "by its absence."),
+            "persisted_state": (raw.get("persisted_state")
+                                if isinstance(raw.get("persisted_state"),
+                                              dict) else {}),
+            "projected": (raw.get("projected")
+                          if isinstance(raw.get("projected"), dict) else {}),
+            "source": _text(raw.get("source")),
         }
     matrix = []
     for row in (raw.get("claim_evidence_matrix") or []):
@@ -764,7 +788,7 @@ def _integrity_section(detail: dict[str, Any]) -> dict[str, Any]:
                                                 dict) else {}
     return {
         "available": True,
-        "recorded": bool(raw.get("recorded")),
+        "recorded": True,
         "authoritative_state": _text(raw.get("authoritative_state"))
         or NOT_RECORDED,
         "confirmed": bool(raw.get("confirmed")),

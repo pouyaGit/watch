@@ -184,7 +184,26 @@
       {% endif %}
     </div>
     {% if not ws.integrity.available %}
-      <p class="text-slate-400 text-xs">{{ ws.integrity.note }}</p>
+      <p class="text-amber-200 text-xs">{{ ws.integrity.note }}</p>
+      {% if ws.integrity.persisted_state %}
+      <p class="text-slate-500 text-xs mt-2">Persisted historical state
+        (recorded before the contract; not an integrity verdict):
+        candidate <span class="mono">{{ ws.integrity.persisted_state.candidate }}</span>
+        &middot; verification <span class="mono">{{ ws.integrity.persisted_state.verification }}</span>
+        &middot; case <span class="mono">{{ ws.integrity.persisted_state.case }}</span></p>
+      {% endif %}
+      {% if ws.integrity.projected %}
+      <p class="text-slate-300 text-xs mt-2">Current assessment, re-derived
+        from the persisted evidence (nothing stored, nothing inferred):
+        <span class="badge-sm">{{ ws.integrity.projected.authoritative_state }}</span>
+        gate reason <span class="mono">{{ ws.integrity.projected.gate_reason }}</span>
+        &middot; stage reached
+        <span class="mono">{{ ws.integrity.projected.stage_reached }}</span></p>
+      {% if ws.integrity.projected.missing_evidence %}
+      <p class="text-slate-500 text-xs mt-1">still missing:
+        <span class="mono">{{ ws.integrity.projected.missing_evidence|join(', ') }}</span></p>
+      {% endif %}
+      {% endif %}
     {% else %}
     <p class="text-slate-400 text-xs mb-2">{{ ws.integrity.source }} &middot;
       stage reached: <span class="mono">{{ ws.integrity.stage_label }}</span>

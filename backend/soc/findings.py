@@ -35,7 +35,8 @@ def _linked(cand: Any) -> list[str]:
 
 
 def _integrity_block(cand: Any, case: Any, advisor: dict[str, Any],
-                     ver: Any) -> dict[str, Any]:
+                     ver: Any, evidence: list[dict[str, Any]] | None = None,
+                     ) -> dict[str, Any]:
     """EPIC11 analyst view of the claim/evidence contract (read-only).
 
     Shows the authoritative state, the explicit gate reason, the exact
@@ -64,23 +65,68 @@ def _integrity_block(cand: Any, case: Any, advisor: dict[str, Any],
         integrity.get("evidence_boundary"), dict) else {}
     advisory_state = _text(advisor.get("advisory_state")) or _text(
         advisor.get("state_in_advisory_text"))
-    authoritative = _text(integrity.get("authoritative_state")) or \
-        _text(getattr(cand, "authoritative_state", "")) or \
-        _text(cand.lifecycle_state)
-    conflict = bool(advisory_state and authoritative
+    # §7/§21: without a persisted contract there is NO authoritative
+    # state.  A pre-EPIC11 record's lifecycle/verification/case rows are
+    # historical data, never an integrity verdict: they are published
+    # separately as persisted_state, and the current assessment is
+    # re-derived from the persisted evidence instead of being inherited.
+    persisted_state = {
+        "candidate": _text(getattr(cand, "lifecycle_state", ""))
+        or NOT_RECORDED,
+        "verification": _text(getattr(ver, "state", "")) or NOT_RECORDED,
+        "case": _text(getattr(case, "state", "")) or NOT_RECORDED,
+    }
+    if recorded:
+        authoritative = _text(integrity.get("authoritative_state")) or \
+            _text(getattr(cand, "authoritative_state", "")) or \
+            _text(cand.lifecycle_state)
+    else:
+        authoritative = NOT_RECORDED
+    conflict = bool(advisory_state and authoritative != NOT_RECORDED
                     and advisory_state.upper() != authoritative.upper())
+    projected: dict[str, Any] = {}
+    if not recorded and evidence:
+        try:
+            from backend.research_agents.finding.integrity import (
+                projection as _projection,
+            )
+            _proj = _projection.project(
+                candidate={
+                    "candidate_id": _text(getattr(cand, "candidate_id", "")),
+                    "vulnerability_class": _text(
+                        getattr(cand, "vulnerability_class", "")),
+                    "lifecycle_state": persisted_state["candidate"],
+                    "scope_ref": _text(getattr(cand, "scope_ref", "")),
+                },
+                verification=ver,
+                evidence_rows=list(evidence),
+            )
+            projected = {
+                "authoritative_state": _text(_proj.authoritative_state),
+                "gate_reason": _text(_proj.gate_reason),
+                "stage_reached": _proj.stage_reached,
+                "missing_evidence": [str(x) for x in
+                                     (_proj.missing_evidence or [])][:12],
+                "limitations": [str(x) for x in
+                                (_proj.limitations or [])][:6],
+            }
+        except Exception:
+            projected = {}
     return {
         "recorded": recorded,
         "authoritative_state": authoritative,
+        "persisted_state": persisted_state,
+        "projected": projected,
         "confirmation_status": _text(integrity.get("confirmation_status")),
-        "confirmed": authoritative == "VERIFIED",
+        "confirmed": bool(recorded and authoritative == "VERIFIED"),
         "gate_reason": _text(integrity.get("gate_reason")),
         "stage_reached": integrity.get("stage_reached"),
         "stage_label": _text(integrity.get("stage_label")),
-        "missing_evidence_types": [
+        "missing_evidence_types": ([
             _text(x) for x in (integrity.get("missing_evidence_types")
                                or getattr(cand, "missing_evidence_contract",
-                                          []) or [])][:12],
+                                          []) or [])][:12]
+            if recorded else []),
         "missing_evidence_reasons": [
             _text(x) for x in (integrity.get("missing_evidence") or [])][:8],
         "malformed_evidence": [
@@ -113,7 +159,9 @@ def _integrity_block(cand: Any, case: Any, advisor: dict[str, Any],
         "verification_gate_reason": _text(
             getattr(ver, "gate_reason", "")) if ver is not None else "",
         "source": ("persisted claim-integrity record + report validation "
-                   "(LLM advisory excluded)"),
+                   "(LLM advisory excluded)") if recorded else
+        ("no claim/evidence contract recorded (pre-EPIC11 record); current "
+         "assessment projected from the persisted evidence"),
     }
 
 
@@ -514,7 +562,7 @@ def finding_detail(candidate_id: str) -> dict[str, Any] | None:
         # straight from the persisted rows — never re-derived, never
         # influenced by advisory text.  Absent for pre-EPIC11 records,
         # which is itself shown honestly as "not recorded".
-        "integrity": _integrity_block(cand, case, advisor, ver),
+        "integrity": _integrity_block(cand, case, advisor, ver, evidence),
     }
     # ONE authoritative analyst workspace (candidate/finding detail
     # UX + data-contract correction).  Header/current state, grouped
