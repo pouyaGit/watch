@@ -468,16 +468,45 @@ def evaluate_chain(
             decision, authorization, unique, evidence_confirmed_authorization),
         chain_terminated=terminated,
         termination_reason=termination_reason,
-        divergence=tuple(_divergence(decision.authoritative_state, stages,
-                                     len(inadmissible))),
+        divergence=tuple(_divergence(
+            decision.authoritative_state, stages, len(inadmissible),
+            _row_type_mismatches(rows))),
         inadmissible_row_count=len(inadmissible),
     )
 
 
-def _divergence(verdict: str, stages: Iterable[StageState],
-                inadmissible_count: int) -> list[str]:
-    """Explain any gap between the authoritative verdict and the chain view."""
+def _row_type_mismatches(rows: Iterable[Mapping[str, Any]]) -> list[str]:
+    """Rows whose declared evidence type disagrees with their own signal.
+
+    The EPIC11 gate resolves a row's class from its signal, but honours a
+    row-supplied ``evidence_type`` when that type is inside the closed set.
+    A row whose signal says one thing and whose type says another is therefore
+    *admissible* to the gate.  EPIC13 reports every such row as a divergence:
+    the chain never presents it as a clean piece of evidence, and a verdict
+    that leans on one is visibly inconsistent instead of silently trusted.
+
+    This detects; it does not decide.  The gate remains authoritative.
+    """
     out: list[str] = []
+    for row in rows or []:
+        try:
+            declared = str(row.get("evidence_type") or "").strip().upper()
+            signal = str(row.get("signal") or "").strip()
+        except AttributeError:  # not a mapping at all
+            continue
+        if not declared or not signal:
+            continue
+        mapped = str(tx.SIGNAL_TO_TYPE.get(signal) or "").strip().upper()
+        if mapped and mapped != declared:
+            out.append(f"evidence_type_mismatch:{signal}->{declared}")
+    return list(dict.fromkeys(out))
+
+
+def _divergence(verdict: str, stages: Iterable[StageState],
+                inadmissible_count: int,
+                mismatches: Iterable[str] = ()) -> list[str]:
+    """Explain any gap between the authoritative verdict and the chain view."""
+    out: list[str] = list(mismatches)
     if verdict != ig.VERIFIED:
         return out
     unmet = [s.key for s in stages
@@ -516,6 +545,7 @@ def chain_matrix(state: ChainState) -> list[dict[str, Any]]:
 
 
 __all__ = [
+    "_row_type_mismatches",
     "CHAIN_ENGINE_RULE_VERSION", "VERDICT_SOURCE", "ChainState", "StageState",
     "chain_matrix", "evaluate_chain", "negative_targets_stage", "stage_tokens",
 ]

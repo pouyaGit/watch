@@ -25,6 +25,7 @@ from typing import Any, Iterator
 
 from backend.research_agents.finding.store import default_base_dir
 
+ACQUISITIONS_FILE = "verification_acquisitions.jsonl"
 ACTIONS_FILE = "verification_actions.jsonl"
 OBSERVATIONS_FILE = "verification_chain_observations.jsonl"
 LOOPS_FILE = "verification_loops.jsonl"
@@ -218,6 +219,43 @@ class VerificationActionStore:
         return rows[-1] if rows else None
 
     # -- budget ledger -----------------------------------------------------
+
+    # ------------------------------------------------- EPIC13 acquisitions
+
+    def record_acquisition(self, row: Any) -> dict[str, Any]:
+        """Append one acquisition run (EPIC13 §26: the data must exist).
+
+        The row is the acquisition run's own dict; it carries no response body
+        and no header value, only detection summaries and a bounded excerpt.
+        """
+        payload = (row.to_dict() if hasattr(row, "to_dict") else dict(row))
+        payload.setdefault("rule_version", STORE_RULE_VERSION)
+        if not str(payload.get("candidate_id") or "").strip():
+            raise VerificationStoreError("candidate_id is required")
+        with self._locked():
+            self._append(ACQUISITIONS_FILE, payload)
+        return payload
+
+    def list_acquisitions(self, *, candidate_id: str = "",
+                          objective_id: str = "",
+                          action_id: str = "") -> list[dict[str, Any]]:
+        rows = list(self._lines(ACQUISITIONS_FILE))
+        if candidate_id:
+            rows = [r for r in rows if r.get("candidate_id") == candidate_id]
+        if objective_id:
+            rows = [r for r in rows if r.get("objective_id") == objective_id]
+        if action_id:
+            rows = [r for r in rows
+                    if str(r.get("action_id") or "") == action_id]
+        return rows
+
+    def acquisitions_for_candidate(self, candidate_id: str
+                                   ) -> list[dict[str, Any]]:
+        return self.list_acquisitions(candidate_id=str(candidate_id or ""))
+
+    def latest_acquisition(self, candidate_id: str) -> dict[str, Any] | None:
+        rows = self.acquisitions_for_candidate(candidate_id)
+        return rows[-1] if rows else None
 
     def record_budget(self, *, resource: str, delta: int, before: int,
                       after: int, reason: str = "",

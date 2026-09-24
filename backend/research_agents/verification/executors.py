@@ -41,6 +41,40 @@ from backend.research_agents.verification import actions as ac
 from backend.research_agents.verification import chains as ch
 from backend.research_agents.verification import observations as ob
 
+# EPIC13: the deterministic reflection detector and context classifier are the
+# single implementation of those two decisions.  They are imported lazily by
+# the helpers below so that importing this module never depends on the
+# acquisition package's import order.
+def _detect(body: Any, marker: str) -> Any:
+    """Run the EPIC13 reflection detector over a recorded body (bounded)."""
+    from backend.research_agents.verification.acquisition import detector as _dt
+    return _dt.detect(body, marker)
+
+
+def _conclusive_absence(detection: Any) -> bool:
+    """True only when the marker is absent AND the body was not truncated."""
+    from backend.research_agents.verification.acquisition import detector as _dt
+    return (getattr(detection, "status", "") == _dt.ABSENT
+            and bool(getattr(detection, "conclusive", False)))
+
+
+def _extended_context_class(body: str, marker: str) -> str:
+    """The context classes EPIC12's structural scan cannot express.
+
+    Returns ``""`` for every location EPIC12 already classifies, so its
+    existing answers (and the tests that pin them) are unchanged; the classes
+    added by EPIC13 (STYLE / JSON / COMMENT / UNKNOWN) are returned with the
+    matching ``CONTEXT_*`` constant.
+    """
+    from backend.research_agents.verification.acquisition import context as _cx
+    klass = _cx.classify(str(body or ""), str(marker or ""))
+    return {
+        _cx.STYLE: CONTEXT_STYLE,
+        _cx.JSON_CONTEXT: CONTEXT_JSON,
+        _cx.COMMENT: CONTEXT_COMMENT,
+        _cx.UNKNOWN: CONTEXT_UNKNOWN,
+    }.get(klass, "")
+
 EXECUTOR_RULE_VERSION = "epic12-verification-executor-1"
 
 REASON_TRANSPORT_UNAVAILABLE = "transport_unavailable"
@@ -63,11 +97,16 @@ CONTEXT_KEYS: tuple[str, ...] = (
     "marker",          # explicit marker override (tests/fixtures)
 )
 
-#: Context classes the classifier can produce (closed vocabulary).
+#: Context classes the classifier can produce (closed vocabulary, EPIC13 §8).
 CONTEXT_HTML_TEXT = "html_text"
 CONTEXT_HTML_ATTRIBUTE = "html_attribute"
 CONTEXT_JAVASCRIPT = "javascript"
 CONTEXT_URL = "url"
+# EPIC13 §8 additions: locations EPIC12's structural scan cannot express.
+CONTEXT_STYLE = "style"
+CONTEXT_JSON = "json"
+CONTEXT_COMMENT = "comment"
+CONTEXT_UNKNOWN = "unknown"
 CONTEXT_DOM = "dom"
 
 CONTEXT_CLASSES: tuple[str, ...] = (
@@ -165,6 +204,13 @@ def classify_context(body: str, marker: str) -> tuple[str, bool, str]:
         if html.escape(marker) in text:
             return "", False, "marker_encoded"
         return "", False, "marker_not_present"
+    # EPIC13 §8: locations EPIC12's scan cannot express are classified by the
+    # EPIC13 classifier (which itself reuses the platform's own location
+    # classifier).  Everything EPIC12 already answers is untouched.
+    extended = _extended_context_class(text, marker)
+    if extended:
+        return extended, False, f"epic13:{extended.lower()}"
+
     index = text.find(marker)
     head = text[:index]
 
@@ -352,8 +398,24 @@ class ReadOnlyEvidenceExecutor(BaseExecutor):
                                 "material": "absent"}),),
                 result={"marker": marker, "material": "absent"})
         text = str(body)
-        if marker and marker in text:
-            index = text.find(marker)
+        # EPIC13 §7: the deterministic detector replaces the naive substring
+        # check, so the chain learns WHERE the marker landed, HOW MANY times,
+        # and whether the body was truncated (a truncated absence is not a
+        # negative result).
+        detection = _detect(text, marker)
+        provenance = {"executor": self.name, "marker": marker,
+                      "material": "recorded_response",
+                      "detector_version": detection.detector_version,
+                      "status": detection.status,
+                      "occurrence_count": detection.occurrence_count,
+                      "offsets": list(detection.offsets),
+                      "encoding": detection.encoding,
+                      "transformation": detection.transformation,
+                      "conclusive": detection.conclusive,
+                      "truncated": detection.truncated,
+                      "bytes_checked": detection.bytes_checked,
+                      "context": detection.context}
+        if detection.reflected:
             return ExecutionResult(
                 ok=True, executor=self.name,
                 observations=(ob.positive(
@@ -363,28 +425,50 @@ class ReadOnlyEvidenceExecutor(BaseExecutor):
                     candidate_id=action.candidate_id,
                     objective_id=action.objective_id,
                     scope_ref=action.scope_ref,
-                    observed=f"marker {marker} present in the recorded response",
+                    observed=(f"marker {marker} present in the recorded "
+                              f"response ({detection.status}, "
+                              f"{detection.occurrence_count} occurrence(s))"),
                     what_happened="controlled marker found in the response body",
                     where=common["where"],
                     under_input=str(action.inputs.get("parameter") or ""),
                     under_request=common["request_ref"],
                     marker=marker, request_ref=common["request_ref"],
                     response_ref=common["response_ref"],
-                    context=f"offset:{index}",
-                    job_id=common["job_id"],
-                    provenance={"executor": self.name, "marker": marker,
-                                "material": "recorded_response",
-                                "offset": index}),),
-                result={"marker": marker, "reflected": True, "offset": index,
+                    context=detection.context,
+                    job_id=common["job_id"], provenance=provenance),),
+                result={"marker": marker, "reflected": True,
+                        "occurrence_count": detection.occurrence_count,
+                        "context": detection.context,
                         "material": "recorded_response"})
+        if _conclusive_absence(detection):
+            return ExecutionResult(
+                ok=True, executor=self.name,
+                observations=(ob.negative(
+                    signal="reflection_not_observed",
+                    action_id=action.action_id, candidate_id=action.candidate_id,
+                    objective_id=action.objective_id, scope_ref=action.scope_ref,
+                    not_observed=f"marker {marker} was not present in the "
+                                 f"recorded response ({detection.bytes_checked} "
+                                 f"bytes checked)",
+                    what_happened="controlled marker checked against the "
+                                  "recorded response body",
+                    where=common["where"], under_input=str(
+                        action.inputs.get("parameter") or ""),
+                    under_request=common["request_ref"],
+                    request_ref=common["request_ref"],
+                    response_ref=common["response_ref"], job_id=common["job_id"],
+                    provenance=provenance),),
+                result={"marker": marker, "reflected": False,
+                        "material": "recorded_response"})
+        # inconclusive (e.g. a truncated body): never negative evidence
         return ExecutionResult(
             ok=True, executor=self.name,
-            observations=(ob.negative(
-                signal="reflection_not_observed",
+            observations=(ob.not_tested(
+                signal="reflection_not_tested",
                 action_id=action.action_id, candidate_id=action.candidate_id,
                 objective_id=action.objective_id, scope_ref=action.scope_ref,
-                not_observed=f"marker {marker} was not present in the recorded "
-                             f"response ({len(text)} bytes checked)",
+                not_observed=("the reflection check was inconclusive "
+                              f"({detection.reason})"),
                 what_happened="controlled marker checked against the recorded "
                               "response body",
                 where=common["where"], under_input=str(
@@ -392,11 +476,9 @@ class ReadOnlyEvidenceExecutor(BaseExecutor):
                 under_request=common["request_ref"],
                 request_ref=common["request_ref"],
                 response_ref=common["response_ref"], job_id=common["job_id"],
-                provenance={"executor": self.name, "marker": marker,
-                            "material": "recorded_response",
-                            "bytes_checked": len(text)}),),
+                provenance=provenance),),
             result={"marker": marker, "reflected": False,
-                    "material": "recorded_response"})
+                    "conclusive": False, "material": "recorded_response"})
 
     def _classify_context(self, action: Any, context: dict[str, Any],
                           common: dict[str, Any]) -> ExecutionResult:
