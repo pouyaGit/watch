@@ -33,7 +33,18 @@ class TestChainVocabulary(unittest.TestCase):
         self.assertTrue(ch.CHAIN_RULE_VERSION.startswith("epic12-"))
 
     def test_only_xss_is_fully_implemented(self):
-        self.assertEqual(ch.implemented_classes(), ("XSS",))
+        """EPIC16 moved this boundary honestly: CORS / OPEN_REDIRECT / SSRF
+        have their read-only classification stages implemented (LIMITED), so
+        they are verifiable here — while XSS is the only FULL chain and the
+        remaining classes stay NOT_IMPLEMENTED."""
+        self.assertEqual(ch.implemented_classes(),
+                         ("CORS", "OPEN_REDIRECT", "SSRF", "XSS"))
+        self.assertEqual(ch.capability_for("XSS"), ch.CAPABILITY_FULL)
+        for cls in ("CORS", "OPEN_REDIRECT", "SSRF"):
+            self.assertEqual(ch.capability_for(cls), ch.CAPABILITY_LIMITED)
+        for cls in ("SQLI", "JWT", "OAUTH"):
+            self.assertEqual(ch.capability_for(cls),
+                             ch.CAPABILITY_NOT_IMPLEMENTED)
 
     def test_reference_chains_are_contract_only(self):
         for chain in ch.REFERENCE_CHAINS:
@@ -208,11 +219,24 @@ class TestReferenceChainShallowConfirmation(unittest.TestCase):
         blob = " ".join(ch.SSRF_CHAIN.limitations).lower()
         self.assertIn("a url-shaped parameter is not ssrf", blob)
 
-    def test_every_reference_stage_is_required_for_confirmation(self):
-        for chain in ch.REFERENCE_CHAINS:
-            for stage in chain.ordered():
+    def test_every_non_conditional_stage_is_required_for_confirmation(self):
+        """A chain that can confirm requires its stages — except the stages it
+        explicitly marks conditional (the XSS DOM sink lane is conditional by
+        design)."""
+        for chain in list(ch.REFERENCE_CHAINS) + [ch.XSS_CHAIN]:
+            for stage in chain.stages:
+                if getattr(stage, "conditional", False):
+                    continue
+                if not ch._has_confirmation_claim(chain):
+                    self.assertFalse(stage.required_for_confirmation,
+                                     f"{chain.vulnerability_class}:{stage.key}")
+                    continue
                 self.assertTrue(stage.required_for_confirmation,
                                 f"{chain.vulnerability_class}:{stage.key}")
+
+    def test_the_research_chain_declares_no_confirmation_claim(self):
+        self.assertFalse(ch._has_confirmation_claim(ch.CVE_RESEARCH_CHAIN))
+        self.assertEqual(ch.CVE_RESEARCH_CHAIN.confirmation_requires, ())
 
     def test_reference_chains_use_only_epic11_evidence_types(self):
         for chain in ch.REFERENCE_CHAINS:

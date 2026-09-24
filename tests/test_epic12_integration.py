@@ -93,7 +93,7 @@ class TestHookBehaviour(unittest.TestCase):
     def test_class_without_a_chain_is_reported_not_run(self):
         store = make_verification_store()
         result = hook(verification_store=store)(
-            candidate=FakeCandidate(vulnerability_class="IDOR"),
+            candidate=FakeCandidate(vulnerability_class="SQLI"),
             verification=FakeVerification(), job=FakeJob(),
             rows=inventory_rows(3), authorization=authorization())
         self.assertEqual(result.outcome["termination"], lp.LOOP_BLOCKED)

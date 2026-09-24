@@ -117,7 +117,7 @@ class TestProjectionShape(unittest.TestCase):
                          ["REFLECTION_OBSERVED"])
 
     def test_projection_of_a_class_without_a_chain(self):
-        blob = pj.project_chain(state(inventory_rows(3), cls="IDOR"))
+        blob = pj.project_chain(state(inventory_rows(3), cls="SQLI"))
         self.assertEqual(blob["capability"], "NOT_IMPLEMENTED")
         self.assertEqual(blob["stages"], [])
 

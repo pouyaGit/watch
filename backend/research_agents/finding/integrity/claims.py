@@ -151,6 +151,12 @@ class ClaimEvaluation:
     excluded_evidence: list[dict[str, Any]] = field(default_factory=list)
     #: classifier version the authoritative types were derived with
     classifier_version: str = tx.AUTHORITATIVE_CLASSIFIER_VERSION
+    # ---- EPIC16 cross-class quarantine (§21/§23) --------------------------
+    #: rows whose signal belongs to another vulnerability class; they never
+    #: contribute to this class's claim and stay auditable
+    class_quarantine: list[dict[str, Any]] = field(default_factory=list)
+    #: the class this evaluation was performed for
+    evaluated_class: str = ""
 
     @property
     def confirmed(self) -> bool:
@@ -203,6 +209,8 @@ class ClaimEvaluation:
             "rule_version": self.rule_version,
             "evidence_mismatches": list(self.evidence_mismatches),
             "excluded_evidence": list(self.excluded_evidence),
+            "class_quarantine": list(self.class_quarantine),
+            "evaluated_class": self.evaluated_class,
             "classifier_version": self.classifier_version,
             "advisory_only_fields_used": [],
         }
@@ -344,13 +352,39 @@ def evaluate_contract(
     duplicates = len(items) - len(unique)
     auth = authorization or ct.AuthorizationContext()
 
+    # ---- EPIC16 §21/§23: cross-class evidence quarantine -----------------
+    # A row whose signal belongs to another vulnerability class may never
+    # contribute to this class's claim.  It is quarantined (not merged, not
+    # silently dropped) so the divergence is auditable, exactly as the
+    # EPIC14 mismatch rule does for declared-vs-authoritative types.
+    contract_class = tx.normalize_class(contract.vulnerability_class)
+    class_quarantine: list[dict[str, Any]] = []
+    in_class: list[tx.EvidenceItem] = []
+    for item in unique:
+        scope = tx.class_scope(item, contract_class)
+        if scope == tx.CLASS_SCOPE_FOREIGN:
+            class_quarantine.append({
+                "evidence_id": item.evidence_id,
+                "signal": item.raw_signal,
+                "signal_class": item.signal_class,
+                "evaluated_class": contract_class,
+                "kind": "cross_class_evidence",
+                "reason": (f"signal {item.raw_signal} belongs to "
+                           f"{item.signal_class}, not {contract_class}"),
+            })
+            continue
+        in_class.append(item)
+    unique = in_class
+    unique_ids = {i.evidence_id for i in unique}
+    negatives = [i for i in items if i.is_negative and
+                 (not i.evidence_id or i.evidence_id in unique_ids)]
+
     auth_type_items = [i for i in unique
                        if i.evidence_type == tx.AUTHORIZATION_CONFIRMED]
     authorization_satisfied = bool(
         auth.confirmed or auth_type_items or evidence_confirmed_authorization
         or auth.present)
 
-    negatives = [i for i in items if i.is_negative]
     results: list[ClaimResult] = []
     missing_reasons: list[str] = []
     unsupported: list[str] = []
@@ -511,6 +545,8 @@ def evaluate_contract(
         limitations=limitations,
         evidence_mismatches=mismatches[:40],
         excluded_evidence=excluded_evidence[:40],
+        class_quarantine=class_quarantine[:40],
+        evaluated_class=contract_class,
     )
 
 

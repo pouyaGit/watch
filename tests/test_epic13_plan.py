@@ -255,8 +255,14 @@ class TestCapabilityMatrix(unittest.TestCase):
     def test_xss_is_implemented(self):
         self.assertEqual(cp.state_for("XSS"), cp.IMPLEMENTED)
 
-    def test_ssrf_is_not_implemented(self):
-        self.assertEqual(cp.state_for("SSRF"), cp.NOT_IMPLEMENTED)
+    def test_ssrf_active_verification_is_still_unavailable(self):
+        """EPIC16 moved SSRF to LIMITED: destination policy evaluation is
+        implemented, but establishing a server-side request still needs a
+        callback capability this runtime does not have."""
+        self.assertEqual(cp.state_for("SSRF"), cp.LIMITED)
+        contract = cp.contract_for("SSRF")
+        self.assertIn("EXPLOITABILITY_ESTABLISHED", contract.not_acquirable)
+        self.assertIn("PAYLOAD_EXECUTION", contract.not_acquirable)
 
     def test_every_state_is_in_the_declared_vocabulary(self):
         for row in cp.capability_matrix():

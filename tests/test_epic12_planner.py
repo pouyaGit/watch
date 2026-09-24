@@ -117,7 +117,7 @@ class TestTerminalStates(unittest.TestCase):
                          "required_stage_contradicted")
 
     def test_class_without_a_chain_terminates_honestly(self):
-        decision = plan(state_for(inventory_rows(3), cls="IDOR"))
+        decision = plan(state_for(inventory_rows(3), cls="SQLI"))
         self.assertTrue(decision.terminal)
         self.assertEqual(decision.termination_reason,
                          pl.REASON_CHAIN_NOT_IMPLEMENTED)
