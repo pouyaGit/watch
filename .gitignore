@@ -101,3 +101,8 @@ logs/
 
 # DNS brute force runtime workspace
 dns-bruteforce/work/
+
+# Incremental DNS resolution attempt state (EPIC10). Runtime state derived from
+# the Subdomains/LiveSubdomains collections: hostnames and retry counters only,
+# never committed and never an input to anything but the next DNS run.
+ai_data/dns/

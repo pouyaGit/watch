@@ -18,6 +18,7 @@ Offline: subprocess.run is mocked, no DNS, no MongoDB, no network.
 """
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -26,6 +27,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import utils.common as common  # noqa: E402
+from tests.epic10_fixtures import (  # noqa: E402
+    install_offline_selection,
+    restore_offline_selection,
+)
 from utils.common import (  # noqa: E402
     NS_COMMAND_TIMEOUT,
     NS_DNSX_CHUNK_SIZE,
@@ -63,6 +68,16 @@ class ChunkingTestCase(unittest.TestCase):
 
     def setUp(self):
         self.calls = []
+        # EPIC10: run_command_in_zsh_ns now passes every bulk dnsx list through
+        # the incremental selector first. This suite pins the chunking contract,
+        # so it installs the offline "everything is NEW" provider (no DB, no
+        # state file); selection itself is covered by tests/test_epic10_*.py.
+        self._tmp = tempfile.TemporaryDirectory(prefix="ns-chunk-")
+        self._previous_env = install_offline_selection(self._tmp.name)
+
+    def tearDown(self):
+        restore_offline_selection(self._previous_env)
+        self._tmp.cleanup()
 
     def _run(self, command, side_effect=None):
         def fake_run(cmd, **kwargs):
