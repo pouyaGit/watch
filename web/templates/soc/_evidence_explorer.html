@@ -1,0 +1,197 @@
+{# EPIC17 — Analyst Evidence Explorer (PROJECTION ONLY).
+
+   Renders exactly one read-model: ``explorer`` (see
+   backend/soc/evidence_explorer.py).  This partial computes NOTHING:
+   the state banner is the authoritative chain badge, the chain steps
+   are the authoritative projection rows, and every gap is printed
+   instead of hidden.  It cannot show VERIFIED unless the projection
+   itself says VERIFIED, and it always shows:
+
+     * which stages were observed and which were not proven;
+     * observation vs proof;
+     * why the current state is what it is (deterministic text);
+     * raw vs unique evidence counts;
+     * the authorization status;
+     * whether the finding is reportable (interpretation, not a verdict).
+
+   Data contract: ``explorer`` (dict) with ``available``, ``banner``,
+   ``chain``, ``integrity``, ``deep``, ``capability_cells``,
+   ``observation_vs_proof``, ``evidence_summary``, ``why``, ``decision``,
+   ``sources``, ``strength_digest``. #}
+{% macro step_glyph(state) -%}
+{%- if state == 'SATISFIED' -%}&#10003;
+{%- elif state == 'NOT_PROVEN' -%}?
+{%- elif state == 'UNAVAILABLE' -%}&ndash;
+{%- elif state == 'PENDING' -%}&middot;
+{%- else -%}&ndash;{%- endif -%}
+{% endmacro %}
+{% macro step_class(state) -%}
+{%- if state == 'SATISFIED' -%}text-emerald-300
+{%- elif state == 'NOT_PROVEN' -%}text-amber-200
+{%- elif state == 'UNAVAILABLE' -%}text-slate-500
+{%- else -%}text-slate-400{%- endif -%}
+{% endmacro %}
+
+<section class="panel p-4 mb-4" id="evidence-explorer">
+  <div class="panel-head">
+    <h2>Analyst Evidence Explorer</h2>
+    {% if explorer is defined and explorer and explorer.available %}
+    <span class="badge {% if explorer.banner.state == 'VERIFIED' %}badge-ok{% elif explorer.banner.state in ('BLOCKED', 'NOT_CONFIRMED', 'INCONSISTENT') %}badge-bad{% else %}badge-neutral{% endif %}"
+          title="{{ explorer.banner.reason }}">{{ explorer.banner.label or explorer.banner.state }}</span>
+    {% endif %}
+  </div>
+
+  {% if not (explorer is defined and explorer and explorer.available) %}
+  <p class="text-amber-200 text-sm">No verification projection is available
+    for this record, so no state is implied.</p>
+  <p class="text-slate-500 text-xs mono">{{ explorer.reason if explorer is defined and explorer else 'no explorer payload' }}</p>
+  <p class="text-slate-400 text-xs">{{ explorer.why[0] if explorer is defined and explorer and explorer.why else '' }}</p>
+  {% else %}
+
+  {# ------------------------------------------------ state + provenance #}
+  <p class="text-slate-400 text-xs mb-2">
+    authoritative verdict <span class="mono">{{ explorer.chain.verdict or 'none' }}</span>
+    &middot; source <span class="mono">{{ explorer.chain.verdict_source or 'none' }}</span>
+    &middot; chain <span class="mono">{{ explorer.chain.rule_version }}</span>
+    &middot; capability <span class="mono">{{ explorer.chain.capability or 'not declared' }}</span>
+    &middot; stages <span class="mono">{{ explorer.chain.satisfied_count }}/{{ explorer.chain.stage_count }}</span>
+  </p>
+
+  {# --------------------------------------------------- 1. chain steps #}
+  <h3 class="card-title mt-2">Verification chain</h3>
+  <ul class="text-sm mb-3">
+    {% for step in explorer.chain.steps %}
+    <li class="mb-1">
+      <span class="mono {{ step_class(step.state) }}">{{ step_glyph(step.state) }}</span>
+      <span class="mono {{ step_class(step.state) }}">{{ step.stage }}</span>
+      <span class="text-slate-500 text-xs">{{ step.label }}</span>
+      {% if step.required_for_confirmation %}<span class="badge-sm">required for confirmation</span>{% endif %}
+      {% if step.conditional %}<span class="badge-sm">conditional</span>{% endif %}
+      <span class="text-slate-400 text-xs">
+        {% if step.state == 'SATISFIED' %}observed ({{ step.evidence_count }} evidence item(s))
+        {% elif step.missing %}not proven &mdash; missing {{ step.missing|join(', ') }}
+        {% else %}{{ step.state|lower }}{% endif %}
+        {% if step.not_applicable_reason %}&middot; {{ step.not_applicable_reason }}{% endif %}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if explorer.chain.next_stage %}
+  <p class="text-slate-400 text-xs mb-3">Next stage
+    <span class="mono">{{ explorer.chain.next_stage_label or explorer.chain.next_stage }}</span>
+    {% if explorer.chain.next_stage_missing_types %}
+    &mdash; needs <span class="mono">{{ explorer.chain.next_stage_missing_types|join(', ') }}</span>
+    {% endif %}</p>
+  {% endif %}
+  {% if explorer.chain.evidence_missing_types %}
+  <p class="text-slate-400 text-xs mb-3">Missing evidence types
+    <span class="mono">{{ explorer.chain.evidence_missing_types|join(', ') }}</span></p>
+  {% endif %}
+
+  {# ---------------------------------------- 2. observation vs proof #}
+  <h3 class="card-title mt-4">Observation vs proof</h3>
+  <div class="grid gap-4 mb-3" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
+    <div>
+      <p class="text-slate-400 text-xs mb-1">Observation (recorded)</p>
+      <ul class="text-sm">
+        {% for item in explorer.observation_vs_proof.observation %}
+        <li class="mono {% if item.satisfied %}text-emerald-300{% else %}text-slate-500{% endif %}">
+          {{ step_glyph(item.state) }} {{ item.stage }}
+          <span class="text-slate-500 text-xs">{{ item.detail or item.note or '' }}</span></li>
+        {% else %}<li class="text-slate-500 text-sm">none recorded</li>{% endfor %}
+      </ul>
+    </div>
+    <div>
+      <p class="text-slate-400 text-xs mb-1">Proof (confirmation-capable)</p>
+      <ul class="text-sm">
+        {% for item in explorer.observation_vs_proof.proof %}
+        <li class="mono text-emerald-300">{{ step_glyph(item.state) }} {{ item.stage }}</li>
+        {% else %}<li class="text-amber-200 text-sm">no proof recorded</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  {# -------------------------------------------- 3. why this state #}
+  <h3 class="card-title mt-4">Why this state?</h3>
+  <ul class="text-sm text-slate-300 mb-3">
+    {% for line in explorer.why %}<li>{{ line }}</li>{% endfor %}
+  </ul>
+
+  {# ------------------------------------------- 4. evidence summary #}
+  <h3 class="card-title mt-4">Evidence summary</h3>
+  <dl class="text-sm text-slate-300 mb-3 grid gap-x-6"
+      style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
+    <div><dt class="text-slate-500 text-xs">Raw observations</dt>
+      <dd class="mono">{{ explorer.evidence_summary.raw_observations if explorer.evidence_summary.raw_observations is not none else 'not recorded' }}</dd></div>
+    <div><dt class="text-slate-500 text-xs">Unique observations</dt>
+      <dd class="mono">{{ explorer.evidence_summary.unique_observations if explorer.evidence_summary.unique_observations is not none else 'not recorded' }}
+        {% if explorer.evidence_summary.duplicate_events is not none %}
+        <span class="text-slate-500 text-xs">({{ explorer.evidence_summary.duplicate_events }} duplicate event(s))</span>
+        {% endif %}</dd></div>
+    <div><dt class="text-slate-500 text-xs">Distinct signals</dt>
+      <dd class="mono text-xs">{{ explorer.evidence_summary.distinct_signals|join(', ') or 'none' }}</dd></div>
+    <div><dt class="text-slate-500 text-xs">Reflection</dt>
+      <dd class="mono">{{ explorer.evidence_summary.reflection }}</dd></div>
+    <div><dt class="text-slate-500 text-xs">Context</dt>
+      <dd class="mono text-xs break-all">{{ explorer.evidence_summary.context }}</dd></div>
+    <div><dt class="text-slate-500 text-xs">DOM lineage</dt>
+      <dd class="mono">{{ explorer.evidence_summary.dom_lineage }}
+        {% if explorer.capability_cells.dom_sink %}
+        <span class="text-slate-500 text-xs">(sink {{ explorer.capability_cells.dom_sink }})</span>
+        {% endif %}</dd></div>
+    <div><dt class="text-slate-500 text-xs">Payload execution</dt>
+      <dd class="mono">{{ explorer.evidence_summary.payload_execution }}</dd></div>
+    <div><dt class="text-slate-500 text-xs">Exploitability</dt>
+      <dd class="mono">{{ explorer.evidence_summary.exploitability }}</dd></div>
+    <div><dt class="text-slate-500 text-xs">Authorization</dt>
+      <dd class="mono">{{ explorer.evidence_summary.authorization }}
+        {% if explorer.chain.authorization.ids %}
+        <span class="text-slate-500 text-xs">{{ explorer.chain.authorization.ids|join(', ') }}</span>
+        {% endif %}</dd></div>
+  </dl>
+  <p class="text-slate-500 text-xs mb-3">A count is not a strength: the
+    authoritative verdict and the missing-evidence list above decide what may
+    be claimed.</p>
+
+  {# ------------------------------------------- 5. decision panel #}
+  <h3 class="card-title mt-4">Can this be reported?</h3>
+  <p class="mb-1"><span class="badge {% if explorer.decision.can_report == 'YES' %}badge-ok{% elif explorer.decision.can_report == 'NO' %}badge-bad{% else %}badge-neutral{% endif %}">{{ explorer.decision.can_report }}</span></p>
+  <ul class="text-sm text-slate-300 mb-2">
+    {% for reason in explorer.decision.reasons %}<li>{{ reason }}</li>{% endfor %}
+  </ul>
+  {% if explorer.decision.missing_stages %}
+  <p class="text-slate-400 text-xs mb-2">Stages not proven:
+    <span class="mono">{{ explorer.decision.missing_stages|join(', ') }}</span></p>
+  {% endif %}
+  <p class="text-slate-500 text-xs mb-3">{{ explorer.decision.note }}</p>
+
+  {# --------------------------------------------- trust boundary / gaps #}
+  {% if explorer.chain.blockers %}
+  <p class="text-amber-200 text-xs mb-1">Blockers:
+    <span class="mono">{{ explorer.chain.blockers|join('; ') }}</span></p>
+  {% endif %}
+  {% if explorer.chain.trust_boundary and explorer.chain.trust_boundary.mismatch_count %}
+  <p class="text-amber-200 text-xs mb-1">Evidence-type mismatches recorded:
+    <span class="mono">{{ explorer.chain.trust_boundary.mismatch_count }}</span>
+    ({{ explorer.chain.trust_boundary.mismatch_classes|join(', ') }});
+    excluded confirmation rows: <span class="mono">{{ explorer.chain.trust_boundary.excluded_confirmation_count }}</span></p>
+  {% endif %}
+  {% if explorer.capability_cells.deep_state %}
+  <p class="text-slate-400 text-xs mb-1">Deep verification:
+    <span class="mono">{{ explorer.capability_cells.deep_state }}</span>
+    {% if explorer.capability_cells.deep_reason %}({{ explorer.capability_cells.deep_reason }}){% endif %}
+    &middot; execution <span class="mono">{{ explorer.capability_cells.execution }}</span>
+    &middot; exploitability <span class="mono">{{ explorer.capability_cells.exploitability }}</span></p>
+  {% endif %}
+  {% if explorer.chain.limitations %}
+  <p class="text-slate-500 text-xs mb-1">Limitations:
+    {% for limit in explorer.chain.limitations %}<span class="mono">{{ limit }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+  {% endif %}
+  <p class="text-slate-500 text-xs mono">explorer {{ explorer.rule_version }}
+    &middot; chain {{ explorer.sources.chain_projection }}
+    &middot; integrity {{ explorer.sources.integrity_projection or 'n/a' }}
+    &middot; deep {{ explorer.sources.deep_projection or 'n/a' }}
+    &middot; strength digest {{ explorer.strength_digest }}</p>
+  <p class="text-slate-500 text-xs">{{ explorer.sources.read_path }}</p>
+  {% endif %}
+</section>

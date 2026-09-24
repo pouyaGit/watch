@@ -297,6 +297,18 @@ def _evidence_artifacts(case_id: str) -> list[dict[str, Any]]:
     return out
 
 
+def _explorer(candidate_id: str) -> dict[str, Any]:
+    """EPIC17 §6: the ONE Evidence Explorer projection.
+
+    The finding page, the case page and the handoff package all render
+    this same read-model for the same candidate id (projection parity),
+    resolved through the canonical store — never a per-page variant.
+    """
+    from backend.soc import findings as soc_findings
+
+    return soc_findings.explorer_view(candidate_id)
+
+
 def _finding_case_detail(case_id: str) -> dict[str, Any] | None:
     """Finding Verification case (``fcase-*``) → SOC case page shape.
 
@@ -335,6 +347,8 @@ def _finding_case_detail(case_id: str) -> dict[str, Any] | None:
                                           None) or [])]
     return {
         "kind": "finding-case",
+        # EPIC17 §6: identical projection to the finding/handoff pages.
+        "explorer": _explorer(case.candidate_id),
         "case": {
             "case_id": case.case_id,
             "candidate_id": case.candidate_id,
@@ -456,6 +470,10 @@ def case_detail(case_id: str) -> dict[str, Any] | None:
 
     return {
         "case_id": case_id,
+        # EPIC17 §6: the same analyst Evidence Explorer read-model the
+        # finding and handoff pages render for this candidate.
+        "explorer": (detail.get("explorer")
+                     or _explorer(_text(case.get("candidate_id")))),
         "research_intel": (detail.get("research_intel")
                            if isinstance(detail.get("research_intel"), Mapping)
                            else {}),

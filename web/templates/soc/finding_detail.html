@@ -92,7 +92,8 @@
     {% endif %}
   </div>
 
-  <p class="text-slate-400 text-sm mb-4">{{ ws.summary.notice }}</p>
+{# EPIC17 — the only analyst-facing verification state banner source. #}
+  {% include "soc/_evidence_explorer.html" %}
 
   {# -------------------------------------------------- NEXT STEP (§11) #}
   <section class="panel p-4 mb-4" style="border-left:3px solid #22d3ee">

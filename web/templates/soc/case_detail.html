@@ -6,8 +6,12 @@
   <div class="mb-6">
     <a class="link text-sm" href="/ui/soc/cases{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">← all cases</a>
     <h1 class="page-title mb-1 font-mono">{{ case_id }}</h1>
-    <span class="badge {{ 'badge-warn' if verdict != 'CONFIRMED' else 'badge-ok' }}">{{ verdict }}</span>
+    <span class="badge {{ 'badge-warn' if verdict != 'CONFIRMED' else 'badge-ok' }}"
+          title="case lifecycle state — the authoritative verification state is shown in the Analyst Evidence Explorer below">case {{ verdict }}</span>
   </div>
+
+  {# EPIC17 — the only analyst-facing verification state banner source. #}
+  {% include "soc/_evidence_explorer.html" %}
 
   <section class="panel p-4 mb-6">
     <div class="panel-head"><h2>Target</h2></div>
