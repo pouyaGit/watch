@@ -160,6 +160,9 @@ def run_findings(
     worker_factory: Callable[[Any, Any], Any] | None = None,
     max_verifications: int | None = None,
     wall_seconds: float | None = None,
+    # EPIC12: optional bounded deep-verification chain loop.  None (default)
+    # leaves the promoted EPIC11 behaviour byte-for-byte unchanged.
+    chain_loop_fn: Callable[..., Any] | None = None,
     extract_only: bool = False,
     now_fn: Callable[[], float] = time.monotonic,
 ) -> FindingRunSummary:
@@ -858,10 +861,63 @@ def run_findings(
         except Exception:  # noqa: BLE001 - lookup is best effort
             runtime_case_id = ""
 
+        # the recorded authorization lineage both the chain loop and the
+        # gate consume (EPIC11 built it inline here; EPIC12 needs it twice)
+        authorization_context = _icontracts.AuthorizationContext(
+            scope_ref=str(candidate.scope_ref or ""),
+            authorization_ref=str(ver.scope_ref or candidate.scope_ref
+                                  or ""),
+            authorization_ids=tuple(str(a) for a in
+                                    (ver.authorization_ids or ())),
+            execution_mode=str(structured.get("execution_mode") or ""),
+            provenance={
+                "source": "finding_executor_recorded_lineage",
+                "job_id": job.id,
+                "observation_ids": list(ver.observation_ids or [])[:8],
+            },
+        )
+
+        # ---- EPIC12: bounded deep-verification chain loop (opt-in) -----
+        # The loop may only ADD structured observations produced by typed,
+        # authorized, budget-bounded actions; it never decides anything.  The
+        # gate below stays the only authority (EPIC11).
+        chain_rows: list[dict[str, Any]] = []
+        chain_outcome: dict[str, Any] = {}
+        if chain_loop_fn is not None:
+            try:
+                hook_result = chain_loop_fn(
+                    candidate=candidate, verification=ver, job=job,
+                    rows=list(prior_rows) + list(ver_rows),
+                    authorization=authorization_context, budget=budget,
+                    summary=summary)
+                if hook_result is not None:
+                    chain_rows = list(
+                        getattr(hook_result, "evidence_rows", ()) or [])
+                    chain_outcome = dict(
+                        getattr(hook_result, "outcome", {}) or {})
+                    hook_error = str(getattr(hook_result, "error", "") or "")
+                    if hook_error:
+                        summary.errors.append(
+                            f"chain_loop:{ver.verification_id}:{hook_error}")
+            except Exception as exc:  # noqa: BLE001 - never fatal, never faked
+                summary.errors.append(
+                    f"chain_loop:{ver.verification_id}:{type(exc).__name__}")
+        if chain_outcome:
+            ver.provenance = dict(ver.provenance or {})
+            ver.provenance["verification_chain"] = chain_outcome
+            activity("verification_chain_evaluated",
+                     f"{ver.verification_id} termination="
+                     f"{chain_outcome.get('termination')} "
+                     f"reason={chain_outcome.get('termination_reason')} "
+                     f"steps={chain_outcome.get('steps')} "
+                     f"missing={list(chain_outcome.get('evidence_missing') or [])[:4]}",
+                     candidate_id=candidate.candidate_id,
+                     job_id=job.id, verification_id=ver.verification_id)
+
         # ---- Phase 8: THE verification gate (no advisor input) -------
         # EPIC11: the gate receives the REAL persisted evidence rows
-        # (prior research + this verification) and the recorded
-        # authorization lineage; the authoritative answer is the class
+        # (prior research + this verification + any chain-derived rows) and the
+        # recorded authorization lineage; the authoritative answer is the class
         # claim contract, not a row count.
         decision = gate_decide(
             candidate=candidate, verification=ver,
@@ -870,20 +926,8 @@ def run_findings(
             structured=structured, quality_rows=quality_dicts,
             hunt=hunt if isinstance(hunt, dict) else {},
             runtime_case_id=runtime_case_id,
-            evidence_rows=list(prior_rows) + list(ver_rows),
-            authorization=_icontracts.AuthorizationContext(
-                scope_ref=str(candidate.scope_ref or ""),
-                authorization_ref=str(ver.scope_ref or candidate.scope_ref
-                                      or ""),
-                authorization_ids=tuple(str(a) for a in
-                                        (ver.authorization_ids or ())),
-                execution_mode=str(structured.get("execution_mode") or ""),
-                provenance={
-                    "source": "finding_executor_recorded_lineage",
-                    "job_id": job.id,
-                    "observation_ids": list(ver.observation_ids or [])[:8],
-                },
-            ),
+            evidence_rows=list(prior_rows) + list(ver_rows) + chain_rows,
+            authorization=authorization_context,
         )
 
         # verification objective terminal transition.  Persist the
@@ -897,6 +941,15 @@ def run_findings(
         ver.claim_integrity = dict(decision.claim_integrity)
         ver.authoritative_state = decision.authoritative_state
         ver.missing_evidence_contract = list(decision.missing_evidence)
+        if chain_outcome:
+            # the chain projection keeps its own pre-gate view, and the
+            # AUTHORITATIVE verdict is recorded next to it — never merged into
+            # it, so a divergence stays visible instead of being smoothed over
+            chain_outcome["authoritative_verdict"] = decision.authoritative_state
+            chain_outcome["authoritative_reason"] = (decision.gate_reason
+                                                     or decision.reason)
+            ver.provenance = dict(ver.provenance or {})
+            ver.provenance["verification_chain"] = chain_outcome
         try:
             ver = fs.save_verification(ver)
             ver = fs.transition_verification(
