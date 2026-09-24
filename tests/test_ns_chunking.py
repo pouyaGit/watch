@@ -236,10 +236,12 @@ class TestBackwardCompatibility(ChunkingTestCase):
 
 
 #: Measured on this host on 2026-09-24 with the production dnsx command over
-#: real indeed.net names: 21.9 names/second on fresh resolvers (20,000 names /
-#: 914s) and 11.4 names/second under sustained querying (25,001 names / 2,201s).
-#: The `-rl 30` rate limit is a ceiling, not the achievable rate; the slower
-#: figure is what the chunk size has to survive.
+#: real indeed.net names: 25,001 names in 2,201s = 11.4 names/second, from the
+#: only run that queried the whole list and exited 0. The `-rl 30` rate limit is
+#: a ceiling, not the achievable rate, and a 20,000-name probe killed by its own
+#: 900s guard only bounds the rate from above (<22.2 names/second) -- it is a
+#: bound, not a measurement. The complete figure is what the chunk size has to
+#: survive.
 MEASURED_NAMES_PER_SECOND = 11.4
 
 

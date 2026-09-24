@@ -80,13 +80,15 @@ NS_COMMAND_TIMEOUT = 3600
 #
 # Larger lists are therefore split into sequential chunks of at most this many
 # names, each with its own NS_COMMAND_TIMEOUT budget. Sizing is measured, not
-# assumed: two bounded probes over real scope names with the production command
-# gave 21.9 names/second on fresh resolvers (20,000 names / 914s) and 11.4
-# names/second under sustained querying (25,001 names / 2,201s). At the slower
-# measured rate a 15,000-name chunk needs ~1,316s -- a 2.7x margin under the
-# ceiling -- and the 206,080-name scope that could never fit in one 3,600s call
-# now completes as 14 bounded calls. A resolver that genuinely hangs still
-# raises ToolTimeout instead of stalling the pipeline.
+# assumed. The one COMPLETE measurement is 25,001 real scope names in 2,201s =
+# 11.4 names/second (every name queried, dnsx exited 0). A second probe was
+# killed by its own 900s guard after resolving 7,666 records without finishing
+# 20,000 names, so it only bounds the rate from above (<22.2 names/second) --
+# it is a bound, not a rate, and must not be quoted as one. At 11.4 names/s a
+# 15,000-name chunk needs ~1,316s -- a 2.7x margin under the ceiling -- and the
+# 206,080-name scope that could never fit in one 3,600s call now completes as
+# 14 bounded calls. A resolver that genuinely hangs still raises ToolTimeout
+# instead of stalling the pipeline.
 #
 # NOTE: chunking bounds each invocation, it does not reduce total work. The
 # nightly DNS step still spends scope_size / throughput seconds (2.6h-5.0h for

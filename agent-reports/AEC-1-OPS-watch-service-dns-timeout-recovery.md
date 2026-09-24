@@ -109,13 +109,15 @@ resources, network/tooling availability, the shared pipeline lock.
 - Live DB (read-only): `Subdomains.objects(scope='indeed.net').count()` =
   **206,080**; by `created_date`: 09-16 +47,972, 09-17 +37,711, 09-23 +37,547,
   09-24 +40,417; by `providers`: **201,074 `dynamicBF`**.
-- Measured throughput (two bounded probes over real scope names with the
-  production command): **21.9 names/second on fresh resolvers** (20,000 names /
-  914 s) and **11.4 names/second under sustained querying** (25,001 names /
-  2,201 s). At 21.9/s the 206,080-name scope needs **9,410 s (2.6 h)** in one
-  invocation — **2.6× over** `NS_COMMAND_TIMEOUT`; at 11.4/s it needs
-  **18,077 s (5.0 h)**, i.e. **5.0× over**. The ceiling cannot hold for this
-  scope at any observed throughput.
+- Measured throughput: **11.4 names/second** — the one *complete* measurement
+  (25,001 real scope names in 2,201 s, every name queried, dnsx exited 0). A
+  second probe (20,000 names) was killed by its own 900 s guard after resolving
+  7,666 records without finishing the list, so it only bounds the rate from
+  above (**< 22.2 names/second**); it is a bound, not a rate, and is not quoted
+  as one anywhere in this report. At 11.4/s the 206,080-name scope needs
+  **18,077 s (5.0 h)** in one invocation — **5.0× over** `NS_COMMAND_TIMEOUT`;
+  even at the < 22.2/s bound it needs > 9,274 s (2.6 h), i.e. **> 2.6× over**.
+  The ceiling cannot hold for this scope at any observed throughput.
 - Pinned-file check: `ns/watch_ns_all.py`, `ns/wildcard_detector.py`,
   `run-pipeline.sh`, `pipeline_lib.sh` are sha256-pinned read-only in
   `aec/readonly_manifest.json` (116 files) — **none of them was modified**;
@@ -127,16 +129,18 @@ Bounded, single-copy, timeout-guarded — no unbounded production workload, no
 competing copies, no duplicate pipeline execution:
 
 ```bash
-# 1) real 20,000-name slice of the real scope, exact production command
-dnsx -l /tmp/ns_probe_20k.txt -silent -a -resp -json -t 10 -rl 30 \
+# 1) real 20,000-name slice, exact production command, hard 900 s guard
+timeout 900 dnsx -l /tmp/ns_probe_20k.txt -silent -a -resp -json -t 10 -rl 30 \
      -r 8.8.8.8,1.1.1.1,9.9.9.9,208.67.222.222
-# → exit 0, 914 s, 7,666 resolved records → 21.9 names/sec
-#   ⇒ 206,080 names ≈ 9,410 s ≫ 3,600 s ceiling (2.6x)
+# → exit 124 (killed by the guard) after 900 s, 7,666 resolved records, list
+#   NOT finished ⇒ throughput < 22.2 names/sec (an upper bound, not a rate)
+#   ⇒ 206,080 names still need > 9,274 s ≫ 3,600 s ceiling
 
 # 2) the repaired code path, 25,001 real names (2 chunks), same command
 python3 -c "from utils.common import run_command_in_zsh_ns; ..."
 # → 2 real dnsx invocations, total 2,201 s, 21,439 unique in-scope hosts,
 #   every invocation under the ceiling, chunk temp files cleaned up
+# → 11.4 names/sec (COMPLETE: whole list queried, exit 0)
 ```
 
 The failing mechanism is therefore reproduced arithmetically and empirically
@@ -161,7 +165,7 @@ unpinned file on the failing path (`utils/common.py`):
   string (this is what keeps `wildcard_detector.py` and the pinned callers
   untouched, and the pinned command-shape test green).
 - Sizing is measured, not assumed: 15,000 names ≈ 500 s at the rate limit and
-  ≈ 1,316 s at the slowest measured rate (2.7× margin under the ceiling); the
+  ≈ 1,316 s at the measured 11.4 names/s (2.7× margin under the ceiling); the
   incident scope becomes 14 bounded calls instead of one impossible one. Chunk
   temp files are removed in a `finally` block, including on failure.
 - Chunking does not change the query rate, the resolvers, the wildcard
@@ -174,7 +178,7 @@ unpinned file on the failing path (`utils/common.py`):
   in the step's `Executing dnsx:` lines and in the dnsx process tree.
 
 **Rejected alternative — raising `NS_COMMAND_TIMEOUT`:** the measured need is
-9,410 s today (5.0 h at the slower measured rate) and grows ~40,000 names/day,
+18,077 s today (5.0 h at the measured 11.4 names/s) and grows ~40,000 names/day,
 the pinned test caps the constant at 7,200 s, and a larger constant makes the
 fail-fast contract meaningless (a multi-hour blind window). It would postpone,
 not repair. Not applied.
@@ -186,12 +190,12 @@ manifest, EPIC11 integrity/reporting code.
 **Flagged, out of scope — the remaining operational risk (numbers, not
 hand-waving):** chunking bounds each invocation; it does **not** reduce total
 work. The nightly DNS step still spends `scope_size / throughput` seconds:
-**2.6 h at the fresh-resolver rate, 5.0 h at the degraded rate**, on top of
-~1.9 h for the other four steps — i.e. **4.5 h to 6.9 h against the 6 h
-`TimeoutStartSec`**. Tonight's run should complete (the first dnsx of the night
-sees fresh resolvers), but the input grows ~40,000 names/day (≈ +30 min/day of
-DNS work at the fresh rate), so the ceiling will be crossed within days unless
-the *scope* is bounded. The honest repair for that is to resolve only
+**5.0 h at the measured 11.4 names/s** (and > 2.6 h even at the optimistic
+< 22.2/s bound), on top of ~1.9 h for the other four steps — i.e. **4.5 h to
+6.9 h against the 6 h `TimeoutStartSec`**. Tonight's run is expected to
+complete, but the input grows ~40,000 names/day (≈ +35 min/day of DNS work at
+the measured rate), so the ceiling will be crossed within days unless the
+*scope* is bounded. The honest repair for that is to resolve only
 new/changed names or to bound the daily brute-force growth — both live in
 pinned read-only files (`ns/*`, `run-pipeline.sh`) or are product/scope
 decisions, so they were deliberately **not** taken unilaterally here.
