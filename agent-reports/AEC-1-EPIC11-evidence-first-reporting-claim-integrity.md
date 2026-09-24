@@ -1,7 +1,8 @@
 # AEC-1 — EPIC11: Evidence-First Reporting & Claim Integrity v1
 
-**Commit:** `328a97f` (amend pending: `backend/research_agents/runtime.py`,
-`tests/test_research_intelligence_soc.py`)
+**Commit:** `e05df35` — includes the runtime gate-row fix
+(`backend/research_agents/runtime.py`), the SOC fixture fix
+(`tests/test_research_intelligence_soc.py`) and this report
 **Branch:** `agent/daily-development`
 **Integration base:** `59b4b019` (main); production `6ec6146`, 27 dirty entries (unchanged)
 **Status:** READY TO PUSH — YES (all implementation, test, validation and guard
@@ -249,10 +250,11 @@ Unrelated in-flight work (EPIC10: `backend/ai_ops/*`,
 
 ## 18. Commit / push / promotion
 
-- Commit: `328a97f epic11: evidence-first reporting & claim integrity v1`
+- Commit: `e05df35 epic11: evidence-first reporting & claim integrity v1`
   (amended with the runtime gate-row fix, the SOC fixture fix and this report).
-- Delivery: `report.sh` written; `check.sh` verdict expected READY once the
-  report artifact is in the change set. No push before the guards pass.
+- Delivery: `report.sh` written and `check.sh` = **READY FOR PROMOTION**
+  (BRANCH/COMMIT/TESTS/PATH_GUARD/REPORT/PRODUCTION_UNTOUCHED all PASS);
+  `diff_guard.py` PASS, 0 findings.
 - Push: `git/push_safe.sh origin agent/daily-development` (fail-closed on
   `check_auth.py`).
 - Promotion: `promotion/request.sh` artifact + operator APPROVE, then
