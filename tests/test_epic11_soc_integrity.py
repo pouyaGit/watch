@@ -239,5 +239,98 @@ class TestIntegritySectionSafety(unittest.TestCase):
         self.assertTrue(contract_evidence())
 
 
+class TestLegacyRecordCannotShowAnIntegrityBadge(unittest.TestCase):
+    """The REAL pre-EPIC11 shape, through the real synthesis path.
+
+    Production persists candidate VERIFIED / verification VERIFIED / case
+    READY_FOR_REVIEW with only ``xss_parameter_inventory`` evidence and NO
+    claim-integrity row.  ``findings._integrity_block`` synthesizes a block
+    for such a record, so the analyst view must treat a block WITHOUT a
+    recorded contract as "no verdict" — otherwise the historical state is
+    presented under the Claim / Evidence Integrity heading as if the
+    contract had produced it.
+    """
+
+    def _real_shape_block(self, *, recorded: bool = False) -> dict:
+        from types import SimpleNamespace
+
+        from backend.soc import findings as soc_findings
+
+        cand = SimpleNamespace(
+            candidate_id="cand-7c229c48c455", lifecycle_state="VERIFIED",
+            vulnerability_class="XSS", scope_ref="watch:scope:dell/x",
+            claim_integrity=({"authoritative_state": "VERIFIED",
+                              "confirmation_status": "SUPPORTED"}
+                             if recorded else None))
+        ver = SimpleNamespace(state="VERIFIED", gate_reason="")
+        case = SimpleNamespace(state="READY_FOR_REVIEW")
+        return soc_findings._integrity_block(
+            cand, case, {"state_in_advisory_text": "VERIFICATION_PENDING"},
+            ver, inventory_evidence())
+
+    def test_no_contract_means_no_authoritative_state(self):
+        block = self._real_shape_block()
+        self.assertFalse(block["recorded"])
+        self.assertEqual(block["authoritative_state"], "not_recorded")
+        # a legacy VERIFIED must never be reported as a confirmed claim
+        self.assertFalse(block["confirmed"])
+        self.assertEqual(block["missing_evidence_types"], [])
+        self.assertIn("no claim/evidence contract recorded", block["source"])
+        # the historical rows are preserved, labelled as such
+        self.assertEqual(block["persisted_state"],
+                         {"candidate": "VERIFIED", "verification": "VERIFIED",
+                          "case": "READY_FOR_REVIEW"})
+
+    def test_current_assessment_is_re_derived_from_persisted_evidence(self):
+        block = self._real_shape_block()
+        projected = block["projected"]
+        self.assertEqual(projected["authoritative_state"],
+                         "VERIFICATION_PENDING")
+        self.assertEqual(projected["gate_reason"],
+                         "missing_reflection_evidence")
+        self.assertIn("REFLECTION_OBSERVED", projected["missing_evidence"])
+
+    def test_analyst_view_shows_no_integrity_badge_and_no_false_source(self):
+        block = self._real_shape_block()
+        detail = base_detail()
+        detail["candidate"]["lifecycle_state"] = "VERIFIED"
+        detail["integrity"] = block
+        detail["evidence"] = [
+            dict(row, created_at="2026-09-23T04:38:49Z")
+            for row in inventory_evidence()]
+        ws = cw.build_workspace(detail)
+        self.assertFalse(ws["integrity"]["available"])
+        self.assertIn("No claim/evidence contract", ws["integrity"]["note"])
+        self.assertEqual(ws["integrity"]["projected"]["authoritative_state"],
+                         "VERIFICATION_PENDING")
+
+        html = render(detail)
+        section = html.split('id="claim-integrity"', 1)[1]
+        section = section.split("</section>", 1)[0]
+        self.assertNotIn('badge-sm">VERIFIED', section)
+        self.assertIn("not an integrity verdict", section)
+        self.assertIn("VERIFICATION_PENDING", section)
+        self.assertIn("missing_reflection_evidence", section)
+        self.assertNotIn("persisted claim-integrity record", section)
+
+    def test_a_synthesized_verified_state_alone_is_not_a_contract(self):
+        # defence in depth: even if a block carried a state but no
+        # recorded flag, the read-model must not badge it as the verdict
+        section = cw._integrity_section({"integrity": {
+            "authoritative_state": "VERIFIED", "confirmed": True}})
+        self.assertFalse(section["available"])
+        self.assertNotEqual(section.get("authoritative_state"), "VERIFIED")
+
+    def test_a_recorded_contract_still_badges_its_state(self):
+        block = self._real_shape_block(recorded=True)
+        self.assertTrue(block["recorded"])
+        self.assertEqual(block["authoritative_state"], "VERIFIED")
+        self.assertTrue(block["confirmed"])
+        section = cw._integrity_section({"integrity": block})
+        self.assertTrue(section["available"])
+        self.assertEqual(section["authoritative_state"], "VERIFIED")
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -5,8 +5,9 @@
 (`tests/test_research_intelligence_soc.py`) and this report
 **Branch:** `agent/daily-development`
 **Integration base:** `59b4b019` (main); production `6ec6146`, 27 dirty entries (unchanged)
-**Status:** READY TO PUSH — YES (all implementation, test, validation and guard
-requirements satisfied; promotion into `main` still requires the operator APPROVE)
+**Status:** EPIC11 promoted to `main` (`817b14c`) on operator APPROVE; this
+revision adds the post-promotion defect fix described in §20 (a separate
+promotion request covers it)
 
 ---
 
@@ -259,6 +260,43 @@ Unrelated in-flight work (EPIC10: `backend/ai_ops/*`,
   `check_auth.py`).
 - Promotion: `promotion/request.sh` artifact + operator APPROVE, then
   `promotion/promote.sh --yes`. **Never merged here.**
+
+## 20. Post-promotion verification, and the defect it found
+
+Promotion completed as `817b14c` (audit seq 82) after `approve.sh --confirm
+APPROVE`; `watch-api.service` was restarted and the promoted code confirmed in
+the production tree (`gate rule epic11-integrity-gate-1`, 13 report checks, 36
+taxonomy types). Verifying the REAL record through the production read-model
+then exposed a presentation defect that the fixture tests had missed:
+
+- `findings._integrity_block` synthesizes a block for every record, so a
+  **legacy** record (no `claim_integrity` row) reached the analyst view with
+  `recorded: False` but `authoritative_state: VERIFIED` and
+  **`confirmed: True`** — the historical pre-contract state presented under the
+  Claim / Evidence Integrity heading as if the contract had produced it, with a
+  source line claiming "persisted claim-integrity record".
+- The existing tests only covered an *absent* `integrity` key, never the
+  synthesized-block path that production actually takes.
+
+Fix (fail-closed, §7/§21): without a recorded contract there is **no**
+authoritative state — `authoritative_state = not_recorded`, `confirmed` can only
+be true for a recorded contract, the historical candidate/verification/case
+states are published separately as `persisted_state` and labelled "recorded
+before the contract; not an integrity verdict", and the current assessment is
+re-derived from the persisted evidence via `projection.project`. The read-model
+treats a block as a contract only when the explicit `recorded` flag is true or
+real contract content is present (a bare state label or `confirmed` flag is not
+a contract).
+
+Verified on the real production record (`cand-7c229c48c455`, fixed code + real
+store): block `recorded=False / not_recorded / confirmed=False`,
+`persisted_state = VERIFIED / VERIFIED / READY_FOR_REVIEW` preserved and
+labelled, `projected = VERIFICATION_PENDING / missing_reflection_evidence /
+stage 1` with `DOM_SINK_IDENTIFIED, EXPLOITABILITY_ESTABLISHED,
+OUTPUT_CONTEXT_IDENTIFIED, PAYLOAD_EXECUTION, REFLECTION_OBSERVED` still
+missing, and the rendered panel shows **no VERIFIED badge**, states the
+historical rows are not a verdict, and no longer claims a stored contract.
+5 new tests (`TestLegacyRecordCannotShowAnIntegrityBadge`) pin this shape.
 
 ## 19. Mandatory final gate
 
