@@ -143,6 +143,18 @@ def _finding_handoff_rows() -> list[dict[str, Any]]:
     return rows
 
 
+def _explorer(candidate_id: str) -> dict[str, Any]:
+    """EPIC17 §6: the ONE Evidence Explorer projection.
+
+    The finding page, the case page and the handoff package all render
+    this same read-model for the same candidate id (projection parity),
+    resolved through the canonical store — never a per-page variant.
+    """
+    from backend.soc import findings as soc_findings
+
+    return soc_findings.explorer_view(candidate_id)
+
+
 def _finding_detail_for_job(job_id: str) -> dict[str, Any] | None:
     """Read-only handoff view of a finding case package for one job."""
     try:
@@ -184,6 +196,8 @@ def _finding_detail_for_job(job_id: str) -> dict[str, Any] | None:
                 "job_id": job_id,
                 "report_id": _text(case.case_id),
                 "verified_status": _text(case.state),
+                # EPIC17 §6: identical projection to the finding/case pages.
+                "explorer": _explorer(case.candidate_id),
                 "verified": verified,
                 "target": _text(cand.target),
                 "endpoint": {

@@ -6,9 +6,12 @@
   <div class="mb-6">
     <a class="link text-sm" href="/ui/soc/handoff{% if api_key_qs %}?api_key={{ api_key_qs }}{% endif %}">← all handoffs</a>
     <h1 class="page-title mb-1 font-mono">{{ job_id }}</h1>
-    <p class="text-slate-400 text-sm">Read-only analyst package ·
+    <p class="text-slate-400 text-sm">Read-only analyst package &middot;
       generated {{ generated_at or '—' }}</p>
   </div>
+
+  {# EPIC17 — the only analyst-facing verification state banner source. #}
+  {% include "soc/_evidence_explorer.html" %}
 
   <section class="panel p-4 mb-6">
     <div class="panel-head"><h2>Target</h2></div>

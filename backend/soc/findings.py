@@ -319,6 +319,93 @@ def _hunt_bundle(runtime_store: Any, job_id: str) -> dict[str, Any]:
         return {}
 
 
+def evidence_rows(cand: Any, ver: Any, runtime: Any) -> list[dict[str, Any]]:
+    """Raw persisted evidence rows for a candidate.
+
+    Source job + verification job — exactly the rows the EPIC11 gate
+    classifies.  EPIC17 shares this ONE read path between the finding
+    page and the Evidence Explorer chain projection.
+    """
+    try:
+        rows = list(runtime.list_evidence(job_id=cand.source_job))
+        ver_job = ver.job_id if ver is not None else ""
+        if ver_job:
+            rows = rows + list(runtime.list_evidence(job_id=ver_job))
+    except Exception:  # noqa: BLE001 - honest empty, never invented
+        return []
+    return rows
+
+
+def evidence_payload(cand: Any, ver: Any, runtime: Any,
+                     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(analyst-mapped evidence rows, raw persisted rows).
+
+    The mapping adds the deterministic quality metadata the analyst
+    needs (Phase 9).  The raw rows are returned unchanged for the
+    projections that must classify what was actually persisted.
+    """
+    rows = evidence_rows(cand, ver, runtime)
+    ver_job = ver.job_id if ver is not None else ""
+    mapped: list[dict[str, Any]] = []
+    try:
+        from backend.research_agents.finding.quality import classify_batch
+
+        qualities = {q.evidence_id: q for q in classify_batch(
+            rows, vulnerability_class=cand.vulnerability_class,
+            verification_job_ids=[ver_job] if ver_job else [])}
+        for row in rows:
+            q = qualities.get(_text(row.get("id")))
+            mapped.append({
+                "id": _text(row.get("id")),
+                "type": _text(row.get("type")),
+                "category": _text(row.get("category")),
+                "signal": _text(row.get("signal")),
+                "label": _text(row.get("label")),
+                "detail": _text(row.get("detail"), 300),
+                "confidence": _text(row.get("confidence")),
+                "observation_ref": _text(row.get("observation_ref")),
+                "created_at": _text(row.get("created_at")),
+                "job_id": _text(row.get("job_id")),
+                "reliability": q.reliability_class if q else "",
+                "directness": ("direct" if q and q.direct
+                               else "indirect" if q else ""),
+                "stance": q.stance if q else "",
+                "verification_relevance": (q.verification_relevance
+                                           if q else ""),
+            })
+    except Exception:  # noqa: BLE001 - no metadata, still the rows
+        mapped = []
+    return mapped, rows
+
+
+def explorer_view(candidate_id: str, fs: Any = None,
+                  runtime: Any = None) -> dict[str, Any]:
+    """EPIC17: the analyst Evidence Explorer projection (projection only).
+
+    Wrapped so a projection failure degrades to an explicit
+    "no projection" view instead of breaking the analyst page.
+    """
+    try:
+        from backend.soc import evidence_explorer
+
+        return evidence_explorer.build(candidate_id, fs=fs, runtime=runtime)
+    except Exception as exc:  # noqa: BLE001 - honest unavailable view
+        return {
+            "available": False,
+            "rule_version": "",
+            "reason": f"explorer_error:{type(exc).__name__}",
+            "banner": {"state": "UNKNOWN", "label": "NO PROJECTION",
+                       "optimistic": False,
+                       "reason": f"explorer_error:{type(exc).__name__}"},
+            "chain": {"available": False, "steps": []},
+            "why": ["No verification projection is available for this "
+                    "record; no state is implied."],
+            "decision": {"can_report": "REVIEW",
+                         "reasons": ["no projection available"],
+                         "note": "Not a verdict."},
+        }
+
+
 def finding_detail(candidate_id: str) -> dict[str, Any] | None:
     """Candidate detail: everything Phase 15 asks, from persisted state."""
     candidate_id = _text(candidate_id)
@@ -346,39 +433,12 @@ def finding_detail(candidate_id: str) -> dict[str, Any] | None:
         return None
 
     # ---- evidence with deterministic quality metadata (Phase 9) -------
-    evidence: list[dict[str, Any]] = []
+    # EPIC17: ONE read path. The analyst evidence list and the Evidence
+    # Explorer chain projection both come from the same persisted rows,
+    # so the page and the projection can never disagree about what was
+    # recorded for this candidate.
     ver_job = ver.job_id if ver else ""
-    try:
-        from backend.research_agents.finding.quality import classify_batch
-
-        rows = runtime.list_evidence(job_id=cand.source_job)
-        if ver_job:
-            rows = rows + runtime.list_evidence(job_id=ver_job)
-        qualities = {q.evidence_id: q for q in classify_batch(
-            rows, vulnerability_class=cand.vulnerability_class,
-            verification_job_ids=[ver_job] if ver_job else [])}
-        for row in rows:
-            q = qualities.get(_text(row.get("id")))
-            evidence.append({
-                "id": _text(row.get("id")),
-                "type": _text(row.get("type")),
-                "category": _text(row.get("category")),
-                "signal": _text(row.get("signal")),
-                "label": _text(row.get("label")),
-                "detail": _text(row.get("detail"), 300),
-                "confidence": _text(row.get("confidence")),
-                "observation_ref": _text(row.get("observation_ref")),
-                "created_at": _text(row.get("created_at")),
-                "job_id": _text(row.get("job_id")),
-                "reliability": q.reliability_class if q else "",
-                "directness": ("direct" if q and q.direct
-                               else "indirect" if q else ""),
-                "stance": q.stance if q else "",
-                "verification_relevance": (q.verification_relevance
-                                           if q else ""),
-            })
-    except Exception:
-        evidence = []
+    evidence = evidence_payload(cand, ver, runtime)[0]
 
     # ---- gate decision + reasoning (authoritative) --------------------
     gate: dict[str, Any] = {}
@@ -563,6 +623,9 @@ def finding_detail(candidate_id: str) -> dict[str, Any] | None:
         # influenced by advisory text.  Absent for pre-EPIC11 records,
         # which is itself shown honestly as "not recorded".
         "integrity": _integrity_block(cand, case, advisor, ver, evidence),
+        # EPIC17 §6: the SAME analyst Evidence Explorer projection the
+        # case and handoff pages render (parity contract).
+        "explorer": explorer_view(candidate_id),
     }
     # ONE authoritative analyst workspace (candidate/finding detail
     # UX + data-contract correction).  Header/current state, grouped
