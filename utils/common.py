@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 import random
 import string
 from datetime import datetime
@@ -103,6 +104,13 @@ NS_DNSX_CHUNK_SIZE = 15000
 # instead of relying on a comment.
 NS_SECONDS_PER_NAME_AT_RATE_LIMIT = 1.0 / 30.0
 
+# Incremental DNS resolution (EPIC10). The pinned NS caller
+# (ns/watch_ns_all.py) hands every scope's whole candidate list to one bulk
+# `dnsx -l` call through run_command_in_zsh_ns, so eligibility has to be decided
+# here -- before chunking -- and nowhere else. See utils/dns_incremental.py for
+# the states, the policy defaults and the fail-closed contract.
+from utils import dns_incremental  # noqa: E402  (kept next to its use site)
+
 
 def tool_env(extra=None):
     """Environment for Watch subprocesses with the canonical tool PATH first."""
@@ -199,21 +207,46 @@ def run_command_in_zsh_ns(command):
     raises ToolError and a hang raises ToolTimeout, so a broken dnsx can never
     be mistaken for a successful "0 results" DNS run.
 
-    A bulk ``dnsx -l <file>`` list longer than NS_DNSX_CHUNK_SIZE is resolved as
-    several sequential invocations of the same command, each over a bounded
-    slice of the list and each with its own NS_COMMAND_TIMEOUT budget; the
-    returned lines are the concatenation of every chunk's output. Every other
-    command (including a bulk call whose list is small) is executed exactly as
-    before, in one invocation with an unchanged command string.
+    Two transforms are applied to a bulk ``dnsx -l <file>`` call, in this order
+    (EPIC10 SS9):
+
+    1. **Incremental selection** (``utils/dns_incremental.py``): only eligible
+       names -- NEW, CHANGED, RETRY_ELIGIBLE, STALE, or FORCE -- are handed to
+       dnsx; names already resolved within the freshness window (FRESH) and
+       names whose retry backoff has not elapsed are skipped for this run
+       without touching their stored results. A selector failure aborts the step
+       (fail-closed) instead of falling back to a full-scope run.
+    2. **Bounded chunking**: the selected list is split into sequential
+       invocations of at most NS_DNSX_CHUNK_SIZE names, each with its own
+       NS_COMMAND_TIMEOUT budget.
+
+    Every other command -- and a bulk call whose list is already small and fully
+    eligible -- is executed exactly as before, in one invocation with an
+    unchanged command string.
     """
-    commands, temp_paths = _dnsx_chunk_commands(command)
+    plan = _dnsx_run_plan(command)
+    started = time.monotonic()
+    error = None
     try:
         lines: list[str] = []
-        for chunk_command in commands:
+        for index, chunk_command in enumerate(plan.commands):
             lines.extend(_run_ns_command(chunk_command))
+            plan.chunks_done = index + 1
         return lines
+    except BaseException as exc:
+        error = exc
+        raise
     finally:
-        for temp_path in temp_paths:
+        if plan.selection is not None:
+            dns_incremental.record_run_outcome(
+                plan.selection,
+                lines,
+                chunks_total=len(plan.commands),
+                chunks_done=plan.chunks_done,
+                dns_seconds=time.monotonic() - started,
+                error=error,
+            )
+        for temp_path in plan.temp_paths:
             try:
                 os.unlink(temp_path)
             except OSError:
@@ -226,33 +259,53 @@ _DNSX_LIST_ARG = re.compile(
 )
 
 
-def _dnsx_chunk_commands(command):
-    """Split a bulk ``dnsx -l <file>`` command into bounded invocations.
+def _dnsx_run_plan(command):
+    """Plan one NS invocation: select eligible names, then bound the work.
 
-    Returns ``(commands, temp_paths)``. Anything that is not a bulk dnsx call
-    over an existing, oversized list is returned unchanged as a single-element
-    list with no temp files, so the caller's behavior is byte-identical.
+    Returns an ``NsRunPlan``. Anything that is not a bulk dnsx call over an
+    existing list is returned unchanged as a single-element list with no temp
+    files, so every other caller's behavior is byte-identical.
+
+    Selection runs first and may legitimately leave nothing to do (every
+    candidate FRESH) -- then ``plan.commands`` is empty and dnsx is never
+    invoked. A selector error propagates (fail-closed): the DNS step aborts
+    with a non-zero exit instead of resolving the full scope.
     """
     if not isinstance(command, str):
-        return [command], []
+        return dns_incremental.NsRunPlan(commands=[command])
     match = _DNSX_LIST_ARG.search(command)
     if not match or not command.lstrip().startswith("dnsx"):
-        return [command], []
+        return dns_incremental.NsRunPlan(commands=[command])
     try:
         with open(match.group("path"), "r", errors="replace") as handle:
             names = [line.strip() for line in handle if line.strip()]
     except OSError:
         # unreadable/missing list: keep the original single invocation so a
         # caller error still surfaces as a tool failure, not as a silent skip
-        return [command], []
-    if len(names) <= NS_DNSX_CHUNK_SIZE:
-        return [command], []
+        return dns_incremental.NsRunPlan(commands=[command])
+
+    try:
+        selection = dns_incremental.selection_for_command(names)
+    except dns_incremental.DnsSelectionError:
+        print(
+            f"{colors.RED}[{current_time()}] DNS selection FAILED -- failing "
+            f"closed: the DNS step aborts and existing results are preserved; "
+            f"there is no fallback to full-scope resolution."
+            f"{colors.RESET}")
+        raise
+
+    selected = names if selection is None else list(selection.selected)
+
+    if selected == names and len(selected) <= NS_DNSX_CHUNK_SIZE:
+        # nothing filtered and the list already fits: byte-identical command
+        return dns_incremental.NsRunPlan(
+            commands=[command], selection=selection, names=names)
 
     commands: list[str] = []
     temp_paths: list[str] = []
     try:
-        for start in range(0, len(names), NS_DNSX_CHUNK_SIZE):
-            chunk_path = create_temp_file(names[start:start + NS_DNSX_CHUNK_SIZE])
+        for start in range(0, len(selected), NS_DNSX_CHUNK_SIZE):
+            chunk_path = create_temp_file(selected[start:start + NS_DNSX_CHUNK_SIZE])
             temp_paths.append(chunk_path)
             commands.append(
                 command[:match.start("path")] + chunk_path
@@ -264,7 +317,20 @@ def _dnsx_chunk_commands(command):
             except OSError:
                 pass
         raise
-    return commands, temp_paths
+    return dns_incremental.NsRunPlan(
+        commands=commands, temp_paths=temp_paths, selection=selection,
+        names=selected)
+
+
+def _dnsx_chunk_commands(command):
+    """Bounded invocations for a bulk ``dnsx -l <file>`` command.
+
+    Thin wrapper kept for the callers/tests that only need the command list;
+    ``run_command_in_zsh_ns`` uses the full plan (which also carries what was
+    selected and why).
+    """
+    plan = _dnsx_run_plan(command)
+    return plan.commands, plan.temp_paths
 
 
 def _run_ns_command(command):

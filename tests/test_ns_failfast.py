@@ -19,6 +19,7 @@ the module-level runner imports are mocked.
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -28,6 +29,10 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "ns"))
 
 import utils.common as common
+from tests.epic10_fixtures import (  # noqa: E402
+    install_offline_selection,
+    restore_offline_selection,
+)
 from utils.common import ToolError, ToolTimeout, NS_COMMAND_TIMEOUT
 
 
@@ -51,6 +56,19 @@ def _proc(returncode=0, stdout="", stderr=""):
 
 
 class TestRunCommandInZshNs(unittest.TestCase):
+
+    # EPIC10: the NS runner now selects eligible names before it chunks. This
+    # suite pins fail-fast semantics, so it runs with the offline "everything is
+    # NEW" provider and a temp attempt store; selection is covered by
+    # tests/test_epic10_*.py.
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="ns-failfast-")
+        self._previous_env = install_offline_selection(self._tmp.name)
+
+    def tearDown(self):
+        restore_offline_selection(self._previous_env)
+        self._tmp.cleanup()
+
     def test_success_returns_lines_and_keeps_command_shape(self):
         captured = {}
 
@@ -137,6 +155,19 @@ class TestRunCommandInZshNs(unittest.TestCase):
 
 
 class TestCallerCompatibility(unittest.TestCase):
+
+    # EPIC10: the NS runner now selects eligible names before it chunks. This
+    # suite pins fail-fast semantics, so it runs with the offline "everything is
+    # NEW" provider and a temp attempt store; selection is covered by
+    # tests/test_epic10_*.py.
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="ns-failfast-")
+        self._previous_env = install_offline_selection(self._tmp.name)
+
+    def tearDown(self):
+        restore_offline_selection(self._previous_env)
+        self._tmp.cleanup()
+
     def test_watch_ns_all_propagates_failure(self):
         import watch_ns_all
 
