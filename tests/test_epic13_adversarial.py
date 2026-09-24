@@ -451,11 +451,22 @@ class TestCapabilityHonesty(unittest.TestCase):
             authorization=AUTHORIZATION)
         self.assertEqual(outcome.result, ex.RESULT_SUCCESS)
 
-    def test_dom_sink_evidence_is_declared_unavailable(self):
-        self.assertIn("DOM_SINK_IDENTIFIED", pl.UNAVAILABLE_EVIDENCE)
+    def test_dom_sink_evidence_is_acquirable_by_a_read_only_trace(self):
+        """EPIC15: DOM sink identification is a served-document analysis."""
+        self.assertNotIn("DOM_SINK_IDENTIFIED", pl.UNAVAILABLE_EVIDENCE)
+        self.assertEqual(pl.ACQUISITION_FOR_EVIDENCE["DOM_SINK_IDENTIFIED"],
+                         ac.TRACE_DOM_SINK)
 
-    def test_the_dom_unavailability_reason_is_deterministic(self):
-        self.assertIn("DOM", pl.UNAVAILABLE_EVIDENCE["DOM_SINK_IDENTIFIED"])
+    def test_the_dom_trace_action_is_read_only_and_needs_no_browser(self):
+        spec = ac.spec_for(ac.TRACE_DOM_SINK)
+        self.assertEqual(spec.safety, ac.SAFETY_READ_ONLY)
+        self.assertFalse(spec.requires_network)
+        self.assertIn("no browser", spec.limitation)
+
+    def test_execution_evidence_remains_declared_unavailable(self):
+        for evidence_type in ("PAYLOAD_EXECUTION",
+                              "EXPLOITABILITY_ESTABLISHED"):
+            self.assertIn(evidence_type, pl.UNAVAILABLE_EVIDENCE)
 
 
 if __name__ == "__main__":

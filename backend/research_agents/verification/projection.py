@@ -271,8 +271,39 @@ def chain_projection_for_candidate(
                          loop=loop)
 
 
+def deep_verification_block(result: Any = None) -> dict[str, Any]:
+    """The SOC view of deep verification (EPIC15 §27).
+
+    Deliberately explicit about the four states an analyst must not
+    conflate: ``NOT_OBSERVED`` (instrumented, nothing seen),
+    ``NOT_TESTED`` (never attempted), ``BLOCKED`` (authorization/scope/
+    budget) and ``CAPABILITY_UNAVAILABLE`` (no safe lane exists here).
+    """
+    from backend.research_agents.verification import deep as dp
+    if result is None:
+        lanes = dp.capability_document()
+        return {
+            "deep_verification": True,
+            "state": dp.DEEP_NOT_TESTED,
+            "browser": ("available" if lanes["lanes"]["browser"]["live_switch"]
+                        else "unavailable"),
+            "browser_blockers": lanes["lanes"]["browser"]["blockers"],
+            "dom_analysis": lanes["lanes"]["dom"]["capability"],
+            "authorization": "not_evaluated",
+            "source": "", "sink": "",
+            "execution": "unavailable",
+            "exploitability": "not_established",
+            "evidence": [],
+            "next_step": ("run a deep verification against an authorized, "
+                          "in-scope candidate"),
+            "rule_version": dp.DEEP_VERIFICATION_VERSION,
+        }
+    return dp.project_deep(result)
+
+
 __all__ = [
     "_trust_boundary",
+    "deep_verification_block",
     "BADGE_BLOCKED", "BADGE_INCONSISTENT", "BADGE_LABELS", "BADGE_PENDING",
     "BADGE_REJECTED", "BADGE_UNKNOWN", "BADGE_VERIFIED", "PROJECTION_RULE_VERSION",
     "badge_for", "chain_projection_for_candidate", "project_chain",

@@ -36,19 +36,23 @@ PLAN_RULE_VERSION = "epic13-acquisition-plan-1"
 ACQUISITION_FOR_EVIDENCE: dict[str, str] = {
     "REFLECTION_OBSERVED": ac.SEND_MARKER,
     "OUTPUT_CONTEXT_IDENTIFIED": ac.CLASSIFY_REFLECTION_CONTEXT,
+    # EPIC15: a lineage-bound source→sink trace of the served document is a
+    # read-only analysis (no browser, no execution), so the DOM stage is
+    # acquirable where the material exists.
+    "DOM_SINK_IDENTIFIED": ac.TRACE_DOM_SINK,
 }
 
 #: evidence the runtime genuinely cannot acquire, with the reason.
 UNAVAILABLE_EVIDENCE: dict[str, str] = {
     "PAYLOAD_EXECUTION": ("no payload-execution lane exists in this runtime: "
-                          "the platform's live execution gate is closed and "
-                          "this layer never synthesises execution evidence"),
+                          "the platform's live execution gate is closed "
+                          "(LIVE_BROWSER=false) and the B5 browser "
+                          "network/containment boundary is pending, so this "
+                          "layer never synthesises execution evidence"),
     "EXPLOITABILITY_ESTABLISHED": ("exploitability requires observed execution "
                                    "or impact evidence, neither of which this "
-                                   "runtime can produce"),
-    "DOM_SINK_IDENTIFIED": ("DOM analysis is unavailable: no browser is "
-                            "launched in this runtime "
-                            "(DOM_ANALYSIS_UNAVAILABLE)"),
+                                   "runtime can produce: it is never inferred "
+                                   "from execution alone"),
     "IMPACT_ESTABLISHED": ("impact evidence requires execution or a knowledge "
                            "reference; neither is acquirable here"),
 }
