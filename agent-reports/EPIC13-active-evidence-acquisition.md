@@ -273,4 +273,13 @@ EPIC13 makes no LLM calls. The acquisition layer never reads LLM output
 (pinned by test: no `advisor`/`openrouter`/`llm` reference in the package), and
 LLM output can never create, upgrade or confirm acquisition evidence.
 
-**READY TO PUSH: see the delivery section of the Telegram report.**
+```
+Delivery check : READY FOR PROMOTION (BRANCH, COMMIT, TESTS, PATH_GUARD,
+                 REPORT, PRODUCTION_UNTOUCHED all PASS)
+Diff guard     : PASS (29 files) with one WARN: 8693 added lines > 5000
+Production     : untouched, main = b74530e, 27 dirty entries preserved
+Branch         : agent/daily-development @ 6f67934, pushed to origin
+```
+
+**READY TO PUSH: YES** — the branch is pushed and promotion is waiting for the
+Telegram `APPROVE`.
