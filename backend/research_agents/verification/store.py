@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from backend.research_agents.finding.integrity import taxonomy as tx
 from backend.research_agents.finding.store import default_base_dir
 
 ACQUISITIONS_FILE = "verification_acquisitions.jsonl"
@@ -32,6 +33,15 @@ LOOPS_FILE = "verification_loops.jsonl"
 BUDGET_FILE = "verification_budget.jsonl"
 
 STORE_RULE_VERSION = "epic12-verification-store-1"
+
+
+def _classified(row: Any) -> tx.EvidenceItem:
+    """The authoritative classification of a persisted observation row.
+
+    EPIC14 §5: every consumer of a raw row sees what the classifier says, not
+    what the row claims.  Non-mapping rows classify as malformed.
+    """
+    return tx.classify_row(row if isinstance(row, dict) else {})
 
 
 class VerificationStoreError(ValueError):
@@ -167,6 +177,7 @@ class VerificationActionStore:
         """Observations projected as EPIC11-consumable evidence rows."""
         out: list[dict[str, Any]] = []
         for row in self.observations_for_candidate(candidate_id):
+            item = _classified(row)
             out.append({
                 "id": row.get("id"),
                 "type": row.get("type"),
@@ -176,7 +187,13 @@ class VerificationActionStore:
                 "observation_ref": row.get("observation_ref"),
                 "observed_at": row.get("observed_at"),
                 "detail": row.get("detail"),
-                "evidence_type": row.get("evidence_type"),
+                # EPIC14 §5: the listing shows the AUTHORITATIVE type; the
+                # row's declared value is kept alongside it for audit.
+                "evidence_type": item.evidence_type,
+                "declared_evidence_type": item.declared_evidence_type,
+                "authoritative_evidence_type": item.evidence_type,
+                "mismatch": item.mismatch,
+                "provenance_class": item.provenance_class,
                 "negative": row.get("negative"),
                 "not_tested": row.get("not_tested"),
                 "what_happened": row.get("what_happened"),
@@ -191,7 +208,6 @@ class VerificationActionStore:
                 "response_ref": row.get("response_ref"),
                 "action_id": row.get("action_id"),
                 "objective_id": row.get("objective_id"),
-                "evidence_type": row.get("evidence_type"),
                 "job_id": row.get("job_id"),
                 "provenance": row.get("provenance"),
             })

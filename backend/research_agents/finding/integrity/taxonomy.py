@@ -105,6 +105,103 @@ STAGE_LABELS: dict[int, str] = {
 CONFIRMATION_EVIDENCE = frozenset(
     {PAYLOAD_EXECUTION, EXPLOITABILITY_ESTABLISHED})
 
+# ------------------------------------------ EPIC14 trust boundary (§3-§8)
+
+#: Version of the authoritative classification precedence.  A row's
+#: self-declared ``evidence_type`` can no longer override the classification of
+#: its own signal; every mismatch is recorded against this version.
+AUTHORITATIVE_CLASSIFIER_VERSION = "epic14-authoritative-classification-1"
+
+MISMATCH_KIND = "evidence_type_mismatch"
+MISMATCH_STRONGER = "declared_stronger"
+MISMATCH_WEAKER = "declared_weaker"
+MISMATCH_UNRELATED = "declared_unrelated"
+MISMATCH_UNKNOWN_SIGNAL = "declared_with_unknown_signal"
+
+#: Provenance classes (§6).  Derived from structural row fields, never read
+#: from a row-declared class: a persisted row must not be able to assert its
+#: own trustworthiness.
+PROVENANCE_OBSERVATION = "OBSERVATION_DERIVED"
+PROVENANCE_ACQUISITION = "ACQUISITION_DERIVED"
+PROVENANCE_VERIFICATION = "VERIFICATION_DERIVED"
+PROVENANCE_RESEARCH = "RESEARCH_DERIVED"
+PROVENANCE_ADVISORY = "ADVISORY"
+PROVENANCE_LEGACY = "LEGACY"
+PROVENANCE_UNKNOWN = "UNKNOWN"
+
+PROVENANCE_CLASSES: tuple[str, ...] = (
+    PROVENANCE_OBSERVATION, PROVENANCE_ACQUISITION, PROVENANCE_VERIFICATION,
+    PROVENANCE_RESEARCH, PROVENANCE_ADVISORY, PROVENANCE_LEGACY,
+    PROVENANCE_UNKNOWN,
+)
+
+#: Provenance a deterministic trusted path produces.  Only these may carry
+#: confirmation-capable evidence (§6, §16, §17).  RESEARCH_DERIVED is trusted
+#: for knowledge correlation only; ADVISORY/LEGACY/UNKNOWN never confirm.
+TRUSTED_PROVENANCE_CLASSES = frozenset(
+    {PROVENANCE_OBSERVATION, PROVENANCE_ACQUISITION, PROVENANCE_VERIFICATION})
+
+#: Structural markers of LLM/advisory content (§14).  Any of these makes the
+#: row advisory regardless of what else it claims.
+ADVISORY_MARKERS: tuple[str, ...] = (
+    "advisory", "advisor", "llm", "llm_insight", "openrouter", "insight",
+    "model_suggestion", "hypothesis_only",
+)
+
+#: Structural markers of the trusted deterministic paths.
+ACQUISITION_MARKERS: tuple[str, ...] = (
+    "acquisition", "acq-", "marker_reflect", "hermes_reflect",
+)
+VERIFICATION_MARKERS: tuple[str, ...] = (
+    "verification", "verify", "chain", "action-", "act-", "ver-",
+)
+RESEARCH_MARKERS: tuple[str, ...] = ("cve", "research", "knowledge", "nvd")
+
+
+def provenance_class_for(row: Any) -> str:
+    """Deterministic provenance class for ONE raw row (§6).
+
+    Derived only from structural fields the trusted producers set.  A row
+    cannot declare its own provenance class: ``provenance_class`` in a row is
+    ignored, so forged provenance cannot buy trust.
+    """
+    data, malformed = _coerce_row(row)
+    if malformed:
+        return PROVENANCE_UNKNOWN
+
+    def _text(*keys: str) -> str:
+        return " ".join(str(data.get(k) or "") for k in keys).strip().lower()
+
+    haystack = _text("type", "signal", "agent", "source", "provenance_source",
+                     "advisory_mode", "category")
+    if str(data.get("advisory_id") or "").strip():
+        return PROVENANCE_ADVISORY
+    if str(data.get("advisory_mode") or "").strip():
+        return PROVENANCE_ADVISORY
+    if any(marker in haystack for marker in ADVISORY_MARKERS):
+        return PROVENANCE_ADVISORY
+
+    structural = _text("action_id", "observation_ref", "verification_id",
+                       "chain_id", "acquisition_id", "job_id", "agent",
+                       "source", "execution_mode", "signal", "marker",
+                       "where", "acquisition")
+    raw_type = _signal_slug(data.get("type"))
+    raw_signal = _signal_slug(data.get("signal"))
+    if any(marker in structural for marker in ACQUISITION_MARKERS):
+        return PROVENANCE_ACQUISITION
+    if any(marker in structural for marker in VERIFICATION_MARKERS):
+        return PROVENANCE_VERIFICATION
+    if any(marker in haystack for marker in RESEARCH_MARKERS):
+        return PROVENANCE_RESEARCH
+    if raw_type in ("observation", "observations") and raw_signal:
+        return PROVENANCE_OBSERVATION
+    if not raw_signal and not raw_type:
+        # no structural provenance at all: a historical/imported row
+        return PROVENANCE_LEGACY
+    if not raw_signal:
+        return PROVENANCE_LEGACY
+    return PROVENANCE_UNKNOWN
+
 # ------------------------------------------------- signal registry (closed)
 
 SIGNAL_TO_TYPE: dict[str, str] = {
@@ -228,6 +325,36 @@ class EvidenceItem:
     unclassified_reason: str = ""
     provenance: dict[str, Any] = field(default_factory=dict)
     rule_version: str = TAXONOMY_RULE_VERSION
+    # ---- EPIC14: declared vs authoritative --------------------------------
+    #: what the persisted row *said* its type was (metadata, never authority)
+    declared_evidence_type: str = ""
+    #: why the declared type is not the authoritative type ("" when they agree)
+    mismatch_reason: str = ""
+    #: the auditable mismatch record (§5); empty when there is no mismatch
+    mismatch: dict[str, Any] = field(default_factory=dict)
+    #: deterministic provenance class (§6)
+    provenance_class: str = PROVENANCE_UNKNOWN
+
+    @property
+    def authoritative_evidence_type(self) -> str:
+        """The type the trusted classification path decided on."""
+        return self.evidence_type
+
+    @property
+    def has_mismatch(self) -> bool:
+        return bool(self.mismatch) or bool(self.mismatch_reason)
+
+    @property
+    def is_confirmation_eligible(self) -> bool:
+        """May this item support a confirmation claim?  (§6, §16, §17)
+
+        Three conditions, all authoritative: the type is a confirmation type,
+        the classification is not a mismatch, and the provenance class is one
+        of the trusted deterministic paths.
+        """
+        return (self.evidence_type in CONFIRMATION_EVIDENCE
+                and not self.has_mismatch
+                and self.provenance_class in TRUSTED_PROVENANCE_CLASSES)
 
     @property
     def is_duplicate(self) -> bool:
@@ -269,6 +396,12 @@ class EvidenceItem:
             "unclassified_reason": self.unclassified_reason,
             "provenance": dict(self.provenance),
             "rule_version": self.rule_version,
+            "authoritative_evidence_type": self.evidence_type,
+            "declared_evidence_type": self.declared_evidence_type,
+            "mismatch_reason": self.mismatch_reason,
+            "mismatch": dict(self.mismatch),
+            "provenance_class": self.provenance_class,
+            "confirmation_eligible": self.is_confirmation_eligible,
         }
 
 
@@ -298,6 +431,62 @@ def _coerce_row(row: Any) -> tuple[dict[str, Any], str]:
     return {}, MALFORMED_ROW_REASON
 
 
+#: Deterministic negative-signal families.  A producer names its negative
+#: observation ``<stage>_not_observed`` / ``<stage>_not_tested``; the family
+#: decides the negative kind, so a negative can never be read as a positive.
+NOT_OBSERVED_SUFFIXES: tuple[str, ...] = (
+    "_not_observed", "_not_identified", "_absent", "_not_found",
+)
+NOT_TESTED_SUFFIXES: tuple[str, ...] = (
+    "_not_tested", "_not_performed", "_not_attempted", "_untested",
+)
+
+
+def _is_not_observed_signal(signal: str) -> bool:
+    return bool(signal) and signal.endswith(NOT_OBSERVED_SUFFIXES)
+
+
+def _is_not_tested_signal(signal: str) -> bool:
+    return bool(signal) and signal.endswith(NOT_TESTED_SUFFIXES)
+
+
+def _mismatch_class(declared: str, authoritative: str) -> str:
+    """Classify a declared/authoritative disagreement deterministically."""
+    declared_stage = EVIDENCE_STAGE.get(declared, STAGE_AUXILIARY)
+    authoritative_stage = EVIDENCE_STAGE.get(authoritative, STAGE_AUXILIARY)
+    if declared_stage > authoritative_stage:
+        return MISMATCH_STRONGER
+    if declared_stage < authoritative_stage:
+        return MISMATCH_WEAKER
+    return MISMATCH_UNRELATED
+
+
+def mismatch_record_for(item: "EvidenceItem") -> dict[str, Any]:
+    """The auditable mismatch record for one classified item (§5).
+
+    Empty when the declared and authoritative types agree.  The record names
+    the signal, both types, the provenance class and the classifier version so
+    the classification is reproducible from persisted data alone.
+    """
+    if not item.mismatch_reason:
+        return {}
+    return {
+        "kind": MISMATCH_KIND,
+        "class": item.mismatch_reason,
+        "signal": item.raw_signal,
+        "declared_evidence_type": item.declared_evidence_type,
+        "authoritative_evidence_type": item.evidence_type,
+        "source": "epic11_evidence_taxonomy",
+        "evidence_id": item.evidence_id,
+        "observation_id": item.observation_ref,
+        "job_id": item.job_id,
+        "candidate_id": str(item.provenance.get("candidate_id") or ""),
+        "observed_at": item.observed_at,
+        "provenance_class": item.provenance_class,
+        "classifier_version": AUTHORITATIVE_CLASSIFIER_VERSION,
+    }
+
+
 def classify_row(row: dict[str, Any]) -> EvidenceItem:
     """Normalize ONE raw evidence row.  Never invents precision."""
     row, malformed = _coerce_row(row)
@@ -316,39 +505,51 @@ def classify_row(row: dict[str, Any]) -> EvidenceItem:
     raw_type = _signal_slug(row.get("type"))
     raw_signal = _signal_slug(row.get("signal"))
     declared = str(row.get("evidence_type") or "").strip().upper()
+    declared_valid = declared if declared in EVIDENCE_TYPE_SET else ""
+    provenance_class = provenance_class_for(row)
     unclassified_reason = ""
+    mismatch_reason = ""
 
     evidence_type = ""
     negative_kind = ""
-    if raw_signal in NOT_TESTED_SIGNALS:
+    if raw_signal in NOT_TESTED_SIGNALS or _is_not_tested_signal(raw_signal):
         evidence_type = NEGATIVE_EVIDENCE
         negative_kind = NOT_TESTED
-    elif raw_signal in NEGATIVE_SIGNALS or raw_type == "negative":
+    elif (raw_signal in NEGATIVE_SIGNALS
+          or _is_not_observed_signal(raw_signal)
+          or raw_type == "negative"
+          or declared_valid == NEGATIVE_EVIDENCE):
         evidence_type = NEGATIVE_EVIDENCE
         negative_kind = NOT_OBSERVED
-    elif declared in EVIDENCE_TYPE_SET:
-        # explicit stamp: honored only inside the closed vocabulary
-        evidence_type = declared
     elif raw_signal in SIGNAL_TO_TYPE:
+        # ---- THE TRUST BOUNDARY (EPIC14) --------------------------------
+        # The authoritative signal registry decides the type.  A persisted
+        # row's self-declared ``evidence_type`` is metadata: it is recorded,
+        # never honoured, and any disagreement is an explicit mismatch.
         evidence_type = SIGNAL_TO_TYPE[raw_signal]
+        if declared_valid and declared_valid != evidence_type:
+            mismatch_reason = _mismatch_class(declared_valid, evidence_type)
+    elif raw_signal:
+        # an unknown signal FAILS CLOSED (§8): the type is never inferred
+        # from a row-declared stamp, from row text or from an LLM
+        evidence_type = UNCLASSIFIED_OBSERVATION
+        unclassified_reason = f"unrecognised_signal:{raw_signal}"
+        if declared_valid:
+            mismatch_reason = MISMATCH_UNKNOWN_SIGNAL
     elif raw_type in _NON_OBSERVATION_TYPES:
         evidence_type = _NON_OBSERVATION_TYPES[raw_type]
+    elif declared_valid:
+        # no signal at all: an explicit stamp from a producer that does not
+        # use the signal vocabulary.  Honoured for typing only — a
+        # confirmation-capable stamp still needs trusted provenance (§17).
+        evidence_type = declared_valid
     else:
         evidence_type = UNCLASSIFIED_OBSERVATION
-        unclassified_reason = (
-            f"unrecognised_signal:{raw_signal}" if raw_signal
-            else f"unrecognised_evidence:{raw_type or 'unknown'}")
-
-    if declared and declared != evidence_type and evidence_type not in (
-            NEGATIVE_EVIDENCE,):
-        # explicit stamp the registry disagrees with: registry wins for
-        # negative/not-tested rows, otherwise the stamp is authoritative
-        evidence_type = declared if declared in EVIDENCE_TYPE_SET \
-            else evidence_type
+        unclassified_reason = f"unrecognised_evidence:{raw_type or 'unknown'}"
 
     stage = EVIDENCE_STAGE.get(evidence_type, STAGE_AUXILIARY)
     evidence_id = str(row.get("id") or "")
-    return EvidenceItem(
+    item = EvidenceItem(
         evidence_id=evidence_id,
         evidence_type=evidence_type,
         stage=stage,
@@ -362,6 +563,9 @@ def classify_row(row: dict[str, Any]) -> EvidenceItem:
         observed_at=str(row.get("created_at") or ""),
         negative_kind=negative_kind,
         unclassified_reason=unclassified_reason,
+        declared_evidence_type=declared_valid,
+        mismatch_reason=mismatch_reason,
+        provenance_class=provenance_class,
         provenance={
             "source": "evidence_taxonomy",
             "rule_version": TAXONOMY_RULE_VERSION,
@@ -370,8 +574,13 @@ def classify_row(row: dict[str, Any]) -> EvidenceItem:
             "authorization_ref": str(row.get("authorization_ref") or ""),
             "scope_ref": str(row.get("scope_ref") or ""),
             "evidence_job": str(row.get("job_id") or ""),
+            "candidate_id": str(row.get("candidate_id") or ""),
+            "provenance_class": provenance_class,
+            "classifier_version": AUTHORITATIVE_CLASSIFIER_VERSION,
         },
     )
+    item.mismatch = mismatch_record_for(item)
+    return item
 
 
 def classify_rows(rows: Iterable[dict[str, Any]]) -> list[EvidenceItem]:
@@ -391,6 +600,42 @@ def classify_rows(rows: Iterable[dict[str, Any]]) -> list[EvidenceItem]:
         else:
             item.duplicate_of = kept
     return items
+
+
+def contributes_to_authoritative_stage(item: EvidenceItem) -> bool:
+    """EPIC14 §7/§12 — may this row advance a verification stage?
+
+    One rule, consumed by every layer (EPIC11 claims/gate and the EPIC12
+    chain), so no layer re-derives it:
+
+    * a row whose declared type disagreed with its signal contributes its
+      *authoritative* type only — and is refused outright when that type is
+      confirmation-capable, because a row that lied about its strength cannot
+      be the row that establishes strength;
+    * a confirmation-capable row without trusted provenance contributes
+      nothing (an advisory/legacy row can never establish execution);
+    * negative evidence is handled by the negative path, not here.
+    """
+    if item.evidence_type in (NEGATIVE_EVIDENCE, MALFORMED_EVIDENCE):
+        return False
+    if not item.is_stage_evidence:
+        return False
+    if item.evidence_type in CONFIRMATION_EVIDENCE:
+        return item.is_confirmation_eligible
+    if item.mismatch and item.mismatch_reason in (
+            MISMATCH_STRONGER, MISMATCH_UNKNOWN_SIGNAL):
+        return False
+    return True
+
+
+def authoritative_items(items: Iterable[EvidenceItem]
+                       ) -> list[EvidenceItem]:
+    """The rows that may contribute to an authoritative stage/claim view.
+
+    EPIC14 §12: EPIC11 owns this rule; the EPIC12 chain consumes it instead of
+    re-deriving stage membership from raw rows.
+    """
+    return [i for i in items if contributes_to_authoritative_stage(i)]
 
 
 def unique_items(items: Iterable[EvidenceItem]) -> list[EvidenceItem]:
@@ -433,7 +678,16 @@ def negative_evidence(items: Iterable[EvidenceItem]) -> list[dict[str, Any]]:
 
 
 __all__ = [
+    "ACQUISITION_MARKERS", "ADVISORY_MARKERS", "AUTHORITATIVE_CLASSIFIER_VERSION",
     "AUTHORIZATION_CONFIRMED", "CONFIRMATION_EVIDENCE",
+    "MISMATCH_KIND", "MISMATCH_STRONGER", "MISMATCH_UNKNOWN_SIGNAL",
+    "MISMATCH_UNRELATED", "MISMATCH_WEAKER",
+    "NOT_OBSERVED_SUFFIXES", "NOT_TESTED_SUFFIXES",
+    "PROVENANCE_ACQUISITION", "PROVENANCE_ADVISORY", "PROVENANCE_CLASSES",
+    "PROVENANCE_LEGACY", "PROVENANCE_OBSERVATION", "PROVENANCE_RESEARCH",
+    "PROVENANCE_UNKNOWN", "PROVENANCE_VERIFICATION",
+    "RESEARCH_MARKERS", "TRUSTED_PROVENANCE_CLASSES", "VERIFICATION_MARKERS",
+    "mismatch_record_for", "provenance_class_for",
     "CONTROLLED_INPUT_SENT", "DOM_SINK_IDENTIFIED", "EVIDENCE_STAGE",
     "EVIDENCE_TYPES", "EVIDENCE_TYPE_SET", "EXPLOITABILITY_ESTABLISHED",
     "EvidenceItem", "IMPACT_ESTABLISHED", "KNOWLEDGE_REFERENCE",

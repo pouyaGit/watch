@@ -76,6 +76,18 @@ class TransitionError(ValueError):
     """Illegal job status transition (subclasses ValueError for callers)."""
 
 
+class EvidenceTrustError(ValueError):
+    """EPIC14 trust boundary: a persisted evidence row tried to self-declare.
+
+    Raised at the write boundary when a row's ``evidence_type`` disagrees with
+    the authoritative classification of its signal, or when a
+    confirmation-capable row arrives without the structural attestation the
+    trusted deterministic producers always set.  Evidence strength can only
+    increase through an authorized, deterministic, provenance-preserving
+    transition — never through row metadata.
+    """
+
+
 class RuntimeStore:
     """The persistent agent work queue + runtime record stores."""
 
@@ -131,6 +143,38 @@ class RuntimeStore:
             fh.flush()
             os.fsync(fh.fileno())
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+    def annotate_evidence(self, *, where: Any,
+                          fields: dict[str, Any]) -> int:
+        """EPIC10 §11: merge enrichment fields into matching evidence
+        rows. Content keys (id, created_at, job_id, observation_ref,
+        signal, detail, type) are never overwritten and rows are never
+        deleted — enrichment only."""
+        protected = {"id", "created_at", "job_id", "observation_ref",
+                     "signal", "detail", "type"}
+        payload = {k: v for k, v in fields.items() if k not in protected}
+        if not payload:
+            return 0
+        changed = 0
+        with self._locked() as state:
+            for row in state["evidence"]:
+                try:
+                    matches = bool(where(row))
+                except Exception:  # noqa: BLE001 - bad predicate = no-op
+                    matches = False
+                if not matches:
+                    continue
+                before = dict(row)
+                row.update(payload)
+                if row != before:
+                    changed += 1
+            if changed:
+                self._append_audit({
+                    "event": "evidence_annotated",
+                    "changed": changed,
+                    "fields": sorted(payload),
+                })
+        return changed
 
     def record_audit_event(self, event: dict[str, Any]) -> None:
         """Public append-only audit writer (intelligence stages, Phase 10).
@@ -444,10 +488,79 @@ class RuntimeStore:
         row = self._read_state()["results"].get(str(job_id or ""))
         return _result_from_dict(row) if row else None
 
+    #: structural fields every trusted deterministic producer sets on a
+    #: confirmation-capable row
+    CONFIRMATION_ATTESTATION: tuple[str, ...] = (
+        "job_id", "observation_ref", "signal")
+
+    def _check_evidence_trust(self, evidence: dict[str, Any]) -> None:
+        """EPIC14 §15 — enforce the invariant at the persistence boundary.
+
+        A caller cannot bypass authoritative classification by constructing a
+        row whose metadata claims a stronger evidence type than its signal
+        supports, and cannot persist confirmation-capable evidence that no
+        trusted producer shaped.
+        """
+        from backend.research_agents.finding.integrity import taxonomy as tx
+
+        signal = str(evidence.get("signal") or "").strip()
+        declared = str(evidence.get("evidence_type") or "").strip().upper()
+        slug = signal.lower()
+        authoritative = tx.SIGNAL_TO_TYPE.get(slug)
+        if not authoritative:
+            for suffix in tx.NOT_OBSERVED_SUFFIXES:
+                if slug.endswith(suffix):
+                    authoritative = tx.NEGATIVE_EVIDENCE
+                    break
+            if not authoritative:
+                for suffix in tx.NOT_TESTED_SUFFIXES:
+                    if slug.endswith(suffix):
+                        authoritative = tx.NEGATIVE_EVIDENCE
+                        break
+        if declared and declared in tx.EVIDENCE_TYPE_SET:
+            if authoritative and declared != authoritative:
+                raise EvidenceTrustError(
+                    "evidence_type "
+                    f"{declared!r} disagrees with the authoritative "
+                    f"classification of signal {signal!r} "
+                    f"({authoritative!r}); evidence strength cannot be "
+                    "raised by row metadata")
+            if slug and not authoritative:
+                # an unknown signal cannot be classified at all: fail closed
+                raise EvidenceTrustError(
+                    f"signal {signal!r} is not in the authoritative signal "
+                    f"registry, so a declared evidence_type {declared!r} "
+                    "cannot be trusted")
+        confirmation_capable = (
+            (authoritative in tx.CONFIRMATION_EVIDENCE)
+            or (declared in tx.CONFIRMATION_EVIDENCE))
+        if confirmation_capable:
+            missing = [k for k in self.CONFIRMATION_ATTESTATION
+                       if not str(evidence.get(k) or "").strip()]
+            if missing:
+                raise EvidenceTrustError(
+                    "confirmation-capable evidence requires the trusted "
+                    "producer's attestation; missing "
+                    + ",".join(missing))
+
     def record_evidence(self, evidence: dict[str, Any]) -> str:
+        self._check_evidence_trust(evidence)
         row = {"id": evidence.get("id") or f"ev-{uuid.uuid4().hex[:12]}",
                "created_at": utcnow(), **evidence}
+        # EPIC10 §11: an IDENTICAL evidence record (same job, same
+        # observation ref, same signal, same type, same detail) is
+        # never appended twice — the existing id is returned so
+        # references stay stable. Different signal/role for the same
+        # observation is legitimate evidence, not a duplicate.
+        dedup_key = ("job_id", "observation_ref", "signal", "type",
+                     "detail")
+        key = tuple(str(row.get(k) or "") for k in dedup_key)
         with self._locked() as state:
+            for existing in state["evidence"]:
+                ex_key = tuple(str(existing.get(k) or "")
+                               for k in dedup_key)
+                if ex_key == key:
+                    return str(existing["id"])
             state["evidence"].append(row)
             self._append_audit({
                 "event": "evidence_recorded",

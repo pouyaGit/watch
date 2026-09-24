@@ -73,6 +73,12 @@ class IntegrityDecision:
     runtime_gate_claimed_case: bool = False
     limitations: list[str] = field(default_factory=list)
     rule_version: str = GATE_RULE_VERSION
+    # ---- EPIC14 trust boundary -------------------------------------------
+    #: rows whose declared evidence type disagreed with the authoritative
+    #: classification of their signal (§5)
+    evidence_mismatches: list[dict[str, Any]] = field(default_factory=list)
+    #: confirmation-capable rows excluded from authoritative support (§17)
+    excluded_evidence: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def confirmed(self) -> bool:
@@ -95,6 +101,8 @@ class IntegrityDecision:
             "runtime_gate_claimed_case": self.runtime_gate_claimed_case,
             "limitations": list(self.limitations),
             "rule_version": self.rule_version,
+            "evidence_mismatches": list(self.evidence_mismatches),
+            "excluded_evidence": list(self.excluded_evidence),
         }
 
 
@@ -144,6 +152,13 @@ def decide(
                 f"unsupported:{','.join(evaluation.unsupported_claims[:6])}")
 
     limitations = list(evaluation.limitations)
+    mismatches = list(evaluation.evidence_mismatches)
+    excluded = list(evaluation.excluded_evidence)
+    if mismatches:
+        limitations.append(
+            "the gate classified evidence from its signals, not from the "
+            f"rows' declared evidence types: {len(mismatches)} mismatch(es) "
+            "recorded and excluded from authoritative support")
     if state == VERIFICATION_PENDING:
         limitations.append(
             "authoritative Evidence Gate outcome is VERIFICATION_PENDING: "
@@ -176,6 +191,8 @@ def decide(
         runtime_gate_reason=runtime_gate_reason,
         runtime_gate_claimed_case=runtime_gate_claimed_case,
         limitations=limitations,
+        evidence_mismatches=mismatches[:40],
+        excluded_evidence=excluded[:40],
     )
 
 

@@ -52,6 +52,9 @@ NEGATIVE_TARGET_TYPE: dict[str, str] = {
 REASON_NOT_TESTED = "not_tested"
 REASON_CONTRADICTED = "contradicting_evidence"
 REASON_TOO_FEW_OBSERVATIONS = "insufficient_unique_observations"
+# EPIC14: evidence excluded from authoritative support, and why
+REASON_MISMATCHED_EVIDENCE = "mismatched_evidence_excluded"
+REASON_UNTRUSTED_PROVENANCE = "confirmation_evidence_without_trusted_provenance"
 
 
 @dataclass
@@ -139,6 +142,15 @@ class ClaimEvaluation:
     authorization: dict[str, Any] = field(default_factory=dict)
     limitations: list[str] = field(default_factory=list)
     rule_version: str = CLAIM_RULE_VERSION
+    # ---- EPIC14 trust boundary -------------------------------------------
+    #: auditable mismatches between a row's declared type and the
+    #: authoritative classification of its signal (§5)
+    evidence_mismatches: list[dict[str, Any]] = field(default_factory=list)
+    #: confirmation-capable items that were excluded from authoritative
+    #: support, with the reason (§10, §17)
+    excluded_evidence: list[dict[str, Any]] = field(default_factory=list)
+    #: classifier version the authoritative types were derived with
+    classifier_version: str = tx.AUTHORITATIVE_CLASSIFIER_VERSION
 
     @property
     def confirmed(self) -> bool:
@@ -189,6 +201,9 @@ class ClaimEvaluation:
             "authorization": dict(self.authorization),
             "limitations": list(self.limitations),
             "rule_version": self.rule_version,
+            "evidence_mismatches": list(self.evidence_mismatches),
+            "excluded_evidence": list(self.excluded_evidence),
+            "classifier_version": self.classifier_version,
             "advisory_only_fields_used": [],
         }
 
@@ -206,10 +221,45 @@ def _claim_status(
 ) -> tuple[str, list[str], list[str], int, str]:
     """(status, supporting_ids, contradicting_ids, unique_obs, reason)."""
     wanted = set(spec.required_evidence_types)
-    supporting = [i for i in items
-                  if i.evidence_type in wanted and i.stage > 0
-                  and i.evidence_type not in (tx.NEGATIVE_EVIDENCE,
-                                              tx.KNOWLEDGE_REFERENCE)]
+    excluded: list[dict[str, str]] = []
+    supporting: list[tx.EvidenceItem] = []
+    for item in items:
+        if item.evidence_type not in wanted or item.stage <= 0:
+            continue
+        if item.evidence_type in (tx.NEGATIVE_EVIDENCE,
+                                  tx.KNOWLEDGE_REFERENCE):
+            continue
+        if (item.evidence_type in tx.CONFIRMATION_EVIDENCE
+                and not item.is_confirmation_eligible):
+            # EPIC14: a confirmation-capable type is authoritative ONLY when
+            # its classification is not a mismatch AND its provenance is a
+            # trusted deterministic path.  Otherwise it contributes nothing.
+            excluded.append({
+                "evidence_id": item.evidence_id,
+                "reason": (REASON_MISMATCHED_EVIDENCE
+                           if item.has_mismatch
+                           else REASON_UNTRUSTED_PROVENANCE),
+                "detail": (item.mismatch_reason
+                           or f"provenance:{item.provenance_class}"),
+                "declared_evidence_type": item.declared_evidence_type,
+                "authoritative_evidence_type": item.evidence_type,
+                "signal": item.raw_signal,
+            })
+            continue
+        if not tx.contributes_to_authoritative_stage(item):
+            # EPIC14 §7/§12: the same authoritative rule the EPIC12 chain
+            # consumes.  A row that self-declared a stronger type than its
+            # signal supports supports no claim either.
+            excluded.append({
+                "evidence_id": item.evidence_id,
+                "reason": REASON_MISMATCHED_EVIDENCE,
+                "detail": item.mismatch_reason,
+                "declared_evidence_type": item.declared_evidence_type,
+                "authoritative_evidence_type": item.evidence_type,
+                "signal": item.raw_signal,
+            })
+            continue
+        supporting.append(item)
     if spec.claim_type == "knowledge_correlation":
         supporting = [i for i in items
                       if i.evidence_type == tx.KNOWLEDGE_REFERENCE]
@@ -235,7 +285,8 @@ def _claim_status(
     if contradicting:
         ids = [n.evidence_id for n in contradicting if n.evidence_id]
         return (CLAIM_CONTRADICTED, supporting_ids, ids, len(observations),
-                f"{REASON_CONTRADICTED}:{ids[0] if ids else 'negative'}")
+                f"{REASON_CONTRADICTED}:{ids[0] if ids else 'negative'}",
+                excluded)
 
     missing_group: tuple[str, ...] | None = None
     for group in spec.required_groups:
@@ -251,21 +302,28 @@ def _claim_status(
     if missing_group is None and len(observations) < \
             max(1, spec.min_unique_observations):
         return (CLAIM_UNSUPPORTED, supporting_ids, [], len(observations),
-                REASON_TOO_FEW_OBSERVATIONS)
+                REASON_TOO_FEW_OBSERVATIONS, excluded)
     if missing_group is not None:
         if spec.requires_authorization and not authorization_satisfied \
                 and not supporting:
             return (CLAIM_UNSUPPORTED, supporting_ids, [], len(observations),
-                    ct.R_MISSING_AUTHORIZATION)
+                    ct.R_MISSING_AUTHORIZATION, excluded)
+        if excluded and (set(missing_group) & set(tx.CONFIRMATION_EVIDENCE)):
+            # the only evidence that could satisfy this group was excluded:
+            # name the exclusion instead of reporting a bare absence (§10)
+            return (CLAIM_UNSUPPORTED, supporting_ids, [], len(observations),
+                    f"{excluded[0]['reason']}:{excluded[0]['evidence_id']}",
+                    excluded)
         if not_tested and not supporting:
             return (CLAIM_UNSUPPORTED, supporting_ids, [], len(observations),
-                    REASON_NOT_TESTED)
+                    REASON_NOT_TESTED, excluded)
         return (CLAIM_UNSUPPORTED, supporting_ids, [], len(observations),
-                ct.reason_for_type(missing_group[0]))
+                ct.reason_for_type(missing_group[0]), excluded)
     if spec.requires_authorization and not authorization_satisfied:
         return (CLAIM_UNSUPPORTED, supporting_ids, [], len(observations),
-                ct.R_MISSING_AUTHORIZATION)
-    return (CLAIM_SUPPORTED, supporting_ids, [], len(observations), "")
+                ct.R_MISSING_AUTHORIZATION, excluded)
+    return (CLAIM_SUPPORTED, supporting_ids, [], len(observations), "",
+            excluded)
 
 
 def evaluate_contract(
@@ -296,10 +354,14 @@ def evaluate_contract(
     results: list[ClaimResult] = []
     missing_reasons: list[str] = []
     unsupported: list[str] = []
+    excluded_evidence: list[dict[str, Any]] = []
     for spec in contract.claims:
-        status, supporting_ids, contradicting_ids, obs, reason = \
+        status, supporting_ids, contradicting_ids, obs, reason, excluded = \
             _claim_status(spec, items=unique, negatives=negatives,
                           authorization_satisfied=authorization_satisfied)
+        for entry in excluded:
+            if entry not in excluded_evidence:
+                excluded_evidence.append(entry)
         result = ClaimResult(
             claim_id=spec.claim_id,
             claim_type=spec.claim_type,
@@ -388,12 +450,28 @@ def evaluate_contract(
                           f"negative evidence",
             })
 
+    mismatches = [i.mismatch for i in unique if i.mismatch]
     limitations = list(contract.limitations) + [
         "evidence stages reached: "
         f"{tx.STAGE_LABELS.get(stage, 'none')}",
         "duplicate evidence events are collapsed before support is "
         "counted",
+        "evidence strength is determined by authoritative provenance and "
+        "signal classification, not by a persisted row's self-declared "
+        "evidence type",
     ]
+    if mismatches:
+        kinds = sorted({m.get("class") or "" for m in mismatches})
+        limitations.append(
+            f"{len(mismatches)} evidence row(s) declared an evidence type "
+            "that disagrees with the authoritative classification of their "
+            "signal; the authoritative type was used and the disagreement is "
+            "recorded (" + ",".join(k for k in kinds if k) + ")")
+    if excluded_evidence:
+        limitations.append(
+            f"{len(excluded_evidence)} confirmation-capable evidence row(s) "
+            "were excluded from authoritative support "
+            f"({excluded_evidence[0]['reason']})")
     if confirmation is not None and confirmation.status != CLAIM_SUPPORTED:
         limitations.append(
             "not a confirmed vulnerability: "
@@ -431,6 +509,8 @@ def evaluate_contract(
         evidence_items=[i.to_dict() for i in unique][:60],
         authorization=auth.to_dict(),
         limitations=limitations,
+        evidence_mismatches=mismatches[:40],
+        excluded_evidence=excluded_evidence[:40],
     )
 
 
@@ -452,8 +532,8 @@ __all__ = [
     "CLAIM_CONTRADICTED", "CLAIM_NOT_TESTED", "CLAIM_RULE_VERSION",
     "CLAIM_STATUSES", "CLAIM_SUPPORTED", "CLAIM_UNSUPPORTED", "ClaimEvaluation",
     "ClaimResult", "MATRIX_MISSING", "NEGATIVE_TARGET_TYPE",
-    "REASON_CONTRADICTED", "REASON_NOT_TESTED",
-    "REASON_TOO_FEW_OBSERVATIONS", "STATE_BLOCKED", "STATE_REJECTED",
+    "REASON_CONTRADICTED", "REASON_MISMATCHED_EVIDENCE", "REASON_NOT_TESTED",
+    "REASON_TOO_FEW_OBSERVATIONS", "REASON_UNTRUSTED_PROVENANCE", "STATE_BLOCKED", "STATE_REJECTED",
     "STATE_VERIFICATION_PENDING", "STATE_VERIFIED_ELIGIBLE",
     "evaluate_contract", "evaluate_rows",
 ]

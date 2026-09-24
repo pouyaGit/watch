@@ -50,6 +50,32 @@ def _required_stages_satisfied(state: ChainState) -> bool:
     return True
 
 
+def _trust_boundary(state_dict: Mapping[str, Any]) -> dict[str, Any]:
+    """The EPIC14 trust-boundary view of one evidence set (§5).
+
+    Reports every declared-vs-authoritative mismatch and every
+    confirmation-capable row the authoritative layer refused to count, so the
+    SOC sees evidence that lied about its own type instead of a clean set.
+    """
+    mismatches = [dict(m) for m in (state_dict.get("evidence_mismatches")
+                                    or [])]
+    excluded = [dict(x) for x in (state_dict.get("excluded_evidence") or [])]
+    return {
+        "authoritative": True,
+        "classifier_version": str(state_dict.get("classifier_version") or ""),
+        "mismatch_count": len(mismatches),
+        "mismatch_classes": sorted({str(m.get("class") or "")
+                                    for m in mismatches if m.get("class")}),
+        "mismatches": mismatches[:20],
+        "excluded_confirmation_count": len(excluded),
+        "excluded_confirmation": excluded[:20],
+        "clean": not (mismatches or excluded),
+        "statement": ("evidence strength is determined by authoritative "
+                      "provenance and signal classification, not by a "
+                      "persisted row's self-declared evidence type"),
+    }
+
+
 def badge_for(state: ChainState | Mapping[str, Any] | None) -> dict[str, Any]:
     """The analyst badge — never optimistic."""
     if state is None:
@@ -62,12 +88,23 @@ def badge_for(state: ChainState | Mapping[str, Any] | None) -> dict[str, Any]:
             (s.get("status") in (ch.STAGE_SATISFIED, ch.STAGE_NOT_APPLICABLE))
             for s in (state.get("stages") or [])
             if s.get("required_for_confirmation"))
-        return _badge(verdict, confirmed, required_ok)
+        return _badge(verdict, confirmed, required_ok,
+                      len(state.get("evidence_mismatches") or []))
     return _badge(state.verdict, state.confirmed,
-                  _required_stages_satisfied(state))
+                  _required_stages_satisfied(state),
+                  len(state.evidence_mismatches))
 
 
-def _badge(verdict: str, confirmed: bool, required_ok: bool) -> dict[str, Any]:
+def _badge(verdict: str, confirmed: bool, required_ok: bool,
+           mismatches: int = 0) -> dict[str, Any]:
+    if verdict == "VERIFIED" and mismatches:
+        # the verdict did not lean on the mismatched rows (they cannot
+        # support a claim), but the evidence set is not clean and the badge
+        # must never present it as if it were
+        return {"state": BADGE_INCONSISTENT,
+                "label": BADGE_LABELS[BADGE_INCONSISTENT],
+                "optimistic": False,
+                "reason": "evidence_set_contains_type_mismatch"}
     if verdict == "VERIFIED" and not (confirmed and required_ok):
         return {"state": BADGE_INCONSISTENT,
                 "label": BADGE_LABELS[BADGE_INCONSISTENT],
@@ -111,6 +148,7 @@ def project_chain(
             "requests": [],
             "authorization": dict(authorization or {}),
             "why_not_confirmed": ["no_chain_state"],
+            "trust_boundary": _trust_boundary({}),
             "limitations": ["no verification chain state is persisted yet"],
         }
 
@@ -171,6 +209,7 @@ def project_chain(
     return {
         "available": True,
         "rule_version": PROJECTION_RULE_VERSION,
+        "trust_boundary": _trust_boundary(state_dict),
         "chain_id": state_dict.get("chain_id"),
         "vulnerability_class": state_dict.get("vulnerability_class"),
         "capability": state_dict.get("capability"),
@@ -233,6 +272,7 @@ def chain_projection_for_candidate(
 
 
 __all__ = [
+    "_trust_boundary",
     "BADGE_BLOCKED", "BADGE_INCONSISTENT", "BADGE_LABELS", "BADGE_PENDING",
     "BADGE_REJECTED", "BADGE_UNKNOWN", "BADGE_VERIFIED", "PROJECTION_RULE_VERSION",
     "badge_for", "chain_projection_for_candidate", "project_chain",

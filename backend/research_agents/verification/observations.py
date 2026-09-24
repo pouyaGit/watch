@@ -104,6 +104,16 @@ class VerificationObservation:
                 f"evidence_type outside the closed EPIC11 vocabulary: "
                 f"{declared!r}")
         self.evidence_type = declared
+        # EPIC14 §13: a trusted producer cannot relabel an observation.  If
+        # the signal maps to an authoritative type, the declared type must
+        # agree with it — a caller may not take PARAMETER_OBSERVED and stamp
+        # it REFLECTION_OBSERVED or PAYLOAD_EXECUTION.
+        authoritative = tx.SIGNAL_TO_TYPE.get(self.signal)
+        if declared and authoritative and declared != authoritative:
+            raise ObservationError(
+                "the declared evidence_type disagrees with the authoritative "
+                f"classification of signal {self.signal!r}: "
+                f"{declared!r} != {authoritative!r} (EPIC14 trust boundary)")
         if self.negative and self.not_tested:
             raise ObservationError(
                 "an observation cannot be both not-observed and not-tested")
@@ -184,7 +194,12 @@ class VerificationObservation:
             "provenance": dict(self.provenance),
         }
         if self.evidence_type:
+            # the authoritative classification of this signal, never a
+            # relabelled stronger type (EPIC14 §13)
             row["evidence_type"] = self.evidence_type
+            row["authoritative_evidence_type"] = tx.SIGNAL_TO_TYPE.get(
+                self.signal, self.evidence_type)
+            row["provenance_class"] = tx.provenance_class_for(row)
         if self.job_id:
             row["job_id"] = self.job_id
         if self.not_tested:

@@ -191,17 +191,21 @@ class TestAuthoritativeGate(unittest.TestCase):
         self.assertEqual(state.stage("reflection").status, ch.STAGE_MISSING)
         self.assertEqual(state.stage("execution").status, ch.STAGE_MISSING)
         self.assertEqual(state.inadmissible_row_count, 2)
-        # EPIC11's gate reads the SIGNAL, not the row type, so a mislabelled
-        # advisory row can still reach it: that divergence is SURFACED, never
-        # smoothed over (and the projection refuses a green badge for it)
-        self.assertTrue(state.confirmed)
-        self.assertTrue(state.divergence)
-        self.assertIn(
-            "verified_without_required_stage:reflection,context,execution,"
-            "exploitability", state.divergence)
-        self.assertIn("inadmissible", " ".join(state.divergence))
+        # EPIC14 closed this: the authoritative classifier derives the type
+        # from the signal AND requires trusted provenance for confirmation-
+        # capable evidence, so a mislabelled advisory row can no longer reach
+        # the gate as confirmation evidence.  The chain and the verdict now
+        # agree, and the exclusion is explicit.
+        self.assertFalse(state.confirmed)
+        self.assertTrue(state.pending)
+        self.assertTrue(state.excluded_evidence)
+        self.assertEqual(state.excluded_evidence[0]["reason"],
+                         "confirmation_evidence_without_trusted_provenance")
+        # no divergence remains: the authoritative verdict and the chain view
+        # now agree, because the gate no longer counts the advisory rows
+        self.assertEqual(state.divergence, ())
         from backend.research_agents.verification import projection as pj
-        self.assertEqual(pj.badge_for(state)["state"], pj.BADGE_INCONSISTENT)
+        self.assertEqual(pj.badge_for(state)["state"], pj.BADGE_PENDING)
         self.assertFalse(pj.badge_for(state)["optimistic"])
 
     def test_advisory_rows_are_inadmissible(self):
