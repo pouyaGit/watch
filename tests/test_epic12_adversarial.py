@@ -95,8 +95,13 @@ class Scenario3FakeLlmConfirmation(unittest.TestCase):
         s = state(rows)
         self.assertEqual(s.satisfied_count, 1)
         self.assertEqual(s.inadmissible_row_count, 2)
-        self.assertTrue(s.divergence)
-        self.assertEqual(pj.badge_for(s)["state"], pj.BADGE_INCONSISTENT)
+        # EPIC14: the authoritative layer refuses the advisory rows as
+        # confirmation evidence, so the chain and the verdict AGREE (no
+        # divergence) and the exclusion is recorded rather than smoothed over
+        self.assertEqual(s.divergence, ())
+        self.assertFalse(s.confirmed)
+        self.assertTrue(s.excluded_evidence)
+        self.assertEqual(pj.badge_for(s)["state"], pj.BADGE_PENDING)
 
     def test_an_advisor_cannot_widen_the_action_set(self):
         advisor = ad.make_chain_advisor(

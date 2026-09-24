@@ -148,6 +148,13 @@ class ChainState:
     #: projection turns it into an INCONSISTENT badge, never a green one.
     divergence: tuple[str, ...] = ()
     inadmissible_row_count: int = 0
+    #: EPIC14: declared-vs-authoritative disagreements, as reported by the
+    #: authoritative classifier (never re-derived here)
+    evidence_mismatches: tuple[dict[str, Any], ...] = ()
+    #: EPIC14: confirmation-capable rows the authoritative layer refused to
+    #: count, with the reason
+    excluded_evidence: tuple[dict[str, Any], ...] = ()
+    classifier_version: str = ""
     rule_version: str = CHAIN_ENGINE_RULE_VERSION
 
     @property
@@ -204,6 +211,9 @@ class ChainState:
             "why_not_confirmed": list(self.why_not_confirmed),
             "divergence": list(self.divergence),
             "inadmissible_row_count": self.inadmissible_row_count,
+            "evidence_mismatches": [dict(m) for m in self.evidence_mismatches],
+            "excluded_evidence": [dict(x) for x in self.excluded_evidence],
+            "classifier_version": self.classifier_version,
             "authorization_satisfied": self.authorization_satisfied,
             "chain_terminated": self.chain_terminated,
             "termination_reason": self.termination_reason,
@@ -232,9 +242,15 @@ def negative_targets_stage(signal: str, evidence_type: str) -> bool:
 
 def _items_for_stage(unique: list[tx.EvidenceItem],
                      stage: ch.ChainStage) -> list[tx.EvidenceItem]:
+    """Rows that may advance this stage, per the EPIC11 trust boundary.
+
+    EPIC14 §12: the authoritative stage-contribution rule lives in the
+    taxonomy layer; the chain consumes it instead of re-deriving it.
+    """
     wanted = set(stage.required_evidence_types)
     return [i for i in unique
-            if i.evidence_type in wanted and i.is_stage_evidence]
+            if i.evidence_type in wanted
+            and tx.contributes_to_authoritative_stage(i)]
 
 
 def _negative_for_stage(all_items: list[tx.EvidenceItem],
@@ -341,7 +357,10 @@ def evaluate_chain(
     inadmissible = inadmissible_rows(raw_rows)
     items = tx.classify_rows(admissible_rows(raw_rows))
     unique = tx.unique_items(items)
-    by_type = tx.items_by_type(unique)
+    # EPIC14 §12: stage membership comes from the authoritative contributor
+    # set (EPIC11's rule), not from raw row metadata.
+    authoritative = tx.authoritative_items(unique)
+    by_type = tx.items_by_type(authoritative)
 
     if chain is None:
         # No chain declared: report the contract outcome honestly and say so.
@@ -367,6 +386,10 @@ def evaluate_chain(
                 list(decision.missing_reasons)
                 or list(decision.missing_evidence)
                 or [decision.gate_reason]),
+            evidence_mismatches=tuple(evaluation.evidence_mismatches),
+            excluded_evidence=tuple(evaluation.excluded_evidence),
+            classifier_version=str(
+                getattr(evaluation, "classifier_version", "") or ""),
         )
 
     # ---- stage-by-stage state --------------------------------------------
@@ -470,24 +493,38 @@ def evaluate_chain(
         termination_reason=termination_reason,
         divergence=tuple(_divergence(
             decision.authoritative_state, stages, len(inadmissible),
-            _row_type_mismatches(rows))),
+            _authoritative_mismatch_tokens(evaluation, raw_rows))),
         inadmissible_row_count=len(inadmissible),
+        evidence_mismatches=tuple(evaluation.evidence_mismatches),
+        excluded_evidence=tuple(evaluation.excluded_evidence),
+        classifier_version=str(
+            getattr(evaluation, "classifier_version", "") or ""),
     )
 
 
-def _row_type_mismatches(rows: Iterable[Mapping[str, Any]]) -> list[str]:
-    """Rows whose declared evidence type disagrees with their own signal.
+def _authoritative_mismatch_tokens(
+        evaluation: Any, rows: Iterable[Mapping[str, Any]]) -> list[str]:
+    """Divergence tokens for declared/authoritative type disagreements.
 
-    The EPIC11 gate resolves a row's class from its signal, but honours a
-    row-supplied ``evidence_type`` when that type is inside the closed set.
-    A row whose signal says one thing and whose type says another is therefore
-    *admissible* to the gate.  EPIC13 reports every such row as a divergence:
-    the chain never presents it as a clean piece of evidence, and a verdict
-    that leans on one is visibly inconsistent instead of silently trusted.
+    EPIC14 moved the detection to the authoritative layer: the EPIC11
+    classifier decides the type from the signal and records every mismatch on
+    the claim evaluation.  EPIC12 consumes that result — it does not
+    re-derive it — so there is exactly one mismatch implementation.
 
-    This detects; it does not decide.  The gate remains authoritative.
+    This reports; it does not decide.  The gate remains authoritative.
     """
     out: list[str] = []
+    for entry in getattr(evaluation, "evidence_mismatches", ()) or ():
+        signal = str(entry.get("signal") or "")
+        declared = str(entry.get("declared_evidence_type") or "")
+        authoritative = str(entry.get("authoritative_evidence_type") or "")
+        out.append(f"evidence_type_mismatch:{signal}->{declared}"
+                   f"({authoritative})")
+    if out:
+        return list(dict.fromkeys(out))
+    # the evaluation was built without the authoritative result (older
+    # callers): fall back to reading the rows the same way the classifier
+    # does, so the chain never hides a mismatch
     for row in rows or []:
         try:
             declared = str(row.get("evidence_type") or "").strip().upper()
@@ -498,7 +535,8 @@ def _row_type_mismatches(rows: Iterable[Mapping[str, Any]]) -> list[str]:
             continue
         mapped = str(tx.SIGNAL_TO_TYPE.get(signal) or "").strip().upper()
         if mapped and mapped != declared:
-            out.append(f"evidence_type_mismatch:{signal}->{declared}")
+            out.append(f"evidence_type_mismatch:{signal}->{declared}"
+                       f"({mapped})")
     return list(dict.fromkeys(out))
 
 
@@ -545,7 +583,7 @@ def chain_matrix(state: ChainState) -> list[dict[str, Any]]:
 
 
 __all__ = [
-    "_row_type_mismatches",
+    "_authoritative_mismatch_tokens",
     "CHAIN_ENGINE_RULE_VERSION", "VERDICT_SOURCE", "ChainState", "StageState",
     "chain_matrix", "evaluate_chain", "negative_targets_stage", "stage_tokens",
 ]
