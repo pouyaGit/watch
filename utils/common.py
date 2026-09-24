@@ -1,5 +1,6 @@
 # utils/common.py
 import os
+import re
 import subprocess
 import tempfile
 import random
@@ -66,6 +67,41 @@ class ToolTimeout(ToolError):
 # resolver or tool instead of blocking the pipeline forever. Adjust here (one
 # constant) if the resolver rate limit or typical domain size changes.
 NS_COMMAND_TIMEOUT = 3600
+
+# Names per bulk `dnsx -l <file>` invocation.
+#
+# The NS step resolves an entire scope in one call, rate-limited to ~30
+# queries/second. A per-invocation wall-clock ceiling can only hold if the
+# work per invocation is bounded, and the collected scopes are not: the
+# indeed.net scope grew from ~42k names (2026-09-15) to 206,080 (2026-09-24,
+# 201,074 of them from daily dynamic brute-force), which needs >= 6,869s of
+# query time at the rate limit -- twice NS_COMMAND_TIMEOUT -- so every
+# pipeline run since 2026-09-17 died on ToolTimeout for that one domain.
+#
+# Larger lists are therefore split into sequential chunks of at most this many
+# names, each with its own NS_COMMAND_TIMEOUT budget. Sizing is measured, not
+# assumed. The one COMPLETE measurement is 25,001 real scope names in 2,201s =
+# 11.4 names/second (every name queried, dnsx exited 0). A second probe was
+# killed by its own 900s guard after resolving 7,666 records without finishing
+# 20,000 names, so it only bounds the rate from above (<22.2 names/second) --
+# it is a bound, not a rate, and must not be quoted as one. At 11.4 names/s a
+# 15,000-name chunk needs ~1,316s -- a 2.7x margin under the ceiling -- and the
+# 206,080-name scope that could never fit in one 3,600s call now completes as
+# 14 bounded calls. A resolver that genuinely hangs still raises ToolTimeout
+# instead of stalling the pipeline.
+#
+# NOTE: chunking bounds each invocation, it does not reduce total work. The
+# nightly DNS step still spends scope_size / throughput seconds (2.6h-5.0h for
+# the current 206,080-name scope) inside the pipeline's 6h TimeoutStartSec, so
+# unbounded scope growth remains an operational risk that needs a scope-level
+# decision, not a larger timeout.
+NS_DNSX_CHUNK_SIZE = 15000
+
+# Worst-case wall time per name for the bulk dnsx call at the project's rate
+# limit (`-rl 30`). Kept as a constant so the chunk size and the ceiling can be
+# checked against each other deterministically (see tests/test_ns_chunking.py)
+# instead of relying on a comment.
+NS_SECONDS_PER_NAME_AT_RATE_LIMIT = 1.0 / 30.0
 
 
 def tool_env(extra=None):
@@ -162,7 +198,77 @@ def run_command_in_zsh_ns(command):
     command shape. The only change is failure handling: a non-zero exit now
     raises ToolError and a hang raises ToolTimeout, so a broken dnsx can never
     be mistaken for a successful "0 results" DNS run.
+
+    A bulk ``dnsx -l <file>`` list longer than NS_DNSX_CHUNK_SIZE is resolved as
+    several sequential invocations of the same command, each over a bounded
+    slice of the list and each with its own NS_COMMAND_TIMEOUT budget; the
+    returned lines are the concatenation of every chunk's output. Every other
+    command (including a bulk call whose list is small) is executed exactly as
+    before, in one invocation with an unchanged command string.
     """
+    commands, temp_paths = _dnsx_chunk_commands(command)
+    try:
+        lines: list[str] = []
+        for chunk_command in commands:
+            lines.extend(_run_ns_command(chunk_command))
+        return lines
+    finally:
+        for temp_path in temp_paths:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+
+#: first ``-l <file>`` argument of a command, quoted or bare
+_DNSX_LIST_ARG = re.compile(
+    r"""(?P<lead>(?:^|\s)-l\s+)(?P<quote>["']?)(?P<path>[^\s"']+)(?P=quote)"""
+)
+
+
+def _dnsx_chunk_commands(command):
+    """Split a bulk ``dnsx -l <file>`` command into bounded invocations.
+
+    Returns ``(commands, temp_paths)``. Anything that is not a bulk dnsx call
+    over an existing, oversized list is returned unchanged as a single-element
+    list with no temp files, so the caller's behavior is byte-identical.
+    """
+    if not isinstance(command, str):
+        return [command], []
+    match = _DNSX_LIST_ARG.search(command)
+    if not match or not command.lstrip().startswith("dnsx"):
+        return [command], []
+    try:
+        with open(match.group("path"), "r", errors="replace") as handle:
+            names = [line.strip() for line in handle if line.strip()]
+    except OSError:
+        # unreadable/missing list: keep the original single invocation so a
+        # caller error still surfaces as a tool failure, not as a silent skip
+        return [command], []
+    if len(names) <= NS_DNSX_CHUNK_SIZE:
+        return [command], []
+
+    commands: list[str] = []
+    temp_paths: list[str] = []
+    try:
+        for start in range(0, len(names), NS_DNSX_CHUNK_SIZE):
+            chunk_path = create_temp_file(names[start:start + NS_DNSX_CHUNK_SIZE])
+            temp_paths.append(chunk_path)
+            commands.append(
+                command[:match.start("path")] + chunk_path
+                + command[match.end("path"):])
+    except Exception:
+        for temp_path in temp_paths:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+        raise
+    return commands, temp_paths
+
+
+def _run_ns_command(command):
+    """One NS/DNS shell invocation with the fail-fast timeout contract."""
     env = os.environ.copy()
     env["PATH"] = WATCH_TOOL_PATH + ":" + env["PATH"] if env.get("PATH") else WATCH_TOOL_PATH
     try:
