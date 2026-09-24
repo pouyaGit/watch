@@ -14,6 +14,10 @@ from typing import Any
 
 from backend.soc._util import _bounded, _text
 
+#: honest placeholder for a value the persisted record does not carry
+#: (a legacy pre-EPIC11 record, or a field never written for this row)
+NOT_RECORDED = "not_recorded"
+
 
 def _store() -> Any:
     from backend.research_agents.finding.store import FindingStore
@@ -28,6 +32,89 @@ def _linked(cand: Any) -> list[str]:
     CandidateFinding model has no separate linked_duplicates field)."""
     corr = cand.correlation if isinstance(cand.correlation, dict) else {}
     return [str(x) for x in (corr.get("linked_duplicates") or [])]
+
+
+def _integrity_block(cand: Any, case: Any, advisor: dict[str, Any],
+                     ver: Any) -> dict[str, Any]:
+    """EPIC11 analyst view of the claim/evidence contract (read-only).
+
+    Shows the authoritative state, the explicit gate reason, the exact
+    missing evidence types, the claim/evidence matrix, the evidence basis
+    of a confirmed finding and the report-validation outcome — so a
+    pending/blocked candidate shows WHY, and a verified one shows its
+    basis.  A legacy record without the contract is reported as such
+    instead of being given an implied verdict.
+    """
+    integrity = dict(getattr(cand, "claim_integrity", None) or {})
+    validation = dict(getattr(case, "report_validation", None) or {}) \
+        if case is not None else {}
+    recorded = bool(integrity)
+    matrix: list[dict[str, Any]] = []
+    for row in (integrity.get("claim_evidence_matrix") or []):
+        if not isinstance(row, dict):
+            continue
+        matrix.append({
+            "claim_type": _text(row.get("claim_type")),
+            "statement": _text(row.get("statement"), 220),
+            "status": _text(row.get("status")) or "MISSING",
+            "evidence_ids": [str(x) for x in
+                             (row.get("evidence_ids") or [])][:6],
+        })
+    boundary = integrity.get("evidence_boundary") if isinstance(
+        integrity.get("evidence_boundary"), dict) else {}
+    advisory_state = _text(advisor.get("advisory_state")) or _text(
+        advisor.get("state_in_advisory_text"))
+    authoritative = _text(integrity.get("authoritative_state")) or \
+        _text(getattr(cand, "authoritative_state", "")) or \
+        _text(cand.lifecycle_state)
+    conflict = bool(advisory_state and authoritative
+                    and advisory_state.upper() != authoritative.upper())
+    return {
+        "recorded": recorded,
+        "authoritative_state": authoritative,
+        "confirmation_status": _text(integrity.get("confirmation_status")),
+        "confirmed": authoritative == "VERIFIED",
+        "gate_reason": _text(integrity.get("gate_reason")),
+        "stage_reached": integrity.get("stage_reached"),
+        "stage_label": _text(integrity.get("stage_label")),
+        "missing_evidence_types": [
+            _text(x) for x in (integrity.get("missing_evidence_types")
+                               or getattr(cand, "missing_evidence_contract",
+                                          []) or [])][:12],
+        "missing_evidence_reasons": [
+            _text(x) for x in (integrity.get("missing_evidence") or [])][:8],
+        "malformed_evidence": [
+            _text(x) for x in (integrity.get("malformed_evidence") or [])][:6],
+        "claim_evidence_matrix": matrix[:20],
+        "evidence_basis": {
+            "evidence_ids": [str(x) for x in
+                             (integrity.get("confirmation_evidence_ids")
+                              or [])][:12],
+            "unique_observations": integrity.get("unique_observations"),
+            "duplicate_events": integrity.get("duplicate_events"),
+            "boundary": {k: _text(v) for k, v in boundary.items()},
+        },
+        "report_validation": {
+            "status": _text(validation.get("status")),
+            "blockers": [b if isinstance(b, dict) else _text(b)
+                         for b in (validation.get("blockers") or [])][:8],
+            "checks": {k: bool(v) for k, v in
+                       (validation.get("checks") or {}).items()},
+            "unsupported_claims": [
+                _text(x) for x in
+                (validation.get("unsupported_claims") or [])][:8],
+        },
+        "advisory": {
+            "state": advisory_state or NOT_RECORDED,
+            "authoritative": False,
+            "label": "Historical / Advisory Only",
+            "conflicts_with_current_state": conflict,
+        },
+        "verification_gate_reason": _text(
+            getattr(ver, "gate_reason", "")) if ver is not None else "",
+        "source": ("persisted claim-integrity record + report validation "
+                   "(LLM advisory excluded)"),
+    }
 
 
 def _case_state_kind(state: str) -> str:
@@ -423,6 +510,11 @@ def finding_detail(candidate_id: str) -> dict[str, Any] | None:
         },
         "handoff_ready": bool(case is not None and case.state in
                               ("READY_FOR_REVIEW", "HANDED_OFF")),
+        # EPIC11 §21/§22: the persisted claim/evidence contract.  Read
+        # straight from the persisted rows — never re-derived, never
+        # influenced by advisory text.  Absent for pre-EPIC11 records,
+        # which is itself shown honestly as "not recorded".
+        "integrity": _integrity_block(cand, case, advisor, ver),
     }
     # ONE authoritative analyst workspace (candidate/finding detail
     # UX + data-contract correction).  Header/current state, grouped

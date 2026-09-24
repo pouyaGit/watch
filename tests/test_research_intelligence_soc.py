@@ -19,8 +19,10 @@ from unittest import mock
 from backend.research_agents.models import JobStatus, ResearchJob
 from backend.research_agents.runtime import (
     AgentWorker, FixtureObservations, RuntimeConfig,
+    deterministic_analysis,
 )
 from backend.research_agents.runtime_store import RuntimeStore, utcnow
+from tests.hunt_fixtures import claim_grade_determin
 
 TEMPLATES = (Path(__file__).resolve().parents[1] / "web" / "templates")
 KEY = "sk-or-...ARI-SOC"
@@ -76,8 +78,17 @@ class TestSOCIntelligenceExposure(unittest.TestCase):
                    authorization_ref="fixture:p/t.example")
         cls.store.enqueue(job)
         cls.job = job
+        # EPIC11: a case is only created when the class claim contract is
+        # satisfied by the evidence rows (for XSS: controlled input +
+        # reflection/context + authorized exploitability), so this
+        # case-producing fixture states that the analyzed observations
+        # include such a controlled-verification record.  The gate is not
+        # bypassed — it still evaluates the real contract over these rows.
         with mock.patch("backend.research_data.list_kb",
-                        side_effect=lambda q="", limit=100: _kb()):
+                        side_effect=lambda q="", limit=100: _kb()), \
+                mock.patch(
+                    "backend.research_agents.runtime.deterministic_analysis",
+                    claim_grade_determin(deterministic_analysis)):
             worker = AgentWorker(
                 config=RuntimeConfig(execution_mode="fixture",
                                      worker_id="w-soc"),

@@ -23,6 +23,7 @@ from tests.hunt_fixtures import (  # noqa: E402
     http_rows_for_cve,
     make_job,
     make_store,
+    claim_grade_determin,
     rich_rows,
     run_hunt_fixture,
 )
@@ -841,7 +842,13 @@ class ExecutionLoopTests(unittest.TestCase):
     """The bounded autonomous loop against fixture data."""
 
     def test_full_loop_resolves_with_replan(self):
-        outcome, job, cap, hs, store = run_hunt_fixture()
+        # EPIC11: resolution requires claim-grade evidence (stage 3+), so
+        # the fixture scope must carry the controlled-verification record
+        # an authorized run would have persisted.  The gate is NOT
+        # bypassed — it still evaluates the class claim contract over
+        # these rows.
+        outcome, job, cap, hs, store = run_hunt_fixture(
+            determin_fn=claim_grade_determin(deterministic_analysis))
         self.assertEqual(outcome.termination_reason, "sufficient_evidence")
         self.assertEqual(outcome.state, "RESOLVED")
         self.assertGreaterEqual(len(outcome.plan_ids), 1)

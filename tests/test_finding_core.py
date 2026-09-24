@@ -76,9 +76,12 @@ from backend.research_agents.finding.verification import (  # noqa: E402
 )
 from tests.finding_fixtures import (  # noqa: E402
     SCOPE,
+    contract_evidence,
     gate_structured,
+    inventory_evidence,
     make_candidate,
     make_stores,
+    supported_integrity,
 )
 
 from backend.research_agents.capabilities import capability_for  # noqa: E402
@@ -497,17 +500,45 @@ class TestVerificationGate(unittest.TestCase):
             self.assertNotIn(forbidden, params)
 
     def test_verified_requires_gate_and_direct_support(self):
+        # EPIC11: the gate record + a direct supporting row are NECESSARY
+        # but no longer SUFFICIENT — the class claim contract must also be
+        # satisfied by the persisted evidence (see the contract_evidence
+        # helper: reflection/context + authorized execution evidence).
         structured = gate_structured("evidence_rules_met", True,
                                      confidence="high")
         support = [{"evidence_id": "ev-1",
                     "verification_relevance": "verification",
                     "direct": True, "stance": "supporting"}]
-        d = self._decide(structured=structured, quality_rows=support)
+        d = self._decide(structured=structured, quality_rows=support,
+                         evidence_rows=contract_evidence())
         self.assertEqual(d.verification_state, "VERIFIED")
         self.assertEqual(d.candidate_state, "VERIFIED")
         self.assertEqual(d.gate_reason, "evidence_rules_met")
         self.assertTrue(d.gate_authoritative)
+        self.assertEqual(d.claim_integrity_status, "VERIFIED_ELIGIBLE")
         self.assertIn("LLM output is never", d.limitations)
+
+    def test_runtime_gate_claim_is_not_enough_without_contract_evidence(self):
+        # EPIC11 §16: the runtime gate saying "evidence_rules_met" while
+        # the evidence is parameter inventory ONLY must never verify.
+        structured = gate_structured("evidence_rules_met", True,
+                                     confidence="high")
+        support = [{"evidence_id": "ev-1",
+                    "verification_relevance": "verification",
+                    "direct": True, "stance": "supporting"}]
+        d = self._decide(structured=structured, quality_rows=support,
+                         evidence_rows=inventory_evidence())
+        self.assertNotEqual(d.verification_state, "VERIFIED")
+        self.assertEqual(d.candidate_state, "VERIFICATION_PENDING")
+        self.assertEqual(d.gate_reason, "missing_reflection_evidence")
+        # EPIC11: missing_evidence carries the exact missing evidence
+        # TYPES; the explicit contract reason lives alongside it
+        self.assertIn("REFLECTION_OBSERVED", d.missing_evidence)
+        self.assertIn("PAYLOAD_EXECUTION", d.missing_evidence)
+        self.assertEqual(d.authoritative_state, "VERIFICATION_PENDING")
+        self.assertEqual(d.claim_integrity.get("confirmation_status"),
+                         "UNSUPPORTED")
+        self.assertTrue(d.claim_integrity.get("claim_evidence_matrix"))
 
     def test_gate_met_without_supporting_evidence_is_inconclusive(self):
         structured = gate_structured("evidence_rules_met", True)
@@ -585,7 +616,8 @@ class TestVerificationGate(unittest.TestCase):
             "evidence_rules_met", True),
             quality_rows=[{"evidence_id": "ev-1",
                            "verification_relevance": "verification",
-                           "direct": True, "stance": "supporting"}])
+                           "direct": True, "stance": "supporting"}],
+            evidence_rows=contract_evidence())
         payload = json.dumps(d.to_dict())
         self.assertIn("VERIFIED", payload)
         self.assertNotIn("api_key", payload)
@@ -621,7 +653,9 @@ class TestStoreInvariants(unittest.TestCase):
                 self.fs.transition_candidate(
                     c2.candidate_id, hop, reason="walk",
                     gate_result=("evidence_rules_met"
-                                 if hop == "VERIFIED" else ""))
+                                 if hop == "VERIFIED" else ""),
+                    claim_integrity=(supported_integrity()
+                                     if hop == "VERIFIED" else None))
             return self.fs.get_candidate(c2.candidate_id)
 
         for terminal in CANDIDATE_TERMINAL:
@@ -641,10 +675,17 @@ class TestStoreInvariants(unittest.TestCase):
         self.fs.transition_candidate(cand.candidate_id, "VERIFYING")
         with self.assertRaises(FindingStateError):
             self.fs.transition_candidate(cand.candidate_id, "VERIFIED")
+        # EPIC11: the gate result alone is NO LONGER sufficient either —
+        # a SUPPORTED claim/evidence integrity evaluation is required.
+        with self.assertRaises(FindingStateError):
+            self.fs.transition_candidate(cand.candidate_id, "VERIFIED",
+                                         reason="gate",
+                                         gate_result="evidence_rules_met")
         cand2 = self.fs.get_candidate(cand.candidate_id)
-        got = self.fs.transition_candidate(cand2.candidate_id, "VERIFIED",
-                                           reason="gate",
-                                           gate_result="evidence_rules_met")
+        got = self.fs.transition_candidate(
+            cand2.candidate_id, "VERIFIED", reason="gate",
+            gate_result="evidence_rules_met",
+            claim_integrity=supported_integrity())
         self.assertEqual(got.lifecycle_state, "VERIFIED")
 
     def test_scope_never_changes_on_save(self):
@@ -679,9 +720,11 @@ class TestStoreInvariants(unittest.TestCase):
                                          reason="walk")
         self.fs.transition_candidate(cand.candidate_id, "VERIFIED",
                                      reason="gate",
-                                     gate_result="evidence_rules_met")
+                                     gate_result="evidence_rules_met",
+                                     claim_integrity=supported_integrity())
         done = self.fs.transition_case(case.case_id, "VERIFIED",
-                                       gate_result="evidence_rules_met")
+                                       gate_result="evidence_rules_met",
+                                       claim_integrity=supported_integrity())
         self.assertEqual(done.state, "VERIFIED")
 
     def test_verification_verified_requires_gate_met(self):

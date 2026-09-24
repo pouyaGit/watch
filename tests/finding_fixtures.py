@@ -30,6 +30,83 @@ from backend.research_agents.runtime_store import RuntimeStore
 SCOPE = "fixture:test/cap.test"
 SCOPE_PROD = "watch:scope:test/target.test"
 
+XSS_JOBS = ("job-xss-49b9d40fd5", "job-xss-ffe3afca68")  # the REAL cand-7c229c48c455 job ids (EPIC11 §16)
+
+
+def contract_evidence(*, cls: str = "XSS", count: int = 2,
+                      jobs: tuple[str, ...] = ("job-ver-contract",)
+                      ) -> list[dict[str, Any]]:
+    """EPIC11: the evidence row set a REAL authorized verification run
+    that established exploitability would persist (stage 1..4 + the
+    authorization confirmation).  Persisted rows only — nothing here
+    bypasses the gate: the rows still have to satisfy the class claim
+    contract deterministically."""
+    base = _claim_evidence_rows(cls=cls, kind="supporting")
+    rows: list[dict[str, Any]] = []
+    for i in range(max(count, len(base))):
+        signal, detail = base[i % len(base)]
+        rows.append({
+            "id": f"ev-contract-{i + 1}",
+            "job_id": jobs[i % len(jobs)],
+            "type": "observation",
+            "signal": signal,
+            "detail": f"{detail} ({i + 1})",
+            "category": cls,
+            "confidence": "high",
+            "observation_ref": f"obs-contract-{i + 1}",
+            "execution_mode": "fixture",
+        })
+    return rows
+
+
+def inventory_evidence(*, cls: str = "XSS", count: int = 20,
+                       jobs: tuple[str, ...] = XSS_JOBS
+                       ) -> list[dict[str, Any]]:
+    """EPIC11 regression shape: parameter inventory ONLY, repeated across
+    two jobs (the real cand-7c229c48c455 evidence shape: 40 rows, 20
+    unique observations, one signal)."""
+    signal = _CATEGORY_SIGNALS.get(str(cls).upper(),
+                                   _CATEGORY_SIGNALS["XSS"])[0]
+    rows: list[dict[str, Any]] = []
+    for job in jobs:
+        for i in range(count // 2):
+            rows.append({
+                "id": f"ev-{job[-5:]}-{i + 1}",
+                "job_id": job,
+                "type": "observation",
+                "signal": signal,
+                "detail": f"reflection-capable parameter inventory ({i})",
+                "category": cls,
+                "confidence": "high",
+                "observation_ref": (f"urls:{i:04d}"),
+                "execution_mode": "production",
+            })
+    return rows
+
+
+def supported_integrity(*, cls: str = "XSS") -> dict[str, Any]:
+    """A SUPPORTED claim/evidence integrity payload (store requirement).
+
+    Computed by the real authoritative gate over real contract evidence —
+    deliberately NOT a hand-written literal, so a fixture can never drift
+    from (or out-run) the production contract.
+    """
+    from backend.research_agents.finding.integrity import contracts as _ct
+    from backend.research_agents.finding.integrity import gate as _ig
+
+    auth = _ct.AuthorizationContext(
+        scope_ref=SCOPE, authorization_ref=SCOPE,
+        authorization_ids=("auth-fixture",), execution_mode="production")
+    decision = _ig.evaluate_integrity(
+        vulnerability_class=cls, rows=contract_evidence(cls=cls),
+        authorization=auth)
+    payload = dict(decision.claim_integrity)
+    if not _ig.claim_integrity_supported(payload):      # pragma: no cover
+        raise AssertionError(
+            "fixture contract evidence no longer satisfies the gate: "
+            f"{decision.authoritative_state}/{decision.gate_reason}")
+    return payload
+
 
 def make_base() -> str:
     return tempfile.mkdtemp(prefix="finding-test-", dir="/tmp")
@@ -222,23 +299,88 @@ def add_evidence(store: RuntimeStore, job_id: str, *,
                  kind: str = "supporting",
                  category: str = "XSS",
                  count: int = 2) -> list[str]:
-    """Record real evidence rows on a job (production row shape)."""
+    """Record real evidence rows on a job (production row shape).
+
+    EPIC11: the rows now carry the *evidence taxonomy signal* that the
+    claim contract consumes, so a test that wants a confirmed finding
+    must supply confirmation-grade evidence and cannot get there with
+    inventory rows alone:
+
+      ``inventory``     stage 1 only (parameter/URL observed)
+      ``reflection``    stage 3 (controlled input + reflection/context)
+      ``supporting``    full contract set (… + execution + authorization)
+      ``contradicting`` persisted negative evidence (reflection NOT observed)
+      ``not_tested``    persisted negative evidence (NOT_TESTED, §11)
+
+    Nothing here bypasses the gate: it writes the same rows a real
+    verification run would write.
+    """
+    rows = _claim_evidence_rows(cls=category, kind=kind)
     ids: list[str] = []
-    for i in range(count):
-        row = {
+    for i in range(max(count, len(rows))):
+        signal, detail = rows[i % len(rows)]
+        ids.append(store.record_evidence({
             "job_id": job_id,
             "type": "observation",
-            "label": ("reflected marker observed" if kind == "supporting"
-                      else "input did not reflect"),
-            "signal": ("" if kind == "supporting" else "contradiction"),
+            "label": detail,
+            "signal": signal,
             "category": category,
             "confidence": "high",
-            "observation_ref": f"obs-fix-{i + 1}",
+            "observation_ref": f"obs-fix-{kind}-{i + 1}",
             "execution_mode": "fixture",
-            "detail": f"deterministic {kind} evidence {i + 1}",
-        }
-        ids.append(store.record_evidence(row))
+            "detail": f"{detail} ({i + 1})",
+        }))
     return ids
+
+
+# category -> (stage-1 signal, stage-3 signal, stage-4 signal)
+_CATEGORY_SIGNALS: dict[str, tuple[str, str, str]] = {
+    "XSS": ("xss_parameter_inventory", "reflection_observed",
+            "payload_execution"),
+    "SSRF": ("ssrf_url_parameter", "response_observed",
+             "exploitability_established"),
+    "SQLI": ("sqli_error_style_observation", "response_observed",
+             "exploitability_established"),
+    "IDOR": ("idor_object_reference_pattern", "response_observed",
+             "exploitability_established"),
+    "JWT": ("jwt_shaped_token_observed", "response_observed",
+            "exploitability_established"),
+    "OAUTH": ("oauth_endpoint_observed", "response_observed",
+              "exploitability_established"),
+    "RECON": ("surface_row", "surface_row", "surface_row"),
+    "CVE_RESEARCH": ("technology_signal", "technology_signal",
+                     "technology_signal"),
+}
+
+
+def _claim_evidence_rows(*, cls: str = "", category: str = "",
+                         kind: str) -> list[tuple[str, str]]:
+    stage1, stage3, stage4 = _CATEGORY_SIGNALS.get(
+        str(cls or category or "").upper(), _CATEGORY_SIGNALS["XSS"])
+    if kind == "contradicting":
+        return [("reflection_not_observed", "validation input did not "
+                                            "reflect")]
+    if kind == "not_tested":
+        return [("not_tested", "reflection not tested")]
+    if kind == "inventory":
+        return [(stage1, "reflection-capable parameter inventory observed")]
+    if kind == "reflection":
+        return [
+            (stage1, "reflection-capable parameter inventory observed"),
+            ("controlled_input_sent", "controlled marker input submitted"),
+            (stage3, "controlled marker reflected / relevant sink context"),
+            ("output_context_identified", "reflection context classified"),
+        ]
+    # ``supporting`` = the full contract-satisfying set (the rows an
+    # authorized verification run that established exploitability writes)
+    return [
+        (stage1, "reflection-capable parameter inventory observed"),
+        ("controlled_input_sent", "controlled marker input submitted"),
+        (stage3, "controlled marker reflected / relevant sink context"),
+        ("output_context_identified", "reflection context classified"),
+        (stage4, "authorized controlled execution evidence recorded"),
+        ("authorization_confirmed", "testing authorized within scope"),
+    ]
 
 
 # ---------------------------------------------------------------------

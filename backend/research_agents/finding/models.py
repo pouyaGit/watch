@@ -310,6 +310,12 @@ class VerificationObjective:
     observation_ids: list[str] = field(default_factory=list)
     gate_reason: str = ""
     decision: str = ""                   # VERIFIED|REJECTED|INCONCLUSIVE|BLOCKED
+    # EPIC11: the authoritative claim-contract outcome for this objective
+    # (status/gate_reason/stage/missing evidence/matrix).  Required by the
+    # store before ANY VERIFIED transition can be persisted.
+    claim_integrity: dict[str, Any] = field(default_factory=dict)
+    authoritative_state: str = ""
+    missing_evidence_contract: list[str] = field(default_factory=list)
     provenance: dict[str, Any] = field(default_factory=dict)
     revision: int = 1
     attempts: int = 0
@@ -370,6 +376,9 @@ class VerificationObjective:
             "observation_ids": list(self.observation_ids),
             "gate_reason": self.gate_reason,
             "decision": self.decision,
+            "claim_integrity": dict(self.claim_integrity),
+            "authoritative_state": self.authoritative_state,
+            "missing_evidence_contract": list(self.missing_evidence_contract),
             "provenance": dict(self.provenance),
             "revision": self.revision,
             "attempts": self.attempts,
@@ -400,6 +409,10 @@ class VerificationObjective:
             observation_ids=list(row.get("observation_ids") or []),
             gate_reason=str(row.get("gate_reason") or ""),
             decision=str(row.get("decision") or ""),
+            claim_integrity=dict(row.get("claim_integrity") or {}),
+            authoritative_state=str(row.get("authoritative_state") or ""),
+            missing_evidence_contract=list(
+                row.get("missing_evidence_contract") or []),
             provenance=dict(row.get("provenance") or {}),
             revision=int(row.get("revision") or 1),
             attempts=int(row.get("attempts") or 0),
@@ -413,9 +426,9 @@ class VerificationObjective:
 # ---------------------------------------------------------------- case pkg
 
 CASE_STATES: tuple[str, ...] = (
-    "CANDIDATE", "TRIAGED", "VERIFYING", "VERIFIED", "READY_FOR_REVIEW",
-    "HANDED_OFF", "CLOSED", "REJECTED", "INCONCLUSIVE", "DUPLICATE",
-    "BLOCKED",
+    "CANDIDATE", "TRIAGED", "VERIFYING", "VERIFICATION_PENDING", "VERIFIED",
+    "READY_FOR_REVIEW", "HANDED_OFF", "CLOSED", "REJECTED", "INCONCLUSIVE",
+    "DUPLICATE", "BLOCKED",
 )
 
 CASE_TERMINAL: frozenset[str] = frozenset(
@@ -426,9 +439,14 @@ CASE_TRANSITIONS: dict[str, frozenset[str]] = {
     "TRIAGED": frozenset({"VERIFYING", "REJECTED", "DUPLICATE", "BLOCKED",
                           "CLOSED"}),
     "VERIFYING": frozenset({"VERIFIED", "REJECTED", "INCONCLUSIVE",
-                            "BLOCKED"}),
-    "VERIFIED": frozenset({"READY_FOR_REVIEW", "CLOSED"}),
-    "READY_FOR_REVIEW": frozenset({"HANDED_OFF", "CLOSED"}),
+                            "VERIFICATION_PENDING", "BLOCKED"}),
+    # EPIC11: verification ran but the claim contract is not satisfied —
+    # the case is parked with the exact missing evidence, NOT closed as a
+    # finding.  Re-planning is allowed; nothing here is a "verified" state.
+    "VERIFICATION_PENDING": frozenset({"VERIFYING", "BLOCKED", "INCONCLUSIVE",
+                                       "REJECTED", "CLOSED"}),
+    "VERIFIED": frozenset({"READY_FOR_REVIEW", "BLOCKED", "CLOSED"}),
+    "READY_FOR_REVIEW": frozenset({"HANDED_OFF", "BLOCKED", "CLOSED"}),
     "HANDED_OFF": frozenset({"CLOSED"}),
     "BLOCKED": frozenset({"VERIFYING", "TRIAGED", "CLOSED"}),
     "CLOSED": frozenset(),
@@ -460,6 +478,11 @@ class CasePackage:
     verification_id: str = ""
     gate_result: str = ""
     package: dict[str, Any] = field(default_factory=dict)
+    # EPIC11: authoritative claim-integrity outcome + the report
+    # validation gate result.  A case that cannot pass report validation
+    # never reaches READY_FOR_REVIEW.
+    claim_integrity: dict[str, Any] = field(default_factory=dict)
+    report_validation: dict[str, Any] = field(default_factory=dict)
     limitations: list[str] = field(default_factory=list)
     recommended_next_step: str = ""
     provenance: dict[str, Any] = field(default_factory=dict)
@@ -511,6 +534,8 @@ class CasePackage:
             "verification_id": self.verification_id,
             "gate_result": self.gate_result,
             "package": dict(self.package),
+            "claim_integrity": dict(self.claim_integrity),
+            "report_validation": dict(self.report_validation),
             "limitations": list(self.limitations),
             "recommended_next_step": self.recommended_next_step,
             "provenance": dict(self.provenance),
@@ -542,6 +567,8 @@ class CasePackage:
             verification_id=str(row.get("verification_id") or ""),
             gate_result=str(row.get("gate_result") or ""),
             package=dict(row.get("package") or {}),
+            claim_integrity=dict(row.get("claim_integrity") or {}),
+            report_validation=dict(row.get("report_validation") or {}),
             limitations=list(row.get("limitations") or []),
             recommended_next_step=str(
                 row.get("recommended_next_step") or ""),

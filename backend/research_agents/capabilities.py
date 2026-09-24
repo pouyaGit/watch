@@ -48,11 +48,20 @@ CONFIDENCE_SEMANTICS: dict[str, str] = {
 
 @dataclass(frozen=True)
 class EvidenceRequirements:
-    """What must exist before a case may be created."""
+    """What must exist before a case may be created.
+
+    ``signal_evidence_any_of`` (EPIC11) is the claim-grade requirement: at
+    least one NON-DUPLICATE evidence row of one of these taxonomy types
+    must exist.  It closes the hole where N rows of raw parameter
+    inventory satisfied "evidence exists" and were read as proof of a
+    vulnerability.  Empty tuple = no claim-grade requirement (only the
+    structural checks apply) — never used to *confirm* anything.
+    """
 
     min_evidence_refs: int = 2
     required_types: tuple[str, ...] = ("observation",)
     require_high_confidence: bool = True
+    signal_evidence_any_of: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -141,6 +150,7 @@ _CAPABILITIES: tuple[SpecialistCapability, ...] = (
             min_evidence_refs=2,
             required_types=("observation",),
             require_high_confidence=True,
+            signal_evidence_any_of=("REFLECTION_OBSERVED", "OUTPUT_CONTEXT_IDENTIFIED", "DOM_SINK_IDENTIFIED"),
         ),
         output_schema=OUTPUT_SCHEMA,
         case_creation_conditions=(
@@ -169,6 +179,7 @@ _CAPABILITIES: tuple[SpecialistCapability, ...] = (
             min_evidence_refs=2,
             required_types=("observation",),
             require_high_confidence=True,
+            signal_evidence_any_of=("RESPONSE_OBSERVED", "REFLECTION_OBSERVED"),
         ),
         output_schema=OUTPUT_SCHEMA,
         case_creation_conditions=(
@@ -195,6 +206,7 @@ _CAPABILITIES: tuple[SpecialistCapability, ...] = (
             min_evidence_refs=2,
             required_types=("observation",),
             require_high_confidence=True,
+            signal_evidence_any_of=("RESPONSE_OBSERVED", "REFLECTION_OBSERVED"),
         ),
         output_schema=OUTPUT_SCHEMA,
         case_creation_conditions=(
@@ -220,6 +232,7 @@ _CAPABILITIES: tuple[SpecialistCapability, ...] = (
             min_evidence_refs=2,
             required_types=("observation",),
             require_high_confidence=True,
+            signal_evidence_any_of=("RESPONSE_OBSERVED",),
         ),
         output_schema=OUTPUT_SCHEMA,
         case_creation_conditions=(
@@ -245,6 +258,7 @@ _CAPABILITIES: tuple[SpecialistCapability, ...] = (
             min_evidence_refs=2,
             required_types=("observation",),
             require_high_confidence=True,
+            signal_evidence_any_of=("RESPONSE_OBSERVED",),
         ),
         output_schema=OUTPUT_SCHEMA,
         case_creation_conditions=(
@@ -270,6 +284,7 @@ _CAPABILITIES: tuple[SpecialistCapability, ...] = (
             min_evidence_refs=2,
             required_types=("observation",),
             require_high_confidence=True,
+            signal_evidence_any_of=("RESPONSE_OBSERVED",),
         ),
         output_schema=OUTPUT_SCHEMA,
         case_creation_conditions=(
@@ -295,6 +310,7 @@ _CAPABILITIES: tuple[SpecialistCapability, ...] = (
             min_evidence_refs=1,
             required_types=("observation",),
             require_high_confidence=False,
+            signal_evidence_any_of=("URL_OBSERVED",),
         ),
         output_schema=OUTPUT_SCHEMA,
         case_creation_conditions=(
@@ -319,6 +335,7 @@ _CAPABILITIES: tuple[SpecialistCapability, ...] = (
             min_evidence_refs=2,
             required_types=("observation", "knowledge"),
             require_high_confidence=True,
+            signal_evidence_any_of=("RESPONSE_OBSERVED",),
         ),
         output_schema=OUTPUT_SCHEMA,
         case_creation_conditions=(

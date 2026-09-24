@@ -24,6 +24,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from backend.research_agents.finding.integrity.gate import (
+    claim_integrity_supported,
+)
 from backend.research_agents.finding.models import (
     CASE_TERMINAL,
     CASE_TRANSITIONS,
@@ -170,21 +173,36 @@ class FindingStore:
 
     def transition_candidate(self, candidate_id: str, new_state: str, *,
                              reason: str = "", detail: str = "",
-                             gate_result: str = "") -> CandidateFinding:
+                             gate_result: str = "",
+                             claim_integrity: dict[str, Any] | None = None,
+                             ) -> CandidateFinding:
         """Audited candidate state transition.
 
-        ``VERIFIED`` additionally requires a real gate result
-        (``evidence_rules_met``) — no other caller can produce it.
+        ``VERIFIED`` requires BOTH a real gate result
+        (``evidence_rules_met``) AND (EPIC11) an authoritative claim/
+        evidence integrity outcome whose status is ``SUPPORTED``.  The
+        status is re-read from the persisted candidate record when the
+        caller does not supply it, so no code path can promote an
+        unsupported claim to VERIFIED — including legacy callers.
         """
         with self._locked():
             candidate = self.get_candidate(candidate_id)
             if candidate is None:
                 raise FindingStoreError(f"unknown candidate: {candidate_id}")
             old = candidate.lifecycle_state
-            if new_state == "VERIFIED" and gate_result != "evidence_rules_met":
-                raise FindingStateError(
-                    "VERIFIED requires authoritative gate result "
-                    "evidence_rules_met")
+            if new_state == "VERIFIED":
+                if gate_result != "evidence_rules_met":
+                    raise FindingStateError(
+                        "VERIFIED requires authoritative gate result "
+                        "evidence_rules_met")
+                integrity = dict(claim_integrity
+                                 or (candidate.provenance or {}).get(
+                                     "claim_integrity") or {})
+                if not claim_integrity_supported(integrity):
+                    raise FindingStateError(
+                        "VERIFIED requires a SUPPORTED claim/evidence "
+                        "integrity evaluation (EPIC11); got "
+                        f"{str(integrity.get('status') or 'absent')}")
             candidate.transition(new_state, reason=reason, detail=detail)
             self._append(_FILE_CANDIDATES, candidate.to_dict())
             self._append(_FILE_TRANSITIONS, {
@@ -196,6 +214,10 @@ class FindingStore:
                 "reason": reason or new_state.lower(),
                 "detail": str(detail or "")[:400],
                 "gate_result": str(gate_result or ""),
+                "claim_integrity_status": str(
+                    (claim_integrity or {}).get("status") or ""),
+                "claim_contract_reason": str(
+                    (claim_integrity or {}).get("gate_reason") or ""),
                 "at": candidate.updated_at,
             })
             if new_state == "DUPLICATE":
@@ -326,6 +348,7 @@ class FindingStore:
 
     def transition_verification(self, verification_id: str, new_state: str, *,
                                 reason: str = "", detail: str = "",
+                                claim_integrity: dict[str, Any] | None = None,
                                 ) -> VerificationObjective:
         with self._locked():
             ver = self.get_verification(verification_id)
@@ -333,10 +356,17 @@ class FindingStore:
                 raise FindingStoreError(
                     f"unknown verification: {verification_id}")
             old = ver.state
-            if new_state == "VERIFIED" and ver.gate_reason != "evidence_rules_met":
-                raise FindingStateError(
-                    "verification VERIFIED requires gate reason "
-                    "evidence_rules_met")
+            if new_state == "VERIFIED":
+                if ver.gate_reason != "evidence_rules_met":
+                    raise FindingStateError(
+                        "verification VERIFIED requires gate reason "
+                        "evidence_rules_met")
+                integrity = dict(claim_integrity or ver.claim_integrity or {})
+                if not claim_integrity_supported(integrity):
+                    raise FindingStateError(
+                        "verification VERIFIED requires a SUPPORTED "
+                        "claim/evidence integrity evaluation (EPIC11); got "
+                        f"{str(integrity.get('status') or 'absent')}")
             ver.transition(new_state, reason=reason, detail=detail)
             self._append(_FILE_VERIFICATIONS, ver.to_dict())
             self._append(_FILE_TRANSITIONS, {
@@ -345,6 +375,9 @@ class FindingStore:
                 "old": old, "new": new_state,
                 "reason": reason or new_state.lower(),
                 "detail": str(detail or "")[:400],
+                "claim_integrity_status": str(
+                    (claim_integrity or ver.claim_integrity
+                     or {}).get("status") or ""),
                 "at": ver.updated_at,
             })
         return ver
@@ -444,6 +477,8 @@ class FindingStore:
 
     def transition_case(self, case_id: str, new_state: str, *,
                         reason: str = "", gate_result: str = "",
+                        claim_integrity: dict[str, Any] | None = None,
+                        report_validation: dict[str, Any] | None = None,
                         ) -> CasePackage:
         with self._locked():
             case = self.get_case(case_id)
@@ -459,6 +494,26 @@ class FindingStore:
                 if gate_result != "evidence_rules_met":
                     raise FindingStateError(
                         "case VERIFIED requires gate result evidence_rules_met")
+                integrity = dict(claim_integrity or case.claim_integrity or {})
+                if not claim_integrity_supported(integrity):
+                    raise FindingStateError(
+                        "case VERIFIED requires a SUPPORTED claim/evidence "
+                        "integrity evaluation (EPIC11); got "
+                        f"{str(integrity.get('status') or 'absent')}")
+            if new_state == "READY_FOR_REVIEW":
+                # EPIC11: the deterministic report validation gate must
+                # have passed on the persisted case record.
+                validation = dict(report_validation
+                                  or case.report_validation or {})
+                if str(validation.get("status") or "") != "READY_FOR_REVIEW":
+                    raise FindingStateError(
+                        "READY_FOR_REVIEW requires a passing report "
+                        "validation (EPIC11); got "
+                        f"{str(validation.get('status') or 'absent')}")
+                if validation.get("unsupported_claims"):
+                    raise FindingStateError(
+                        "READY_FOR_REVIEW with unsupported claims is "
+                        "forbidden (EPIC11)")
             validate_case_transition(old, new_state)
             case.transition(new_state, reason=reason)
             if new_state == "VERIFIED":
@@ -470,6 +525,8 @@ class FindingStore:
                 "old": old, "new": new_state,
                 "reason": reason or new_state.lower(),
                 "detail": str(gate_result or "")[:200],
+                "report_validation_status": str(
+                    (report_validation or {}).get("status") or ""),
                 "at": case.updated_at,
             })
         return case

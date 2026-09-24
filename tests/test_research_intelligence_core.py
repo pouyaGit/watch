@@ -678,8 +678,27 @@ class TestContractV2AndSpecialists(_StoreBase):
             self.assertEqual(prompt_version_for(capability_for("XSS")),
                              "xss-agent-analysis-v2")
             self.assertTrue(st["knowledge_considered"])
+            # EPIC11: the LLM ran and its advisory is preserved, but this
+            # scope has parameter-inventory observations only.  The
+            # hardened evidence gate now refuses the case and persists the
+            # explicit contract reason — before EPIC11 this exact path was
+            # satisfied by inventory-only evidence (the
+            # cand-7c229c48c455 integrity gap).  A high-confidence model
+            # response must never change this.
             self.assertEqual(st["evidence_gate"]["reason"],
-                             "evidence_rules_met")
+                             "missing_reflection_evidence")
+            self.assertFalse(st["evidence_gate"]["created_case"])
+            self.assertTrue(st["evidence_gate"]["gate_reason_explicit"])
+            self.assertEqual(st["evidence_gate"]["authoritative_state"],
+                             "VERIFICATION_PENDING")
+            # the ladder never advanced past observation stage (0 = no
+            # classifiable observation at all, 1 = parameter observed);
+            # either way it is nowhere near reflection/execution
+            self.assertLess(st["evidence_gate"]["stage_reached"], 3)
+            self.assertIn("REFLECTION_OBSERVED",
+                          st["evidence_gate"]["missing_evidence"])
+            self.assertEqual(
+                st["claim_integrity"]["confirmation_status"], "UNSUPPORTED")
         finally:
             if self._old_key is None:
                 os.environ.pop("OPENROUTER_API_KEY", None)

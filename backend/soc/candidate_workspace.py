@@ -236,6 +236,35 @@ def _human(stage: str) -> str:
 
 
 # ---------------------------------------------------------------- build
+def verification_outcome(cand_state: str, ver_state: str = "",
+                         ver_decision: str = "") -> str:
+    """EPIC10 §10: the five-way verification outcome, distinct from raw
+    lifecycle states.
+
+    VERIFIED            only from an authoritative VERIFIED candidate
+                        (the Evidence Gate recorded rules-met — an LLM
+                        suggestion or a URL/parameter can never yield
+                        this outcome)
+    DUPLICATE           correlation/dedup resolved the candidate away
+    REJECTED            verification or candidate rejected
+    BLOCKED             verification blocked (authorization or gate)
+    INSUFFICIENT_EVIDENCE  not yet verified: waiting for evidence,
+                        inconclusive, or still in progress
+    """
+    cand = str(cand_state or "").upper()
+    ver = str(ver_state or "").upper()
+    decision = str(ver_decision or "").upper()
+    if cand == "VERIFIED" or decision == "VERIFIED":
+        return "VERIFIED"
+    if cand == "DUPLICATE":
+        return "DUPLICATE"
+    if cand == "REJECTED" or decision == "REJECTED":
+        return "REJECTED"
+    if cand == "BLOCKED" or ver in ("BLOCKED", "AUTHORIZATION_REQUIRED"):
+        return "BLOCKED"
+    return "INSUFFICIENT_EVIDENCE"
+
+
 def build_workspace(detail: dict[str, Any],
                     fs: Any = None) -> dict[str, Any]:
     """Assemble the analyst workspace from ONE finding_detail payload."""
@@ -318,6 +347,10 @@ def build_workspace(detail: dict[str, Any],
         "candidate": state,
         "verification": ver_state,
         "case": case_state,
+        # EPIC10 §10 five-way outcome (presentation projection of the
+        # authoritative states above — never a new source of truth)
+        "outcome": verification_outcome(
+            state, ver_state, _text((ver or {}).get("decision"))),
         "gate_decision": gate_decision,
         "gate_reason": gate_reason,
         "source": ("candidate + verification + finding case "
@@ -607,6 +640,9 @@ def build_workspace(detail: dict[str, Any],
                       "instructions for unauthorized exploitation.",
     }
 
+    # ---------------- claim / evidence integrity (EPIC11) --------------
+    integrity = _integrity_section(detail)
+
     # ---------------- related candidates (deduplicated) ----------------
     related = _related_rows(detail, fs=fs)
 
@@ -673,6 +709,7 @@ def build_workspace(detail: dict[str, Any],
         "not_verified": {"points": not_verified,
                          "distinctions": distinctions},
         "llm": llm,
+        "integrity": integrity,
         "case_package": case_package,
         "next_step": next_step,
         "related": related,
@@ -683,6 +720,100 @@ def build_workspace(detail: dict[str, Any],
 
 
 # ------------------------------------------------------------- sections
+def _integrity_section(detail: dict[str, Any]) -> dict[str, Any]:
+    """EPIC11 §21: what is supported, what is missing, what was NOT shown.
+
+    Renders the persisted claim/evidence contract for an analyst: the
+    claim/evidence matrix, the evidence BASIS of a confirmed finding, the
+    exact missing evidence for a pending/blocked one, the report
+    validation outcome, and the historical advisory kept separate from
+    the authoritative state.
+    """
+    raw = detail.get("integrity") if isinstance(detail.get("integrity"),
+                                                dict) else {}
+    if not raw:
+        return {
+            "available": False,
+            "note": ("No claim/evidence contract is recorded for this "
+                     "candidate (pre-EPIC11 record). No verdict is implied "
+                     "by its absence."),
+        }
+    matrix = []
+    for row in (raw.get("claim_evidence_matrix") or []):
+        if not isinstance(row, dict):
+            continue
+        matrix.append({
+            "claim": _text(row.get("claim_type")) or UNKNOWN,
+            "statement": _text(row.get("statement"), 200),
+            "status": (_text(row.get("status")) or "MISSING").upper(),
+            "verified": (_text(row.get("status")) or "").upper()
+            == "SUPPORTED",
+            "missing": (_text(row.get("status")) or "").upper()
+            in ("", "MISSING", "UNSUPPORTED"),
+            "contradicted": (_text(row.get("status")) or "").upper()
+            == "CONTRADICTED",
+            "evidence": ", ".join(str(x) for x in
+                                  (row.get("evidence_ids") or []))[:120],
+            "evidence_count": len(row.get("evidence_ids") or []),
+        })
+    basis = raw.get("evidence_basis") if isinstance(
+        raw.get("evidence_basis"), dict) else {}
+    validation = raw.get("report_validation") if isinstance(
+        raw.get("report_validation"), dict) else {}
+    advisory = raw.get("advisory") if isinstance(raw.get("advisory"),
+                                                dict) else {}
+    return {
+        "available": True,
+        "recorded": bool(raw.get("recorded")),
+        "authoritative_state": _text(raw.get("authoritative_state"))
+        or NOT_RECORDED,
+        "confirmed": bool(raw.get("confirmed")),
+        "confirmation_status": _text(raw.get("confirmation_status"))
+        or NOT_RECORDED,
+        "gate_reason": _text(raw.get("gate_reason")) or NOT_RECORDED,
+        "stage_reached": raw.get("stage_reached"),
+        "stage_label": _text(raw.get("stage_label")) or NOT_RECORDED,
+        "missing_evidence_types": [str(x) for x in
+                                   (raw.get("missing_evidence_types")
+                                    or [])][:12],
+        "missing_evidence_reasons": [str(x) for x in
+                                     (raw.get("missing_evidence_reasons")
+                                      or [])][:8],
+        "malformed_evidence": [str(x) for x in
+                               (raw.get("malformed_evidence") or [])][:6],
+        "matrix": matrix[:20],
+        "matrix_counts": {
+            "supported": len([m for m in matrix if m["verified"]]),
+            "missing": len([m for m in matrix if m["missing"]]),
+            "contradicted": len([m for m in matrix if m["contradicted"]]),
+        },
+        "evidence_basis": {
+            "evidence_ids": [str(x) for x in
+                             (basis.get("evidence_ids") or [])][:12],
+            "unique_observations": basis.get("unique_observations"),
+            "duplicate_events": basis.get("duplicate_events"),
+        },
+        "report_validation": {
+            "status": _text(validation.get("status")) or NOT_RECORDED,
+            "blockers": [b.get("code") if isinstance(b, dict) else str(b)
+                         for b in (validation.get("blockers") or [])][:8],
+            "unsupported_claims": [str(x) for x in
+                                   (validation.get("unsupported_claims")
+                                    or [])][:8],
+        },
+        "advisory": {
+            "label": _text(advisory.get("label"))
+            or "Historical / Advisory Only",
+            "state": _text(advisory.get("state")) or NOT_RECORDED,
+            "authoritative": False,
+            "conflicts_with_current_state": bool(
+                advisory.get("conflicts_with_current_state")),
+        },
+        "source": _text(raw.get("source")) or
+        "persisted claim-integrity record",
+    }
+
+
 def _notice_kind(state: str) -> str:
     if state == "VERIFIED":
         return "verified"

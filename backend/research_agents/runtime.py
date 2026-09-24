@@ -1157,6 +1157,25 @@ def evaluate_case_creation(capability: SpecialistCapability,
     missing = [t for t in req.required_types if t not in have_types]
     if missing:
         return CaseDecision(False, f"missing_evidence_type:{missing[0]}")
+    # EPIC11 §6 (claim-grade evidence): storage-type counts are NOT
+    # sufficient.  The class must have at least one NON-DUPLICATE
+    # evidence row of its verification-signal type(s) before a case can
+    # be claimed — e.g. XSS requires reflection/context/sink evidence,
+    # never parameter inventory alone.  Fail closed with an explicit
+    # reason that is persisted and visible downstream.
+    signal_types = tuple(getattr(req, "signal_evidence_any_of", ()) or ())
+    if signal_types:
+        from backend.research_agents.finding.integrity import (
+            contracts as _ict,
+            taxonomy as _tx,
+        )
+        items = _tx.unique_items(_tx.classify_rows(relevant))
+        have_claim_types = {i.evidence_type for i in items}
+        if not any(t in have_claim_types for t in signal_types):
+            return CaseDecision(
+                False,
+                _ict.reason_for_type(signal_types[0]),
+                None)
     hypotheses = analysis.get("hypotheses") or []
     if not hypotheses:
         return CaseDecision(False, "no_hypothesis")
@@ -1337,6 +1356,55 @@ def attach_research_contract(
         "confidence": gate_conf,
         "authoritative": True,
     }
+    # EPIC11 §6/§21: the claim-grade verdict, the explicit gate reason,
+    # the stage reached and the exact missing evidence travel with the
+    # persisted research contract so every downstream view (SOC, case,
+    # report, analyst package) can show WHY a candidate is not confirmed
+    # instead of a decorative status badge.  Advisory text never enters
+    # here: this block is derived from persisted evidence rows only.
+    if decision is not None:
+        try:
+            from backend.research_agents.finding.integrity import (
+                contracts as _iect,
+                gate as _ieg,
+            )
+            _scope = str(getattr(job, "authorization_ref", "") or "")
+            _auth_ids = tuple(
+                str(x) for x in (getattr(job, "authorization_ids", ()) or ()))
+            _integrity_rows = [dict(o) for o in observations
+                               if o.get("job_id") == job.id] or \
+                [dict(o) for o in observations]
+            _idec = _ieg.evaluate_integrity(
+                vulnerability_class=str(getattr(capability, "category", "")
+                                        or job.agent_category or ""),
+                rows=_integrity_rows,
+                authorization=_iect.AuthorizationContext(
+                    scope_ref=_scope, authorization_ref=_scope,
+                    authorization_ids=_auth_ids,
+                    execution_mode=str(getattr(job, "execution_mode", "")
+                                       or "")),
+                runtime_gate_reason=str(getattr(decision, "reason", "")),
+                runtime_gate_claimed_case=bool(
+                    getattr(decision, "create", False)))
+            structured["evidence_gate"].update({
+                "claim_grade": True,
+                "gate_reason": _idec.gate_reason,
+                "gate_reason_explicit": _ieg.gate_reason_is_explicit(
+                    _idec.gate_reason),
+                "authoritative_state": _idec.authoritative_state,
+                "stage_reached": _idec.stage_reached,
+                "missing_evidence": list(_idec.missing_evidence),
+                "blockers": list(_idec.blockers),
+                "rule_version": _idec.rule_version,
+            })
+            structured["claim_integrity"] = dict(_idec.claim_integrity)
+        except Exception as exc:  # noqa: BLE001 - never fabricate a verdict
+            structured["evidence_gate"].update({
+                "claim_grade": False,
+                "gate_reason": "integrity_evaluation_error",
+                "authoritative_state": "VERIFICATION_PENDING",
+            })
+            structured["claim_integrity_error"] = _bounded_text(exc, 160)
     structured["contract"] = "structured-research-v2"
     structured["specialist"] = str(capability.agent_name)
     structured.setdefault("prompt_version",
@@ -1623,16 +1691,48 @@ class AgentWorker:
                 "detail": _bounded_text(cand.get("detail"), 200),
                 "confidence": analysis.get("confidence", "low"),
                 "execution_mode": job.execution_mode,
+                # EPIC10 §11: who/where was observed, at job scope
+                # (truthful job context — never invented detail)
+                "target": f"{job.program or '?'}/{job.subdomain or '?'}",
+                "affected_resource": (cand.get("url")
+                                      or cand.get("endpoint")
+                                      or job.url or ""),
             })
-            evidence_rows.append({"id": ev_id, "type": cand.get("type"),
-                                  "observation_ref":
-                                      cand.get("observation_ref", ""),
-                                  "job_id": job.id})
+            # EPIC11 §6: the gate must see the SAME evidence shape that
+            # was persisted.  Dropping the signal here would make every
+            # row unclassifiable and the claim contract unsatisfiable —
+            # a real reflection record could never create a case.
+            evidence_rows.append({
+                "id": ev_id,
+                "type": cand.get("type"),
+                "observation_ref": cand.get("observation_ref", ""),
+                "job_id": job.id,
+                "signal": cand.get("signal", ""),
+                "category": job.agent_category,
+                "detail": _bounded_text(cand.get("detail"), 200),
+                "confidence": analysis.get("confidence", "low"),
+                "execution_mode": job.execution_mode,
+            })
         # refresh job (evidence_refs updated by store)
         job = self.store.get(job.id) or job
 
         decision = evaluate_case_creation(capability, job, analysis,
                                           evidence_rows)
+        # EPIC10 §11: stamp verification relevance on the evidence rows
+        # that were inputs to this gate decision (truthful annotation,
+        # rows themselves are never edited or deleted)
+        try:
+            from backend.research_agents.evidence_lineage import (
+                annotate_verification_relevance)
+            annotate_verification_relevance(self.store, job.id,
+                                            decision.reason)
+        except Exception as exc:  # noqa: BLE001 - honest degrade
+            self.store.record_activity({
+                "job_id": job.id, "agent": job.assigned_agent,
+                "category": job.agent_category,
+                "action": "evidence_lineage_failed",
+                "detail": _bounded_text(str(exc), 120),
+                "mode": job.execution_mode})
         self.store.record_activity({
             "job_id": job.id, "agent": job.assigned_agent,
             "category": job.agent_category,

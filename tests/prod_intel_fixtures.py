@@ -19,6 +19,8 @@ from backend.research_agents.finding.models import (
     new_id as fnew_id,
 )
 from backend.research_agents.hunt.models import HuntObjective
+
+from tests.finding_fixtures import supported_integrity
 from backend.research_agents.intelligence.memory import make_item
 
 SCOPE = "fixture:test/target.example"
@@ -252,6 +254,9 @@ def add_verification(candidate: CandidateFinding, *,
     cur = ver
     for step in path.get(state, []):
         cur = fs.transition_verification(cur.verification_id, step,
+                                     claim_integrity=(
+                                         supported_integrity()
+                                         if step == "VERIFIED" else None),
                                          reason="fixture step")
     return fs.get_verification(ver.verification_id)
 
