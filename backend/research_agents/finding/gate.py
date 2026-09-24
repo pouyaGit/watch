@@ -10,20 +10,32 @@ CANDIDATE-level decision vocabulary:
 Rules (non-negotiable 5-9):
 - VERIFIED requires the authoritative gate record to say
   ``evidence_rules_met`` with a claimed case, AND at least one
-  direct supporting evidence row linked to the verification job.
+  direct supporting evidence row linked to the verification job, AND
+  (EPIC11) the class claim contract to be satisfied by persisted,
+  non-duplicate evidence of the required types.
 - REJECTED requires contradictory or disqualifying evidence.
-- INCONCLUSIVE = evidence remains insufficient to decide.
+- INCONCLUSIVE = evidence remains insufficient to decide; the candidate
+  is parked at ``VERIFICATION_PENDING`` with the exact missing evidence.
 - BLOCKED = verification could not safely proceed (hunt/auth/authorization).
 - The LLM is NEVER read here: no advisor argument exists in ``decide()``;
   "LLM confidence = high" can never become VERIFIED.
+
+EPIC11 note: the runtime's generic rule (">= N rows of storage type
+``observation`` at high confidence") is NOT sufficient to confirm a
+vulnerability.  ``parameter inventory exists`` can no longer become
+``XSS exists``: the claim contract in ``finding.integrity`` decides, and
+its outcome is persisted alongside every decision.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
 
-VERIFICATION_RULE_VERSION = "finding-gate-1"
+from backend.research_agents.finding.integrity import contracts as _ict
+from backend.research_agents.finding.integrity import gate as _igate
+
+VERIFICATION_RULE_VERSION = "finding-gate-2"
 
 
 @dataclass
@@ -40,9 +52,16 @@ class VerificationDecision:
     evidence_used: list[str] = field(default_factory=list)
     contradicting: list[str] = field(default_factory=list)
     rule_version: str = VERIFICATION_RULE_VERSION
+    # -- EPIC11 claim/evidence integrity (authoritative) -----------------
+    authoritative_state: str = ""
+    claim_integrity: dict[str, Any] = field(default_factory=dict)
+    claim_integrity_status: str = ""
+    missing_evidence: list[str] = field(default_factory=list)
+    stage_reached: int = 0
+    blockers: list[str] = field(default_factory=list)
     limitations: str = ("authoritative decision from the Evidence Gate + "
-                        "deterministic evidence rules; LLM output is never "
-                        "consulted by this gate")
+                        "deterministic claim/evidence contract; LLM output "
+                        "is never consulted by this gate")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -58,6 +77,12 @@ class VerificationDecision:
             "evidence_used": list(self.evidence_used),
             "contradicting": list(self.contradicting),
             "rule_version": self.rule_version,
+            "authoritative_state": self.authoritative_state,
+            "claim_integrity": dict(self.claim_integrity),
+            "claim_integrity_status": self.claim_integrity_status,
+            "missing_evidence": list(self.missing_evidence),
+            "stage_reached": self.stage_reached,
+            "blockers": list(self.blockers),
             "limitations": self.limitations,
         }
 
@@ -94,6 +119,8 @@ def decide(
     quality_rows: list[dict[str, Any]] | None = None,
     hunt: dict[str, Any] | None = None,
     runtime_case_id: str = "",
+    evidence_rows: Iterable[dict[str, Any]] | None = None,
+    authorization: Any = None,
 ) -> VerificationDecision:
     """Candidate-level verification decision.  No advisor parameter — by
     construction the LLM cannot reach this function (rule 7)."""
@@ -102,6 +129,22 @@ def decide(
     quality_rows = quality_rows or []
     scope_candidate = str(getattr(candidate, "scope_ref", "") or "")
     scope_verification = str(getattr(verification, "scope_ref", "") or "")
+    ver_job = str(getattr(verification, "job_id", "") or "")
+
+    # EPIC11: the authoritative claim-contract evaluation over the REAL
+    # persisted evidence rows (prior + verification).  Computed once and
+    # attached to every outcome so missing evidence and stage are always
+    # persisted, never inferred downstream.
+    integrity = _igate.evaluate_integrity(
+        vulnerability_class=getattr(candidate, "vulnerability_class", ""),
+        rows=list(evidence_rows or []),
+        authorization=(authorization if authorization is not None
+                       else _default_authorization(candidate, verification)),
+        runtime_gate_reason=str(
+            gate_record(structured).get("reason") or ""),
+        runtime_gate_claimed_case=bool(
+            gate_record(structured).get("created_case")),
+    )
 
     def _both(verification_state: str, reason: str, detail: str = "",
               **kw: Any) -> VerificationDecision:
@@ -112,7 +155,15 @@ def decide(
         return VerificationDecision(
             verification_state=verification_state,
             candidate_state=candidate_state,
-            reason=reason, detail=detail, **kw)
+            reason=reason, detail=detail,
+            authoritative_state=integrity.authoritative_state,
+            claim_integrity=dict(integrity.claim_integrity),
+            claim_integrity_status=str(
+                integrity.claim_integrity.get("status") or ""),
+            missing_evidence=list(integrity.missing_evidence),
+            stage_reached=integrity.stage_reached,
+            blockers=list(integrity.blockers),
+            **kw)
 
     # -- 0. scope must still match (defensive; store enforces it too) ------
     if scope_candidate and scope_verification and \
@@ -155,7 +206,7 @@ def decide(
                      and q.get("direct") is True
                      and q.get("stance") == "contradicting"]
 
-    # -- 4a. VERIFIED: gate authoritative + case claimed + direct support ---
+    # -- 4a. VERIFIED: runtime gate + direct support + CLAIM CONTRACT ------
     if gate_reason == "evidence_rules_met" and created_case:
         if not authoritative:
             return _both("INCONCLUSIVE", "gate_not_authoritative",
@@ -165,15 +216,26 @@ def decide(
                          "gate_met_without_direct_supporting_evidence",
                          "case claimed but no direct supporting row for "
                          "this candidate")
-        return _both(
-            "VERIFIED", "evidence_rules_met",
-            f"confidence={confidence} supporting="
-            f"{len(supporting)} case={runtime_case_id or 'claimed'}",
-            gate_reason=gate_reason, gate_confidence=confidence,
-            gate_authoritative=True, created_case=True,
-            case_id=runtime_case_id,
-            evidence_used=[str(q.get("evidence_id") or "")
-                           for q in supporting[:10]])
+        # EPIC11 — the authoritative claim contract decides.  A runtime
+        # gate claim of ``evidence_rules_met`` can NO LONGER confirm a
+        # vulnerability on its own.
+        if integrity.authoritative_state == _igate.VERIFIED:
+            return _both(
+                "VERIFIED", "evidence_rules_met",
+                f"confidence={confidence} supporting="
+                f"{len(supporting)} case={runtime_case_id or 'claimed'} "
+                f"stage={integrity.stage_reached} contract="
+                f"{integrity.claim_integrity.get('contract_id')}",
+                gate_reason=gate_reason, gate_confidence=confidence,
+                gate_authoritative=True, created_case=True,
+                case_id=runtime_case_id,
+                evidence_used=[str(q.get("evidence_id") or "")
+                               for q in supporting[:10]])
+        return _integrity_outcome(
+            integrity, _both, gate_reason=gate_reason,
+            confidence=confidence, authoritative=authoritative,
+            created_case=created_case, verification_job=ver_job,
+            supporting=supporting)
 
     # -- 4b. REJECTED: contradictory or disqualifying evidence -------------
     if contradicting:
@@ -192,11 +254,75 @@ def decide(
                      gate_authoritative=authoritative)
 
     # -- 4c. BLOCKED already handled; everything else = INCONCLUSIVE -------
+    integrity_reason = integrity.gate_reason
+    if integrity.authoritative_state == _igate.REJECTED:
+        return _both("REJECTED",
+                     f"contradicting_evidence:"
+                     f"{integrity_reason.split(':', 1)[-1]}",
+                     "claim contract rejected by persisted evidence",
+                     gate_reason=gate_reason, gate_confidence=confidence,
+                     gate_authoritative=authoritative,
+                     created_case=created_case)
     return _both("INCONCLUSIVE", f"evidence_insufficient:{gate_reason or 'unknown'}",
                  "evidence remains insufficient to decide",
                  gate_reason=gate_reason, gate_confidence=confidence,
                  gate_authoritative=authoritative,
                  created_case=created_case)
+
+
+def _default_authorization(candidate: Any, verification: Any) -> Any:
+    """Recorded authorization lineage (never invented, never expanded)."""
+    scope_ref = str(getattr(candidate, "scope_ref", "") or "")
+    provenance = getattr(verification, "provenance", {}) or {}
+    return _ict.AuthorizationContext(
+        scope_ref=scope_ref,
+        authorization_ref=str(getattr(candidate, "authorization_ref", "")
+                              or scope_ref),
+        authorization_ids=tuple(
+            str(x) for x in (getattr(verification, "authorization_ids", ())
+                             or ())),
+        execution_mode=str(provenance.get("execution_mode") or ""),
+        provenance={"source": "finding_gate_recorded_lineage"},
+    )
+
+
+def _integrity_outcome(integrity: Any, both: Any, *, gate_reason: str,
+                       confidence: str, authoritative: bool,
+                       created_case: bool, verification_job: str,
+                       supporting: list[dict[str, Any]]
+                       ) -> VerificationDecision:
+    """Map a non-VERIFIED claim contract outcome onto the finding states.
+
+    ``VERIFICATION_PENDING`` is preserved as the CANDIDATE state (the
+    brief's honest outcome) while the verification objective — whose
+    vocabulary has no PENDING terminal — parks at INCONCLUSIVE.
+    """
+    state = integrity.authoritative_state
+    reason = integrity.gate_reason
+    detail = ("claim contract not satisfied: "
+              + ",".join(integrity.missing_evidence[:6])
+              if integrity.missing_evidence else integrity.gate_reason)
+    if state == _igate.BLOCKED:
+        return both("BLOCKED", reason, detail, gate_reason=gate_reason,
+                    gate_confidence=confidence, gate_authoritative=authoritative,
+                    created_case=created_case)
+    if state == _igate.REJECTED:
+        return both("REJECTED", reason, detail, gate_reason=gate_reason,
+                    gate_confidence=confidence, gate_authoritative=authoritative,
+                    created_case=created_case)
+    decision = both("INCONCLUSIVE",
+                    f"{_igate.VERIFICATION_PENDING}:{reason}", detail,
+                    gate_reason=gate_reason, gate_confidence=confidence,
+                    gate_authoritative=authoritative,
+                    created_case=created_case)
+    # candidate parks at VERIFICATION_PENDING with the missing evidence
+    if getattr(decision, "authoritative_state", "") == \
+            _igate.VERIFICATION_PENDING:
+        decision.candidate_state = _igate.VERIFICATION_PENDING
+    decision.gate_reason = reason
+    decision.evidence_used = [str(q.get("evidence_id") or "")
+                              for q in supporting[:10]]
+    return decision
 
 
 def _bounded(value: Any, limit: int) -> str:

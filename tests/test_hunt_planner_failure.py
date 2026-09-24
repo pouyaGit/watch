@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.dont_write_bytecode = True
 
 from tests.hunt_fixtures import (  # noqa: E402
+    claim_grade_determin,
     make_job,
     make_store,
     rich_rows,
@@ -66,6 +67,7 @@ class LLMFailureTests(unittest.TestCase):
 
         outcome, job, cap, hs, store = run_hunt_fixture(
             advisor_fn=unavailable,
+            determin_fn=claim_grade_determin(deterministic_analysis),
             limits=HuntLimits(max_plans_per_objective=2,
                               max_llm_planning_calls=1,
                               max_seconds=30))
@@ -309,6 +311,7 @@ class StoreAndGateFailureTests(unittest.TestCase):
 
         outcome, job, cap, hs, store = run_hunt_fixture(
             memory=BrokenMemory(),
+            determin_fn=claim_grade_determin(deterministic_analysis),
             limits=HuntLimits(max_plans_per_objective=2,
                               max_llm_planning_calls=0, max_seconds=30))
         self.assertEqual(outcome.termination_reason, "sufficient_evidence")

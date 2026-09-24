@@ -105,12 +105,45 @@ class SplitFixture(FixtureObservations):
         return super().observe(job)
 
 
+def claim_grade_determin(determin_fn: Any, *, category: str = "XSS") -> Any:
+    """Wrap a deterministic analyser so the fixture scope already carries
+    the claim-grade evidence an authorized verification run would have
+    persisted (stage 3 + stage 4 + the authorization confirmation).
+
+    EPIC11: the runtime's observation providers can only ever produce
+    observation-stage signals, so a fixture that wants to exercise the
+    *resolution* path must state that the stored observations include a
+    controlled-verification record.  It never bypasses the gate — the
+    gate still evaluates the real claim contract over these rows.
+    """
+    from tests.finding_fixtures import contract_evidence
+
+    def wrapped(capability: Any, job: Any, observations: Any,
+                knowledge: Any) -> dict[str, Any]:
+        analysis = determin_fn(capability, job, observations, knowledge)
+        analysis = dict(analysis or {})
+        cands = list(analysis.get("evidence_candidates") or [])
+        for row in contract_evidence(cls=category, count=6):
+            cands.append({
+                "type": "observation",
+                "observation_ref": row["observation_ref"],
+                "signal": row["signal"],
+                "detail": row["detail"],
+                "category": category,
+            })
+        analysis["evidence_candidates"] = cands
+        return analysis
+
+    return wrapped
+
+
 def run_hunt_fixture(
     *,
     rows: list[dict[str, Any]] | None = None,
     typed: dict[str, list[dict]] | None = None,
     category: str = "XSS",
     limits: HuntLimits | None = None,
+    determin_fn: Any = None,
     advisor_fn=None,
     knowledge_fn=None,
     auth_ref: str = "fixture:shop/shop.test",
@@ -138,7 +171,7 @@ def run_hunt_fixture(
     outcome = run_hunt(
         job=job, capability=cap, store=store, hunt_store=HuntStore(store.base),
         observations=provider, auth_checker=AuthorizationChecker(),
-        determin_fn=deterministic_analysis,
+        determin_fn=determin_fn or deterministic_analysis,
         gate_fn=gate_fn or evaluate_case_creation,
         limits=limits,
         initial_rows=list(rows if rows is not None else rich_rows()),

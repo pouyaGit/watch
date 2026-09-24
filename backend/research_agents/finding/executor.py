@@ -47,6 +47,8 @@ from backend.research_agents.finding.correlate import correlate_pair
 from backend.research_agents.finding.dedupe import deduplicate
 from backend.research_agents.finding.extract import extract_candidates
 from backend.research_agents.finding.gate import decide as gate_decide
+from backend.research_agents.finding.integrity import contracts as _icontracts
+from backend.research_agents.finding.integrity import report as _ireport
 from backend.research_agents.finding.limits import (
     DEFAULT_LIMITS,
     BudgetExhausted,
@@ -857,6 +859,10 @@ def run_findings(
             runtime_case_id = ""
 
         # ---- Phase 8: THE verification gate (no advisor input) -------
+        # EPIC11: the gate receives the REAL persisted evidence rows
+        # (prior research + this verification) and the recorded
+        # authorization lineage; the authoritative answer is the class
+        # claim contract, not a row count.
         decision = gate_decide(
             candidate=candidate, verification=ver,
             job_status=job_status,
@@ -864,6 +870,20 @@ def run_findings(
             structured=structured, quality_rows=quality_dicts,
             hunt=hunt if isinstance(hunt, dict) else {},
             runtime_case_id=runtime_case_id,
+            evidence_rows=list(prior_rows) + list(ver_rows),
+            authorization=_icontracts.AuthorizationContext(
+                scope_ref=str(candidate.scope_ref or ""),
+                authorization_ref=str(ver.scope_ref or candidate.scope_ref
+                                      or ""),
+                authorization_ids=tuple(str(a) for a in
+                                        (ver.authorization_ids or ())),
+                execution_mode=str(structured.get("execution_mode") or ""),
+                provenance={
+                    "source": "finding_executor_recorded_lineage",
+                    "job_id": job.id,
+                    "observation_ids": list(ver.observation_ids or [])[:8],
+                },
+            ),
         )
 
         # verification objective terminal transition.  Persist the
@@ -874,22 +894,28 @@ def run_findings(
                            or decision.reason
                            or ver.gate_reason)
         ver.decision = decision.verification_state
+        ver.claim_integrity = dict(decision.claim_integrity)
+        ver.authoritative_state = decision.authoritative_state
+        ver.missing_evidence_contract = list(decision.missing_evidence)
         try:
             ver = fs.save_verification(ver)
             ver = fs.transition_verification(
                 ver.verification_id, decision.verification_state,
-                reason=decision.reason, detail=decision.detail)
+                reason=decision.reason, detail=decision.detail,
+                claim_integrity=dict(decision.claim_integrity))
         except (FindingStateError, FindingStoreError) as exc:
             summary.errors.append(
                 f"verification_decide:{_bounded(exc, 120)}")
 
-        # candidate terminal transition (store re-checks the gate result)
+        # candidate terminal transition (store re-checks the gate result
+        # AND the claim/evidence integrity status — EPIC11 fail-closed)
         if not candidate.is_terminal:
             try:
                 candidate = fs.transition_candidate(
                     candidate.candidate_id, decision.candidate_state,
                     reason=decision.reason, detail=decision.detail,
-                    gate_result=decision.gate_reason)
+                    gate_result=decision.gate_reason,
+                    claim_integrity=dict(decision.claim_integrity))
             except (FindingStateError, FindingStoreError) as exc:
                 summary.errors.append(
                     f"candidate_decide:{_bounded(exc, 120)}")
@@ -919,19 +945,39 @@ def run_findings(
         })
 
         # ---- Phase 12/13: case lifecycle + analyst package -----------
+        # EPIC11: a case may only claim VERIFIED/READY_FOR_REVIEW when the
+        # claim contract is satisfied AND the deterministic report
+        # validation passes.  Anything else parks at
+        # VERIFICATION_PENDING/BLOCKED with the exact missing evidence.
         case_row = fs.cases_for_candidate(candidate.candidate_id)
         if case_row is not None:
             new_case_state = {
                 "VERIFIED": "VERIFIED", "REJECTED": "REJECTED",
-                "INCONCLUSIVE": "INCONCLUSIVE", "BLOCKED": "BLOCKED",
+                "INCONCLUSIVE": ("VERIFICATION_PENDING"
+                                 if decision.candidate_state
+                                 == "VERIFICATION_PENDING"
+                                 else "INCONCLUSIVE"),
+                "BLOCKED": "BLOCKED",
                 "FAILED": "BLOCKED",
             }.get(decision.verification_state, "")
+            integrity_dict = dict(decision.claim_integrity)
             if new_case_state and case_row.state != new_case_state:
+                # best-effort stamp: the authoritative payload is also
+                # passed to transition_case (which is what the store
+                # re-checks), so a persistence outage here is recorded and
+                # never silently fatal.
+                try:
+                    case_row.claim_integrity = integrity_dict
+                    case_row = fs.save_case(case_row)
+                except Exception as exc:  # noqa: BLE001 - recorded, not fatal
+                    summary.errors.append(
+                        f"case_integrity:{_bounded(exc, 120)}")
                 try:
                     fs.transition_case(
                         case_row.case_id, new_case_state,
                         reason=decision.reason,
-                        gate_result=decision.gate_reason)
+                        gate_result=decision.gate_reason,
+                        claim_integrity=integrity_dict)
                     if new_case_state == "VERIFIED":
                         activity("case_verified",
                                  f"{case_row.case_id} gate="
@@ -942,11 +988,20 @@ def run_findings(
                                  f"{case_row.case_id} "
                                  f"reason={decision.reason}",
                                  candidate_id=candidate.candidate_id)
+                    elif new_case_state == "VERIFICATION_PENDING":
+                        activity(
+                            "case_verification_pending",
+                            f"{case_row.case_id} "
+                            f"missing={','.join(decision.missing_evidence[:4])}",
+                            candidate_id=candidate.candidate_id)
                     audit("case_state", {
                         "case_id": case_row.case_id,
                         "candidate_id": candidate.candidate_id,
                         "state": new_case_state,
                         "reason": decision.reason,
+                        "gate_reason": decision.gate_reason,
+                        "missing_evidence":
+                            list(decision.missing_evidence[:8]),
                     })
                 except (FindingStateError, FindingStoreError) as exc:
                     summary.errors.append(
@@ -975,7 +1030,20 @@ def run_findings(
                     # state back to VERIFYING
                     case_row = (fs.cases_for_candidate(
                         candidate.candidate_id) or case_row)
+                    validation, report = _evidence_report(
+                        package=package, candidate=candidate,
+                        verification=ver, decision=decision,
+                        rows=list(prior_rows) + list(ver_rows),
+                        scope_ref=str(candidate.scope_ref or ""),
+                        authorization_ids=list(ver.authorization_ids or []),
+                        timeline=list(package.get("evidence_timeline") or []),
+                        source_job=candidate.source_job,
+                        verification_job=job.id)
+                    package["evidence_report"] = report
+                    package["report_validation"] = validation.to_dict()
                     case_row.package = package
+                    case_row.claim_integrity = integrity_dict
+                    case_row.report_validation = validation.to_dict()
                     case_row.severity = candidate.severity
                     case_row.severity_provenance = \
                         candidate.severity_provenance
@@ -984,23 +1052,97 @@ def run_findings(
                     case_row.limitations = list(
                         package.get("limitations") or [])
                     fs.save_case(case_row)
-                    fs.transition_case(case_row.case_id,
-                                       "READY_FOR_REVIEW",
-                                       reason="package_ready")
-                    activity("case_handoff_ready",
-                             f"{case_row.case_id} package_ready "
-                             f"evidence={len(package.get('evidence_ids') or [])}",
-                             candidate_id=candidate.candidate_id)
-                    audit("case_handoff_ready", {
-                        "case_id": case_row.case_id,
-                        "candidate_id": candidate.candidate_id,
-                        "verification_id": ver.verification_id,
-                        "evidence_count": len(
-                            package.get("evidence_ids") or []),
-                    })
+                    if validation.ready:
+                        fs.transition_case(case_row.case_id,
+                                           "READY_FOR_REVIEW",
+                                           reason="package_ready",
+                                           report_validation=validation.to_dict())
+                        activity("case_handoff_ready",
+                                 f"{case_row.case_id} package_ready "
+                                 f"evidence="
+                                 f"{len(package.get('evidence_ids') or [])}",
+                                 candidate_id=candidate.candidate_id)
+                        audit("case_handoff_ready", {
+                            "case_id": case_row.case_id,
+                            "candidate_id": candidate.candidate_id,
+                            "verification_id": ver.verification_id,
+                            "evidence_count": len(
+                                package.get("evidence_ids") or []),
+                            "report_validation":
+                                validation.status,
+                        })
+                    else:
+                        # EPIC11: a report that cannot prove its claims
+                        # never becomes an analyst deliverable.
+                        fs.transition_case(
+                            case_row.case_id, "BLOCKED",
+                            reason="report_validation_failed:"
+                                   + ",".join(b["code"] for b
+                                              in validation.blockers[:4]),
+                            report_validation=validation.to_dict())
+                        activity(
+                            "case_report_blocked",
+                            f"{case_row.case_id} blockers="
+                            f"{','.join(b['code'] for b in validation.blockers[:4])}",
+                            candidate_id=candidate.candidate_id)
+                        audit("case_report_blocked", {
+                            "case_id": case_row.case_id,
+                            "candidate_id": candidate.candidate_id,
+                            "verification_id": ver.verification_id,
+                            "blockers": [b["code"] for b
+                                         in validation.blockers[:8]],
+                            "report_validation":
+                                validation.to_dict(),
+                        })
                 except Exception as exc:  # noqa: BLE001 - honest failure
                     summary.errors.append(
                         f"package:{_bounded(exc, 120)}")
+            elif new_case_state == "VERIFICATION_PENDING":
+                # persist the honest pending record: claim/evidence matrix,
+                # missing evidence and negative evidence — no report, no
+                # "ready" artifact, no confirmation.
+                try:
+                    case_row = (fs.cases_for_candidate(
+                        candidate.candidate_id) or case_row)
+                    case_row.claim_integrity = integrity_dict
+                    case_row.report_validation = {
+                        "status": _ireport.REPORT_BLOCKED,
+                        "ready": False,
+                        "blockers": [{
+                            "code": "verification_pending",
+                            "detail": decision.gate_reason,
+                        }],
+                        # nothing is PRESENTED as confirmed here, so the
+                        # §18 metric stays 0; the unsupported claim ids
+                        # are the contract-level gaps for the analyst
+                        "unsupported_claims": [],
+                        "unsupported_claim_ids": list(
+                            integrity_dict.get("unsupported_claims") or []),
+                        "missing_evidence": list(decision.missing_evidence),
+                        "contradictions": list(
+                            integrity_dict.get("contradictions") or []),
+                        "checks": {_ireport.CHECK_CONFIRMATION: False},
+                    }
+                    case_row.limitations = list(
+                        integrity_dict.get("limitations") or [])
+                    case_row.recommended_next_step = (
+                        "Evidence insufficient: "
+                        + ", ".join(decision.missing_evidence[:4])
+                        + " must be collected before this claim can be "
+                          "confirmed.")
+                    fs.save_case(case_row)
+                    audit("case_claim_pending", {
+                        "case_id": case_row.case_id,
+                        "candidate_id": candidate.candidate_id,
+                        "verification_id": ver.verification_id,
+                        "gate_reason": decision.gate_reason,
+                        "missing_evidence":
+                            list(decision.missing_evidence[:8]),
+                        "stage_reached": decision.stage_reached,
+                    })
+                except Exception as exc:  # noqa: BLE001 - honest failure
+                    summary.errors.append(
+                        f"pending_package:{_bounded(exc, 120)}")
 
         # ---- lineage row (Phase 16) ---------------------------------
         audit("lineage", lineage_row(
@@ -1037,6 +1179,53 @@ def run_findings(
     elif not summary.reason:
         summary.reason = "completed"
     return summary
+
+
+def _evidence_report(*, package: dict[str, Any], candidate: Any,
+                     verification: Any, decision: Any,
+                     rows: list[dict[str, Any]], scope_ref: str,
+                     authorization_ids: list[str],
+                     timeline: list[dict[str, Any]],
+                     source_job: str, verification_job: str
+                     ) -> tuple[Any, dict[str, Any]]:
+    """Build + validate the evidence-backed report (EPIC11 §9/§14).
+
+    The claim evaluation is recomputed here from the same evidence rows
+    the gate consumed, so validation is an INDEPENDENT deterministic
+    check, not a re-read of the gate's own answer.
+    """
+    from backend.research_agents.finding.integrity import claims as _iclaims
+    from backend.research_agents.finding.models import SEVERITY_UNASSESSED
+
+    authorization = _icontracts.AuthorizationContext(
+        scope_ref=scope_ref,
+        authorization_ref=scope_ref,
+        authorization_ids=tuple(str(a) for a in (authorization_ids or ())),
+        provenance={"source": "finding_executor_report_scope"})
+    evaluation = _iclaims.evaluate_rows(
+        getattr(candidate, "vulnerability_class", ""), rows,
+        authorization=authorization)
+    advisory = dict(package.get("advisor") or {})
+    severity = str(getattr(candidate, "severity", "") or SEVERITY_UNASSESSED)
+    severity_provenance = str(
+        getattr(candidate, "severity_provenance", "") or "")
+    severity_authoritative = severity != SEVERITY_UNASSESSED
+    report = _ireport.build_report(
+        candidate=candidate, verification=verification, decision=decision,
+        evaluation=evaluation,
+        severity=severity, severity_provenance=severity_provenance,
+        severity_authoritative=severity_authoritative,
+        endpoint_context=getattr(candidate, "endpoint", ""),
+        timeline=timeline, historical_advisory=advisory,
+        evidence_jobs=[source_job, verification_job])
+    validation = _ireport.validate_report(
+        report, evaluation=evaluation,
+        authoritative_state=str(decision.authoritative_state or
+                                decision.verification_state),
+        severity=severity, severity_provenance=severity_provenance,
+        severity_authoritative=severity_authoritative,
+        historical_advisory=advisory)
+    return validation, _ireport.attach_validation(report, validation)
 
 
 def _run_advisor(*, fs: Any, store: Any, candidate: Any, ver: Any,

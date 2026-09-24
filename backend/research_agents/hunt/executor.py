@@ -158,6 +158,11 @@ def _gate_evidence_rows(job: Any,
 
     Never persisted: ids are obviously synthetic and this module has no
     access to the evidence store (AST-verifiable).
+
+    EPIC11: the taxonomy-relevant fields (signal/category/detail) travel
+    with the row — without them the gate can only see "some observation
+    exists" and a parameter-inventory candidate would look like
+    verification evidence.
     """
     rows: list[dict[str, Any]] = []
     for idx, cand in enumerate(
@@ -167,6 +172,11 @@ def _gate_evidence_rows(job: Any,
             "type": cand.get("type"),
             "observation_ref": cand.get("observation_ref", ""),
             "job_id": job.id,
+            "signal": cand.get("signal", ""),
+            "category": cand.get("category") or job.agent_category,
+            "detail": cand.get("detail", ""),
+            "confidence": analysis.get("confidence", ""),
+            "execution_mode": getattr(job, "execution_mode", ""),
         })
     return rows
 
