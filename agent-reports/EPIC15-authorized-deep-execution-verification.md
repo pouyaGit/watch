@@ -198,6 +198,18 @@ evidence, chain/verdict matrix (§19 A–H), persistence, the 20 adversarial
 cases (§24), LLM boundary, budget, regression (`cand-7c229c48c455`),
 integration and the SOC projection.
 
+**Full-suite regression (worktree discovery):**
+
+    Ran 12901 tests in 170.068s
+    FAILED (failures=243, errors=129, skipped=17)
+
+Pre-EPIC15 baseline: 12,563 tests, the same 243 failures / 129 errors.
+The 308 unique failing test names are **identical** to the baseline
+(`comm` diff empty): **zero new failures, zero EPIC11/12/13/14/15
+failures**. The +338 tests are the new EPIC15 modules; the failures are
+the pre-existing artifact-dependent suites (report/CLI/artifact tests that
+fail on this host regardless of code).
+
 ## 8. Honest deviations and limits
 
 * **Path C, not B.** A narrowly-scoped live browser was judged
