@@ -82,7 +82,7 @@ class TestVerdicts(unittest.TestCase):
         self.assertEqual(state.verdict, ig.VERIFIED)
 
     def test_class_without_a_chain_reports_the_contract_verdict(self):
-        state = en.evaluate_chain("IDOR", inventory_rows(3))
+        state = en.evaluate_chain("SQLI", inventory_rows(3))
         self.assertEqual(state.capability, ch.CAPABILITY_NOT_IMPLEMENTED)
         self.assertEqual(state.stages, ())
         self.assertIn(state.verdict, ig.INTEGRITY_STATES)

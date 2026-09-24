@@ -40,6 +40,7 @@ from typing import Any, Callable, Iterable
 from backend.research_agents.verification import actions as ac
 from backend.research_agents.verification import chains as ch
 from backend.research_agents.verification import observations as ob
+from backend.research_agents.verification.specialists import service as class_svc
 
 # EPIC13: the deterministic reflection detector and context classifier are the
 # single implementation of those two decisions.  They are imported lazily by
@@ -95,6 +96,13 @@ CONTEXT_KEYS: tuple[str, ...] = (
     "job_id",
     "transport",       # injected authorized transport callable (or None)
     "marker",          # explicit marker override (tests/fixtures)
+    # EPIC16: the deterministic class-classification lane.  The observed
+    # material (headers, Location, destination, product/version) is passed
+    # nested so no arbitrary header/URL primitive is exposed.
+    "vulnerability_class",
+    "material",
+    "authorization",
+    "action_id",
 )
 
 #: Context classes the classifier can produce (closed vocabulary, EPIC13 §8).
@@ -732,6 +740,89 @@ class AuthorizedProbeExecutor(BaseExecutor):
                     "material": "authorized_transport"})
 
 
+#: Action -> vulnerability class for the read-only classification lane.
+CLASS_ACTION_CLASS: dict[str, str] = {
+    ac.CHECK_CORS_HEADERS: "CORS",
+    ac.CLASSIFY_CORS_ORIGIN_ECHO: "CORS",
+    ac.CHECK_CREDENTIALS_MODE: "CORS",
+    ac.ASSESS_RESPONSE_SENSITIVITY: "CORS",
+    ac.CHECK_REDIRECT_LOCATION: "OPEN_REDIRECT",
+    ac.CLASSIFY_REDIRECT_TARGET: "OPEN_REDIRECT",
+    ac.CHECK_CALLBACK_INTERACTION: "SSRF",
+    ac.CHECK_OBJECT_ACCESS: "IDOR",
+}
+
+#: Actions that WOULD need a live request lane and stay unimplemented.  They
+#: are listed explicitly so a future lane cannot be wired by accident.
+CLASS_ACTION_NETWORK: frozenset[str] = frozenset({
+    ac.SEND_ORIGIN_HEADER, ac.SEND_REDIRECT_MARKER, ac.SEND_CALLBACK_URL,
+    ac.OBSERVE_SERVER_RESPONSE, ac.ASSESS_SSRF_IMPACT,
+})
+
+
+class ClassClassificationExecutor(BaseExecutor):
+    """EPIC16 §14 — the deterministic, offline class-classification lane.
+
+    Consumes *recorded* material (response headers, a Location value, a
+    destination, product/version strings) and produces class observations
+    through the trusted producer.  It never opens a socket, never sets a
+    header, and refuses when the class capability or the authorization is
+    absent.
+    """
+
+    name = "class_classification"
+
+    def supports(self, action_type: str) -> bool:
+        return action_type in CLASS_ACTION_CLASS
+
+    def execute(self, action: Any, *, context: dict[str, Any]
+                ) -> ExecutionResult:
+        action_type = str(action.action_type or "").upper()
+        vulnerability_class = CLASS_ACTION_CLASS.get(action_type, "")
+        material = dict(context.get("material") or {})
+        authorization = context.get("authorization")
+        if not vulnerability_class:
+            return ExecutionResult(
+                ok=False, executor=self.name,
+                blocked_reason=REASON_ACTION_NOT_EXECUTABLE,
+                error=f"no class lane for action {action_type!r}")
+
+        if authorization is None and not getattr(action, "authorized", False):
+            return ExecutionResult(
+                ok=False, executor=self.name,
+                blocked_reason=REASON_AUTHORIZATION_UNAVAILABLE,
+                error="class classification requires a recorded authorization",
+                result={"vulnerability_class": vulnerability_class,
+                        "action_type": action_type})
+
+        result = class_svc.verify_class(
+            vulnerability_class, candidate_id=action.candidate_id,
+            scope_ref=action.scope_ref, target=action.target,
+            authorization=authorization, material=material,
+            action_id=action_type,
+            request_ref=str(context.get("request_ref") or ""),
+            response_ref=str(context.get("response_ref") or ""))
+
+        if result.outcome == class_svc.OUTCOME_BLOCKED:
+            return ExecutionResult(
+                ok=False, executor=self.name,
+                blocked_reason=REASON_AUTHORIZATION_UNAVAILABLE,
+                error=result.reason, result=result.to_dict())
+        if result.outcome == class_svc.OUTCOME_CAPABILITY_UNAVAILABLE:
+            return ExecutionResult(
+                ok=False, executor=self.name,
+                blocked_reason=REASON_CAPABILITY_UNAVAILABLE,
+                error=result.reason, result=result.to_dict())
+        if result.outcome == class_svc.OUTCOME_NOT_TESTED:
+            return ExecutionResult(
+                ok=False, executor=self.name,
+                blocked_reason=REASON_MATERIAL_UNAVAILABLE,
+                error=result.reason, result=result.to_dict())
+        return ExecutionResult(
+            ok=True, executor=self.name, observations=result.observations,
+            result=result.to_dict())
+
+
 class UnavailableExecutor(BaseExecutor):
     """Actions whose lane does not exist in this runtime — always BLOCKED."""
 
@@ -751,6 +842,7 @@ class UnavailableExecutor(BaseExecutor):
 
 
 _EXECUTORS: tuple[BaseExecutor, ...] = (
+    ClassClassificationExecutor(),
     ReadOnlyEvidenceExecutor(), AuthorizedProbeExecutor(), UnavailableExecutor())
 
 EXECUTOR_REGISTRY: dict[str, BaseExecutor] = {
@@ -812,6 +904,7 @@ __all__ = [
     "AuthorizedProbeExecutor", "BaseExecutor", "CONTEXT_CLASSES", "CONTEXT_DOM",
     "CONTEXT_HTML_ATTRIBUTE", "CONTEXT_HTML_TEXT", "CONTEXT_JAVASCRIPT",
     "CONTEXT_KEYS", "CONTEXT_URL", "DOM_SINK_PATTERNS", "DOM_SOURCE_PATTERNS",
+    "CLASS_ACTION_CLASS", "CLASS_ACTION_NETWORK", "ClassClassificationExecutor",
     "EXECUTOR_REGISTRY", "EXECUTOR_RULE_VERSION", "ExecutionResult",
     "ReadOnlyEvidenceExecutor", "REASON_ACTION_NOT_EXECUTABLE",
     "REASON_CAPABILITY_UNAVAILABLE", "REASON_MATERIAL_UNAVAILABLE",

@@ -256,18 +256,196 @@ SIGNAL_TO_TYPE: dict[str, str] = {
     "scope_authorized": AUTHORIZATION_CONFIRMED,
     "authorization_verified": AUTHORIZATION_CONFIRMED,
     "knowledge_reference": KNOWLEDGE_REFERENCE,
+    # ---- EPIC16: class-scoped signals -----------------------------------
+    # CORS (§4/§6): a header observation is never automatically exploitable.
+    "cors_origin_supplied": CONTROLLED_INPUT_SENT,
+    "cors_acao_observed": RESPONSE_OBSERVED,
+    "cors_arbitrary_origin_accepted": OUTPUT_CONTEXT_IDENTIFIED,
+    "cors_credentials_allowed": PAYLOAD_EXECUTION,
+    "cors_sensitive_response_available": IMPACT_ESTABLISHED,
+    "cors_exploitability_established": EXPLOITABILITY_ESTABLISHED,
+    # OPEN_REDIRECT (§7/§8): a 302 or a parameter is never the finding.
+    "redirect_input_identified": PARAMETER_OBSERVED,
+    "redirect_marker_sent": CONTROLLED_INPUT_SENT,
+    "redirect_response_observed": RESPONSE_OBSERVED,
+    "redirect_no_location_observed": NEGATIVE_EVIDENCE,
+    "redirect_unsafe_scheme_rejected": NEGATIVE_EVIDENCE,
+    "ssrf_internal_destination_rejected": NEGATIVE_EVIDENCE,
+    "ssrf_metadata_destination_rejected": NEGATIVE_EVIDENCE,
+    "ssrf_unsafe_scheme_rejected": NEGATIVE_EVIDENCE,
+    "redirect_parameter_ignored": NEGATIVE_EVIDENCE,
+    "redirect_external_destination_rejected": NEGATIVE_EVIDENCE,
+    "redirect_unsafe_destination_rejected": NEGATIVE_EVIDENCE,
+    "redirect_external_destination_rejected": NEGATIVE_EVIDENCE,
+    "redirect_external_destination_accepted": PAYLOAD_EXECUTION,
+    "redirect_terminal_offsite_reached": EXPLOITABILITY_ESTABLISHED,
+    # SSRF (§9/§10): policy classification only; no probing.
+    "ssrf_controlled_destination_submitted": CONTROLLED_INPUT_SENT,
+    "ssrf_destination_policy_evaluated": RESPONSE_OBSERVED,
+    "ssrf_server_side_request_observed": PAYLOAD_EXECUTION,
+    "ssrf_internal_resource_accessed": IMPACT_ESTABLISHED,
+    "ssrf_server_request_absent": NEGATIVE_EVIDENCE,
+    "ssrf_exploitability_established": EXPLOITABILITY_ESTABLISHED,
+    # IDOR/BOLA (§11): needs a second authorized identity.
+    "idor_object_reference_identified": PARAMETER_OBSERVED,
+    "idor_second_context_available": CONTROLLED_INPUT_SENT,
+    "idor_object_access_attempted": RESPONSE_OBSERVED,
+    "idor_cross_object_access_observed": PAYLOAD_EXECUTION,
+    "idor_no_second_context": NEGATIVE_EVIDENCE,
+    "idor_impact_established": IMPACT_ESTABLISHED,
+    # CVE research (§12): applicability, never exploitability.
+    "cve_product_identified": RESPONSE_OBSERVED,
+    "cve_version_identified": RESPONSE_OBSERVED,
+    "cve_applicability_evidence": KNOWLEDGE_REFERENCE,
+    "cve_affected_version_confirmed": KNOWLEDGE_REFERENCE,
 }
+
+#: The vulnerability classes EPIC16 verifies (the vocabulary EPIC12/13 already
+#: use).  Declared here so one registry owns the signal -> class mapping.
+SIGNAL_CLASS_CORS = "CORS"
+SIGNAL_CLASS_REDIRECT = "OPEN_REDIRECT"
+SIGNAL_CLASS_SSRF = "SSRF"
+SIGNAL_CLASS_IDOR = "IDOR"
+SIGNAL_CLASS_CVE = "CVE_RESEARCH"
+
+#: EPIC16 §21/§23: which vulnerability class owns each signal.  A row whose
+#: signal belongs to another class must never contribute to this class's
+#: claim (cross-class evidence contamination is refused, not merged).
+SIGNAL_CLASS: dict[str, str] = {
+    "xss_parameter_inventory": "XSS",
+    "reflection_observed": "XSS",
+    "reflection_confirmed": "XSS",
+    "reflected_marker": "XSS",
+    "marker_reflected": "XSS",
+    "output_context_identified": "XSS",
+    "unsafe_output_context": "XSS",
+    "context_identified": "XSS",
+    "unencoded_reflection_context": "XSS",
+    "dom_sink_identified": "XSS",
+    # EPIC16 §21: the confirmation-capable generic signals are XSS-owned, so a
+    # CORS/SSRF/IDOR row can never satisfy an XSS confirmation stage (and vice
+    # versa) merely by using the same evidence type name.
+    "payload_execution": "XSS",
+    "exploitability_established": "XSS",
+    "impact_established": "XSS",
+    "dom_sink": "XSS",
+    "sink_identified": "XSS",
+    "cors_origin_supplied": "CORS",
+    "cors_acao_observed": "CORS",
+    "cors_acao_absent": "CORS",
+    "cors_arbitrary_origin_accepted": "CORS",
+    "cors_origin_not_accepted": SIGNAL_CLASS_CORS,
+    "cors_origin_not_tested": SIGNAL_CLASS_CORS,
+    "cors_credentials_allowed": "CORS",
+    "cors_credentials_not_allowed": "CORS",
+    "cors_sensitive_response_available": "CORS",
+    "cors_sensitive_response_absent": "CORS",
+    "cors_exploitability_established": "CORS",
+    "redirect_input_identified": "OPEN_REDIRECT",
+    "redirect_marker_sent": "OPEN_REDIRECT",
+    "redirect_response_observed": "OPEN_REDIRECT",
+    "redirect_parameter_ignored": "OPEN_REDIRECT",
+    "redirect_destination_normalized": "OPEN_REDIRECT",
+    "redirect_relative_only": "OPEN_REDIRECT",
+    "redirect_same_origin": "OPEN_REDIRECT",
+    "redirect_external_destination_accepted": "OPEN_REDIRECT",
+    "redirect_terminal_offsite_reached": "OPEN_REDIRECT",
+    "ssrf_url_parameter": "SSRF",
+    "ssrf_controlled_destination_submitted": "SSRF",
+    "ssrf_destination_policy_evaluated": "SSRF",
+    "ssrf_internal_destination_rejected": "SSRF",
+    "ssrf_destination_policy_rejected": "SSRF",
+    "ssrf_server_request_absent": "SSRF",
+    "redirect_external_destination_rejected": "OPEN_REDIRECT",
+    "redirect_no_location_observed": "OPEN_REDIRECT",
+    "redirect_unsafe_scheme_rejected": "OPEN_REDIRECT",
+    "redirect_unsafe_destination_rejected": "OPEN_REDIRECT",
+    "ssrf_metadata_destination_rejected": "SSRF",
+    "ssrf_unsafe_scheme_rejected": "SSRF",
+    "idor_no_second_context": "IDOR",
+    "ssrf_server_side_request_observed": "SSRF",
+    "ssrf_internal_resource_accessed": "SSRF",
+    "ssrf_exploitability_established": "SSRF",
+    "idor_object_reference_pattern": "IDOR",
+    "idor_object_reference_identified": "IDOR",
+    "idor_second_context_available": "IDOR",
+    "idor_object_access_attempted": "IDOR",
+    "idor_cross_object_access_observed": "IDOR",
+    "idor_object_access_denied": "IDOR",
+    "idor_impact_established": "IDOR",
+    "cve_product_identified": "CVE_RESEARCH",
+    "cve_version_identified": "CVE_RESEARCH",
+    "cve_applicability_evidence": "CVE_RESEARCH",
+    "cve_affected_version_confirmed": "CVE_RESEARCH",
+    "cve_version_not_affected": "CVE_RESEARCH",
+    "cve_applicability_unresolved": "CVE_RESEARCH",
+    "technology_signal": "CVE_RESEARCH",
+}
+
+#: class-scope verdicts (§23)
+CLASS_SCOPE_OK = "IN_CLASS"
+CLASS_SCOPE_FOREIGN = "foreign_class"
+CLASS_SCOPE_UNKNOWN = "unknown_class"
+
+
+def signal_class(signal: Any) -> str:
+    """The owning vulnerability class of a signal ("" when class-agnostic)."""
+    return SIGNAL_CLASS.get(_signal_slug(signal), "")
+
+
+def normalize_class(value: Any) -> str:
+    """Class identity used for scope comparison (aliases folded)."""
+    text = _signal_slug(value)
+    if text in ("BOLA", "IDOR_BOLA", "OBJECT_LEVEL_AUTHORIZATION"):
+        return "IDOR"
+    if text in ("REDIRECT", "OPENREDIRECT", "UNVALIDATED_REDIRECT"):
+        return "OPEN_REDIRECT"
+    if text in ("CVE", "CVE_RESEARCH"):
+        return "CVE_RESEARCH"
+    return text.upper()
+
+
+def class_scope(row_or_signal: Any, vulnerability_class: Any) -> str:
+    """IN_CLASS / foreign_class / unknown_class for one row vs a contract."""
+    raw = row_or_signal
+    if isinstance(raw, dict):
+        raw = raw.get("signal") or ""
+    elif hasattr(raw, "raw_signal"):
+        raw = getattr(raw, "raw_signal") or ""
+    owner = signal_class(raw)
+    if not owner:
+        return CLASS_SCOPE_UNKNOWN
+    return (CLASS_SCOPE_OK if owner == normalize_class(vulnerability_class)
+            else CLASS_SCOPE_FOREIGN)
 
 # Signals that ARE negative evidence by construction.
 NEGATIVE_SIGNALS: frozenset[str] = frozenset(
     {"negative", "contradiction", "contradicting", "disproved", "rejected",
      "reflection_not_observed", "reflection_absent", "payload_execution_"
-     "not_observed", "dom_sink_not_identified", "no_reflection"})
+     "not_observed", "dom_sink_not_identified", "no_reflection",
+     # ---- EPIC16: class-scoped negatives (§18) ---------------------------
+     # "Origin rejected -> NOT_CONFIRMED", "external destination rejected ->
+     # NOT_CONFIRMED", "no server-side request evidence -> NOT_CONFIRMED",
+     # "access denied under the second identity -> NOT_CONFIRMED",
+     # "version not affected -> NOT_CONFIRMED".
+     "cors_acao_absent", "cors_origin_not_accepted",
+     "cors_credentials_not_allowed", "cors_origin_not_tested", "cors_sensitive_response_absent", "redirect_no_location_observed",
+ "redirect_unsafe_scheme_rejected", "ssrf_metadata_destination_rejected",
+ "ssrf_unsafe_scheme_rejected",
+     "redirect_parameter_ignored", "redirect_destination_normalized",
+     "redirect_relative_only", "redirect_same_origin",
+     "redirect_external_destination_rejected",
+     "ssrf_destination_policy_rejected", "ssrf_server_request_absent",
+     "ssrf_internal_destination_rejected",
+     "idor_object_access_denied", "idor_no_second_context",
+     "cve_version_not_affected", "cve_applicability_unresolved"})
 
 # Signals that state "this was never attempted" (NOT_TESTED, §11) — the
 # distinction from NOT_OBSERVED is preserved, never collapsed.
 NOT_TESTED_SIGNALS: frozenset[str] = frozenset(
-    {"not_tested", "untested", "not_attempted", "not_performed",
+    # EPIC16: a capability refusal is NOT_TESTED, never a negative result.
+    {"cors_origin_not_tested", "redirect_unsafe_destination_rejected",
+     "not_tested", "untested", "not_attempted", "not_performed",
      "reflection_not_tested", "payload_execution_not_performed",
      "execution_not_performed", "exploitability_not_established",
      "impact_not_established", "severity_not_assessed"})
@@ -332,6 +510,9 @@ class EvidenceItem:
     mismatch_reason: str = ""
     #: the auditable mismatch record (§5); empty when there is no mismatch
     mismatch: dict[str, Any] = field(default_factory=dict)
+    #: EPIC16 §21: the vulnerability class that owns this signal ("" when
+    #: the signal is class-agnostic); used to refuse cross-class evidence
+    signal_class: str = ""
     #: deterministic provenance class (§6)
     provenance_class: str = PROVENANCE_UNKNOWN
 
@@ -401,6 +582,7 @@ class EvidenceItem:
             "mismatch_reason": self.mismatch_reason,
             "mismatch": dict(self.mismatch),
             "provenance_class": self.provenance_class,
+            "signal_class": self.signal_class,
             "confirmation_eligible": self.is_confirmation_eligible,
         }
 
@@ -556,6 +738,7 @@ def classify_row(row: dict[str, Any]) -> EvidenceItem:
         raw_type=raw_type,
         raw_signal=raw_signal,
         category=_signal_slug(row.get("category")).upper(),
+        signal_class=signal_class(raw_signal),
         job_id=str(row.get("job_id") or ""),
         observation_ref=str(row.get("observation_ref") or ""),
         confidence=str(row.get("confidence") or ""),
@@ -698,6 +881,8 @@ __all__ = [
     "STAGE_CONTROLLED", "STAGE_EXPLOITABILITY", "STAGE_IMPACT",
     "STAGE_LABELS", "STAGE_OBSERVED", "STAGE_REFLECTION",
     "TAXONOMY_RULE_VERSION", "UNCLASSIFIED_OBSERVATION", "URL_OBSERVED",
+    "CLASS_SCOPE_FOREIGN", "CLASS_SCOPE_OK", "CLASS_SCOPE_UNKNOWN",
+    "SIGNAL_CLASS", "class_scope", "normalize_class", "signal_class",
     "classify_row", "classify_rows", "items_by_type", "negative_evidence",
     "stage_reached", "unique_items",
 ]

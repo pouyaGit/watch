@@ -460,20 +460,25 @@ class TestCrossClassTrustBoundary(unittest.TestCase):
             evaluation = evaluate(rows, cls=cls)
             self.assertTrue(evaluation.evidence_mismatches, cls)
 
-    def test_cors_has_a_chain_but_no_own_contract(self):
-        """§18 finding: CORS/OPEN_REDIRECT resolve to the GENERIC contract."""
+    def test_cors_now_has_its_own_contract(self):
+        """EPIC16 closed the §18 finding: CORS no longer resolves to GENERIC."""
         from backend.research_agents.finding.integrity import contracts as ct
         self.assertIn("CORS", ch.CHAINS)
-        self.assertNotIn("CORS", ct.CONTRACTS)
-        self.assertEqual(ct.contract_for("CORS").vulnerability_class,
-                         "GENERIC")
+        self.assertIn("CORS", ct.CONTRACTS)
+        self.assertEqual(ct.contract_for("CORS").vulnerability_class, "CORS")
+        self.assertIsNot(ct.contract_for("CORS"), ct.GENERIC)
 
-    def test_open_redirect_has_a_chain_but_no_own_contract(self):
+    def test_open_redirect_now_has_its_own_contract(self):
         from backend.research_agents.finding.integrity import contracts as ct
         self.assertIn("OPEN_REDIRECT", ch.CHAINS)
-        self.assertNotIn("OPEN_REDIRECT", ct.CONTRACTS)
+        self.assertIn("OPEN_REDIRECT", ct.CONTRACTS)
         self.assertEqual(ct.contract_for("OPEN_REDIRECT").vulnerability_class,
-                         "GENERIC")
+                         "OPEN_REDIRECT")
+        self.assertIsNot(ct.contract_for("OPEN_REDIRECT"), ct.GENERIC)
+
+    def test_an_unregistered_class_still_falls_back_to_generic(self):
+        from backend.research_agents.finding.integrity import contracts as ct
+        self.assertIs(ct.contract_for("SOME_UNKNOWN_CLASS"), ct.GENERIC)
 
     def test_a_forged_open_redirect_confirmation_row_cannot_confirm(self):
         rows = [row("response_observed", ref="r1", category="OPEN_REDIRECT",

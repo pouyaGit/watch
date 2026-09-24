@@ -77,6 +77,10 @@ class IntegrityDecision:
     #: rows whose declared evidence type disagreed with the authoritative
     #: classification of their signal (§5)
     evidence_mismatches: list[dict[str, Any]] = field(default_factory=list)
+    #: EPIC16 §21/§23: cross-class rows quarantined from this class's claim
+    class_quarantine: list[dict[str, Any]] = field(default_factory=list)
+    #: the vulnerability class this decision was made for
+    evaluated_class: str = ""
     #: confirmation-capable rows excluded from authoritative support (§17)
     excluded_evidence: list[dict[str, Any]] = field(default_factory=list)
 
@@ -102,6 +106,8 @@ class IntegrityDecision:
             "limitations": list(self.limitations),
             "rule_version": self.rule_version,
             "evidence_mismatches": list(self.evidence_mismatches),
+            "class_quarantine": list(self.class_quarantine),
+            "evaluated_class": self.evaluated_class,
             "excluded_evidence": list(self.excluded_evidence),
         }
 
@@ -192,6 +198,8 @@ def decide(
         runtime_gate_claimed_case=runtime_gate_claimed_case,
         limitations=limitations,
         evidence_mismatches=mismatches[:40],
+        class_quarantine=list(evaluation.class_quarantine)[:40],
+        evaluated_class=evaluation.evaluated_class,
         excluded_evidence=excluded[:40],
     )
 

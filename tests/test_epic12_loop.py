@@ -132,7 +132,7 @@ class TestBlockingPaths(unittest.TestCase):
         self.assertIn(outcome.termination, (lp.LOOP_BLOCKED, lp.LOOP_PENDING))
 
     def test_class_without_a_chain_is_blocked_with_no_actions(self):
-        outcome, store = run(inventory_rows(3), vulnerability_class="IDOR")
+        outcome, store = run(inventory_rows(3), vulnerability_class="SQLI")
         self.assertEqual(outcome.termination, lp.LOOP_BLOCKED)
         self.assertIn("chain_not_implemented", outcome.termination_reason)
         self.assertEqual(outcome.steps, 0)

@@ -38,8 +38,16 @@ CHAIN_RULE_VERSION = "epic12-verification-chain-1"
 # --------------------------------------------------------------- capability
 
 CAPABILITY_FULL = "FULL"
+CAPABILITY_LIMITED = "LIMITED"
 CAPABILITY_CONTRACT_ONLY = "CONTRACT_ONLY"
 CAPABILITY_NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
+
+#: EPIC16: the capability vocabulary a chain may declare.  LIMITED means the
+#: deterministic verification of the chain's observable stages is implemented
+#: while its active acquisition is not available in this runtime.
+CAPABILITY_LEVELS: tuple[str, ...] = (
+    CAPABILITY_FULL, CAPABILITY_LIMITED, CAPABILITY_CONTRACT_ONLY,
+    CAPABILITY_NOT_IMPLEMENTED)
 
 CAPABILITY_STATES: tuple[str, ...] = (
     CAPABILITY_FULL, CAPABILITY_CONTRACT_ONLY, CAPABILITY_NOT_IMPLEMENTED)
@@ -148,15 +156,27 @@ class VerificationChain:
 
     @property
     def confirmation_requires(self) -> tuple[tuple[str, ...], ...]:
+        """The evidence groups the confirmation claim needs (() if none).
+
+        CVE_RESEARCH declares no confirmation claim, so an empty tuple is the
+        honest answer there — never an exception.
+        """
+        if not _has_confirmation_claim(self):
+            return ()
         return tuple(self.confirmation_claim.required_groups)
 
     @property
     def requires_authorization(self) -> bool:
+        """Authorization needed to confirm (a research chain needs none)."""
+        if not _has_confirmation_claim(self):
+            return bool(self.contract.require_authorization_for_confirmation)
         return bool(self.contract.require_authorization_for_confirmation
                     or self.confirmation_claim.requires_authorization)
 
     @property
     def min_unique_observations(self) -> int:
+        if not _has_confirmation_claim(self):
+            return 0
         return int(self.confirmation_claim.min_unique_observations)
 
     @property
@@ -191,6 +211,7 @@ class VerificationChain:
             "reference": self.reference,
             "implemented": self.implemented,
             "contract_id": self.contract_id,
+            "confirmation_claim": _has_confirmation_claim(self),
             "confirmation_requires": [list(g) for g in self.confirmation_requires],
             "confirmation_stage_keys": list(self.confirmation_stage_keys),
             "requires_authorization": self.requires_authorization,
@@ -312,12 +333,16 @@ XSS_CHAIN = VerificationChain(
 
 CORS_CHAIN = VerificationChain(
     vulnerability_class="CORS",
-    capability=CAPABILITY_CONTRACT_ONLY,
-    reference=True,
+    capability=CAPABILITY_LIMITED,
+    reference=False,
     limitations=(
         "a CORS header is not automatically exploitable CORS",
         "an Access-Control-Allow-Origin value alone never confirms",
-        "contract only in this Epic: no executor is wired",
+        "EPIC16 wires the read-only classification stages "
+        "(CHECK_CORS_HEADERS / CLASSIFY_CORS_ORIGIN_ECHO / "
+        "CHECK_CREDENTIALS_MODE / ASSESS_RESPONSE_SENSITIVITY); supplying a "
+        "controlled Origin (SEND_ORIGIN_HEADER) needs a live request lane "
+        "this runtime does not have",
     ),
     stages=(
         ChainStage(
@@ -379,12 +404,15 @@ CORS_CHAIN = VerificationChain(
 
 OPEN_REDIRECT_CHAIN = VerificationChain(
     vulnerability_class="OPEN_REDIRECT",
-    capability=CAPABILITY_CONTRACT_ONLY,
-    reference=True,
+    capability=CAPABILITY_LIMITED,
+    reference=False,
     limitations=(
         "a redirect parameter is not automatically an open redirect",
         "a 302 response alone never confirms",
-        "contract only in this Epic: no executor is wired",
+        "EPIC16 wires the read-only classification stages "
+        "(CHECK_REDIRECT_LOCATION / CLASSIFY_REDIRECT_TARGET); actively "
+        "supplying a destination (SEND_REDIRECT_MARKER) needs a live request "
+        "lane this runtime does not have",
     ),
     stages=(
         ChainStage(
@@ -434,12 +462,16 @@ OPEN_REDIRECT_CHAIN = VerificationChain(
 
 SSRF_CHAIN = VerificationChain(
     vulnerability_class="SSRF",
-    capability=CAPABILITY_CONTRACT_ONLY,
-    reference=True,
+    capability=CAPABILITY_LIMITED,
+    reference=False,
     limitations=(
         "a URL-shaped parameter is not SSRF",
         "no server-side request evidence means no SSRF claim",
-        "contract only in this Epic: no executor is wired",
+        "EPIC16 wires the destination-policy evaluation "
+        "(CHECK_CALLBACK_INTERACTION classifies an observed destination "
+        "against the SSRF policy) and refuses every internal destination; "
+        "SEND_CALLBACK_URL needs a live request lane, and no SSRF probing of "
+        "internal infrastructure is ever performed",
     ),
     stages=(
         ChainStage(
@@ -495,14 +527,131 @@ SSRF_CHAIN = VerificationChain(
     ),
 )
 
+# EPIC16 §11.  IDOR/BOLA verification needs a SECOND authorized identity and
+# object-ownership semantics.  This runtime has neither, so every stage stays
+# contract-only and the chain refuses to claim a cross-object access it never
+# performed.
+IDOR_CHAIN = VerificationChain(
+    vulnerability_class="IDOR",
+    capability=CAPABILITY_CONTRACT_ONLY,
+    reference=True,
+    limitations=(
+        "an object reference is not IDOR",
+        "verification requires a second authorized identity: this runtime "
+        "has no identity-switching capability (CHECK_OBJECT_ACCESS refuses)",
+        "no cross-object access may be claimed without an unauthorized "
+        "object-access observation",
+    ),
+    stages=(
+        ChainStage(
+            key="object_reference", label="Object Reference Identified",
+            order=1, stage=tx.STAGE_OBSERVED,
+            claim_type="object_reference_observed",
+            required_groups=((tx.PARAMETER_OBSERVED,),),
+            allowed_actions=("PARAMETER_INVENTORY",),
+            expectation="an object reference on the authorized target",
+            required_for_confirmation=True),
+        ChainStage(
+            key="second_context", label="Second Authorized Context", order=2,
+            stage=tx.STAGE_CONTROLLED, claim_type="controlled_input_tested",
+            required_groups=((tx.CONTROLLED_INPUT_SENT,),),
+            allowed_actions=("CHECK_OBJECT_ACCESS",),
+            expectation="a second, separately authorized identity available "
+                        "for the object",
+            failure_conditions=("no_second_context",),
+            required_for_confirmation=True),
+        ChainStage(
+            key="object_access_attempted", label="Object Access Attempted",
+            order=3, stage=tx.STAGE_REFLECTION,
+            claim_type="cross_object_access_observed",
+            required_groups=((tx.RESPONSE_OBSERVED,),),
+            allowed_actions=("CHECK_OBJECT_ACCESS",),
+            expectation="the second context attempted to read the object",
+            failure_conditions=("access_denied",),
+            required_for_confirmation=True),
+        ChainStage(
+            key="unauthorized_access", label="Unauthorized Object Access",
+            order=4, stage=tx.STAGE_EXPLOITABILITY,
+            claim_type="payload_execution",
+            required_groups=((tx.PAYLOAD_EXECUTION,),),
+            allowed_actions=("CHECK_OBJECT_ACCESS",),
+            expectation="the object was returned to a context that does not "
+                        "own it",
+            required_for_confirmation=True),
+        ChainStage(
+            key="idor_impact", label="Impact", order=5,
+            stage=tx.STAGE_IMPACT, claim_type="impact_established",
+            required_groups=((tx.IMPACT_ESTABLISHED,),),
+            allowed_actions=(),
+            expectation="a security-relevant impact attributable to the "
+                        "access",
+            required_for_confirmation=True),
+        ChainStage(
+            key="idor_confirmed", label="Confirmation", order=6,
+            stage=tx.STAGE_EXPLOITABILITY, claim_type="vulnerability_confirmed",
+            required_groups=((tx.EXPLOITABILITY_ESTABLISHED,),),
+            allowed_actions=("OBSERVE_EXECUTION",),
+            expectation="the EPIC11 confirmation claim is supported",
+            required_for_confirmation=True),
+    ),
+)
+
+# EPIC16 §12.  CVE research stays research: the contract has NO confirmation
+# claim, so applicability evidence can never turn into a confirmed
+# vulnerability here.
+CVE_RESEARCH_CHAIN = VerificationChain(
+    vulnerability_class="CVE_RESEARCH",
+    capability=CAPABILITY_CONTRACT_ONLY,
+    reference=True,
+    limitations=(
+        "a CVE match is not vulnerability confirmation",
+        "no exploitability evidence exists in this runtime for CVE classes",
+        "the EPIC11 CVE_RESEARCH contract declares no confirmation claim",
+    ),
+    stages=(
+        ChainStage(
+            key="product_identified", label="Product Identified", order=1,
+            stage=tx.STAGE_OBSERVED, claim_type="technology_observed",
+            required_groups=((tx.RESPONSE_OBSERVED,),),
+            allowed_actions=("PARAMETER_INVENTORY",),
+            expectation="a technology fingerprint for the target",
+            required_for_confirmation=False),
+        ChainStage(
+            key="version_identified", label="Version Identified", order=2,
+            stage=tx.STAGE_OBSERVED, claim_type="technology_observed",
+            required_groups=((tx.RESPONSE_OBSERVED,),),
+            allowed_actions=(),
+            expectation="an explicit version string",
+            required_for_confirmation=False),
+        ChainStage(
+            key="applicability_evidence", label="Applicability Evidence",
+            order=3, stage=tx.STAGE_OBSERVED,
+            claim_type="knowledge_correlation",
+            required_groups=((tx.KNOWLEDGE_REFERENCE,),),
+            allowed_actions=(),
+            expectation="a knowledge reference matching the observed product "
+                        "and version",
+            failure_conditions=("version_not_affected",
+                                "applicability_unresolved"),
+            required_for_confirmation=False),
+        ChainStage(
+            key="affected_version_confirmed",
+            label="Affected Version Confirmed", order=4,
+            stage=tx.STAGE_OBSERVED, claim_type="knowledge_correlation",
+            required_groups=((tx.KNOWLEDGE_REFERENCE,),),
+            allowed_actions=(),
+            expectation="the observed version is inside the affected range",
+            required_for_confirmation=False),
+    ),
+)
+
 #: Reference chains for the classes the Epic deliberately does not implement.
 REFERENCE_CHAINS: tuple[VerificationChain, ...] = (
-    CORS_CHAIN, OPEN_REDIRECT_CHAIN, SSRF_CHAIN)
+    IDOR_CHAIN, CVE_RESEARCH_CHAIN)
 
 #: Classes with a declared future chain but no implementation yet.
 FUTURE_CLASSES: tuple[str, ...] = (
-    "IDOR", "BOLA", "SQLI", "COMMAND_INJECTION", "SSTI", "AUTH_BYPASS",
-    "OAUTH", "JWT",
+    "SQLI", "COMMAND_INJECTION", "SSTI", "AUTH_BYPASS", "OAUTH", "JWT",
 )
 
 CHAINS: dict[str, VerificationChain] = {
@@ -510,6 +659,8 @@ CHAINS: dict[str, VerificationChain] = {
     "CORS": CORS_CHAIN,
     "OPEN_REDIRECT": OPEN_REDIRECT_CHAIN,
     "SSRF": SSRF_CHAIN,
+    "IDOR": IDOR_CHAIN,
+    "CVE_RESEARCH": CVE_RESEARCH_CHAIN,
 }
 
 _ALIASES: dict[str, str] = {
@@ -521,6 +672,12 @@ _ALIASES: dict[str, str] = {
     "UNVALIDATED_REDIRECT": "OPEN_REDIRECT",
     "CORS_MISCONFIGURATION": "CORS",
     "SSRF": "SSRF",
+    "IDOR": "IDOR",
+    "BOLA": "IDOR",
+    "IDOR_BOLA": "IDOR",
+    "OBJECT_LEVEL_AUTHORIZATION": "IDOR",
+    "CVE": "CVE_RESEARCH",
+    "CVE_RESEARCH": "CVE_RESEARCH",
 }
 
 
@@ -545,8 +702,47 @@ def capability_for(vulnerability_class: Any) -> str:
     return chain.capability if chain is not None else CAPABILITY_NOT_IMPLEMENTED
 
 
+def _has_confirmation_claim(chain: VerificationChain) -> bool:
+    """True when the class's contract declares a confirmation claim.
+
+    CVE_RESEARCH deliberately declares none, so this is a question with a
+    legitimate "no" answer — never an exception.
+    """
+    try:
+        return chain.confirmation_claim is not None
+    except KeyError:
+        return False
+
+
 def implemented_classes() -> tuple[str, ...]:
-    return tuple(sorted(k for k, c in CHAINS.items() if c.implemented))
+    """Classes whose chain is genuinely verifiable here (FULL or LIMITED)."""
+    return tuple(sorted(k for k, c in CHAINS.items()
+                        if c.capability in (CAPABILITY_FULL,
+                                            CAPABILITY_LIMITED)))
+
+
+def capability_matrix() -> list[dict[str, Any]]:
+    """EPIC16 §2/§25: the honest per-class capability matrix."""
+    out: list[dict[str, Any]] = []
+    for name, chain in sorted(CHAINS.items()):
+        out.append({
+            "vulnerability_class": name,
+            "chain": chain.chain_id,
+            "capability": chain.capability,
+            "stages": len(chain.stages),
+            "confirmation_claim": _has_confirmation_claim(chain),
+            "limitations": list(chain.limitations),
+        })
+    for name in FUTURE_CLASSES:
+        out.append({
+            "vulnerability_class": name,
+            "chain": "",
+            "capability": CAPABILITY_NOT_IMPLEMENTED,
+            "stages": 0,
+            "confirmation_claim": False,
+            "limitations": ["no chain declared"],
+        })
+    return out
 
 
 def chain_catalog() -> list[dict[str, Any]]:

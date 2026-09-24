@@ -106,6 +106,8 @@ SEND_CALLBACK_URL = "SEND_CALLBACK_URL"
 CHECK_CALLBACK_INTERACTION = "CHECK_CALLBACK_INTERACTION"
 OBSERVE_SERVER_RESPONSE = "OBSERVE_SERVER_RESPONSE"
 ASSESS_SSRF_IMPACT = "ASSESS_SSRF_IMPACT"
+#: EPIC16 §11: requires a second authorized identity — absent in this runtime.
+CHECK_OBJECT_ACCESS = "CHECK_OBJECT_ACCESS"
 
 
 @dataclass(frozen=True)
@@ -191,24 +193,27 @@ _SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         CHECK_CORS_HEADERS, "Read the ACAO/ACAC behaviour for that Origin",
         SAFETY_READ_ONLY, produces=(tx.RESPONSE_OBSERVED,),
-        requires_authorization=False, requires_network=False, implemented=False,
-        limitation="CORS chain is contract-only in EPIC12"),
+        requires_authorization=False, requires_network=False, implemented=True,
+        limitation="classifies recorded response headers only: this runtime "
+                   "has no live lane that can set Origin"),
     ActionSpec(
         CLASSIFY_CORS_ORIGIN_ECHO, "Classify whether the origin was echoed",
         SAFETY_READ_ONLY, produces=(tx.OUTPUT_CONTEXT_IDENTIFIED,),
-        requires_authorization=False, requires_network=False, implemented=False,
-        limitation="CORS chain is contract-only in EPIC12"),
+        requires_authorization=False, requires_network=False, implemented=True,
+        limitation="deterministic ACAO classification; acceptance alone is "
+                   "never a CORS vulnerability"),
     ActionSpec(
         CHECK_CREDENTIALS_MODE, "Evaluate Access-Control-Allow-Credentials",
         SAFETY_READ_ONLY, produces=(tx.PAYLOAD_EXECUTION,),
-        requires_authorization=False, requires_network=False, implemented=False,
-        limitation="CORS chain is contract-only in EPIC12"),
+        requires_authorization=False, requires_network=False, implemented=True,
+        limitation="credentialed-read stage only; confirmation additionally "
+                   "needs browser exploitability (unavailable here)"),
     ActionSpec(
         ASSESS_RESPONSE_SENSITIVITY,
         "Assess whether the credentialed response is sensitive",
         SAFETY_READ_ONLY, produces=(tx.IMPACT_ESTABLISHED,),
-        requires_authorization=False, requires_network=False, implemented=False,
-        limitation="CORS chain is contract-only in EPIC12"),
+        requires_authorization=False, requires_network=False, implemented=True,
+        limitation="uses only declared/observed sensitivity indicators"),
     ActionSpec(
         SEND_REDIRECT_MARKER, "Supply a controlled redirect destination",
         SAFETY_PROBE, produces=(tx.CONTROLLED_INPUT_SENT,),
@@ -217,13 +222,15 @@ _SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         CHECK_REDIRECT_LOCATION, "Observe the Location header/redirect target",
         SAFETY_READ_ONLY, produces=(tx.RESPONSE_OBSERVED,),
-        requires_authorization=False, requires_network=False, implemented=False,
-        limitation="open-redirect chain is contract-only in EPIC12"),
+        requires_authorization=False, requires_network=False, implemented=True,
+        limitation="classifies a recorded Location value; the terminal "
+                   "destination is never followed"),
     ActionSpec(
         CLASSIFY_REDIRECT_TARGET, "Classify the terminal redirect destination",
         SAFETY_READ_ONLY, produces=(tx.PAYLOAD_EXECUTION,),
-        requires_authorization=False, requires_network=False, implemented=False,
-        limitation="open-redirect chain is contract-only in EPIC12"),
+        requires_authorization=False, requires_network=False, implemented=True,
+        limitation="a 302 alone never confirms: only a controlled destination "
+                   "becoming the target does"),
     ActionSpec(
         SEND_CALLBACK_URL, "Submit a controlled callback URL",
         SAFETY_PROBE, produces=(tx.CONTROLLED_INPUT_SENT,),
@@ -233,8 +240,9 @@ _SPECS: tuple[ActionSpec, ...] = (
         CHECK_CALLBACK_INTERACTION,
         "Check whether the controlled destination was contacted",
         SAFETY_READ_ONLY, produces=(tx.RESPONSE_OBSERVED,),
-        requires_authorization=False, requires_network=False, implemented=False,
-        limitation="SSRF chain is contract-only in EPIC12"),
+        requires_authorization=False, requires_network=False, implemented=True,
+        limitation="evaluates the destination policy only: no internal, "
+                   "loopback, metadata or out-of-scope target is ever probed"),
     ActionSpec(
         OBSERVE_SERVER_RESPONSE, "Observe server-side behaviour differences",
         SAFETY_READ_ONLY, produces=(tx.PAYLOAD_EXECUTION,),
@@ -244,7 +252,15 @@ _SPECS: tuple[ActionSpec, ...] = (
         ASSESS_SSRF_IMPACT, "Assess access to internal/privileged resources",
         SAFETY_READ_ONLY, produces=(tx.IMPACT_ESTABLISHED,),
         requires_authorization=False, requires_network=False, implemented=False,
-        limitation="SSRF chain is contract-only in EPIC12"),
+        limitation="no server-side request evidence can exist here: SSRF "
+                   "confirmation is unreachable in this runtime"),
+    ActionSpec(
+        CHECK_OBJECT_ACCESS,
+        "Attempt to access an object under a second authorized identity",
+        SAFETY_PROBE, produces=(tx.RESPONSE_OBSERVED,),
+        requires_authorization=True, requires_network=True, implemented=False,
+        limitation="no second authorized identity, no identity switching and "
+                   "no object-ownership semantics exist in this runtime"),
 )
 
 ACTION_SPECS: dict[str, ActionSpec] = {s.action_type: s for s in _SPECS}
@@ -438,7 +454,7 @@ __all__ = [
     "ASSESS_RESPONSE_SENSITIVITY", "ASSESS_SSRF_IMPACT",
     "AUTHORIZATION_REQUIRED_ACTIONS", "ActionError", "ActionSpec",
     "CHECK_CALLBACK_INTERACTION", "CHECK_CORS_HEADERS",
-    "CHECK_CREDENTIALS_MODE", "CHECK_REDIRECT_LOCATION",
+    "CHECK_CREDENTIALS_MODE", "CHECK_OBJECT_ACCESS", "CHECK_REDIRECT_LOCATION",
     "CLASSIFY_CORS_ORIGIN_ECHO", "CLASSIFY_REDIRECT_TARGET",
     "CLASSIFY_REFLECTION_CONTEXT", "DELIVER_CONTROLLED_PAYLOAD",
     "IMPLEMENTED_ACTIONS", "OBSERVE_EXECUTION", "OBSERVE_SERVER_RESPONSE",

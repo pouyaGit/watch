@@ -79,15 +79,20 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
                     "execution")),
     CapabilityContract(
         vulnerability_class="CORS",
-        capability=NOT_IMPLEMENTED,
+        # EPIC16: the read-only classification lane is implemented (recorded
+        # headers -> deterministic ACAO/ACAC classification), while the
+        # controlled-Origin request remains impossible here.
+        capability=LIMITED,
         actions=(ac.SEND_ORIGIN_HEADER, ac.CHECK_CORS_HEADERS,
                  ac.CLASSIFY_CORS_ORIGIN_ECHO, ac.CHECK_CREDENTIALS_MODE,
                  ac.ASSESS_RESPONSE_SENSITIVITY),
-        evidence=("RESPONSE_OBSERVED",),
+        evidence=("CONTROLLED_INPUT_SENT", "RESPONSE_OBSERVED",
+                  "OUTPUT_CONTEXT_IDENTIFIED", "NEGATIVE_EVIDENCE"),
         not_acquirable=("AUTHORIZATION_CONFIRMED", "EXPLOITABILITY_ESTABLISHED"),
-        limitation=("a controlled Origin header would have to be sent, and this "
-                    "layer sends no headers at all (ALLOWED_REQUEST_HEADERS is "
-                    "empty): " + _LIVE_GATE)),
+        limitation=("classification of an already-recorded response IS "
+                    "acquirable read-only; sending a controlled Origin header "
+                    "is not, because this layer sends no headers at all "
+                    "(ALLOWED_REQUEST_HEADERS is empty): " + _LIVE_GATE)),
     CapabilityContract(
         vulnerability_class="OPEN_REDIRECT",
         capability=LIMITED,
@@ -101,11 +106,15 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
                     + _LIVE_GATE)),
     CapabilityContract(
         vulnerability_class="SSRF",
-        capability=NOT_IMPLEMENTED,
+        # EPIC16: destination policy evaluation is implemented and NEVER
+        # probes internal/loopback/metadata/out-of-scope targets; establishing
+        # that the server issued a request needs a callback capability this
+        # runtime does not have.
+        capability=LIMITED,
         actions=(ac.SEND_CALLBACK_URL, ac.CHECK_CALLBACK_INTERACTION,
                  ac.OBSERVE_SERVER_RESPONSE, ac.ASSESS_SSRF_IMPACT),
-        evidence=("RESPONSE_OBSERVED",),
-        not_acquirable=("EXPLOITABILITY_ESTABLISHED",),
+        evidence=("POSITIVE_EVIDENCE", "NEGATIVE_EVIDENCE"),
+        not_acquirable=("PAYLOAD_EXECUTION", "EXPLOITABILITY_ESTABLISHED"),
         limitation=("server-side interaction evidence needs a callback listener "
                     "and an authorized transport, neither of which exists "
                     "here: " + _LIVE_GATE)),

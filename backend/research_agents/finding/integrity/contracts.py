@@ -480,6 +480,95 @@ CVE_RESEARCH = VulnerabilityContract(
     require_authorization_for_confirmation=False,
 )
 
+CORS_STAGE3: tuple[str, ...] = (
+    tx.OUTPUT_CONTEXT_IDENTIFIED, tx.REFLECTION_OBSERVED)
+
+# EPIC16 §4/§6.  An Access-Control-Allow-Origin value is NEVER automatically
+# exploitable: the contract requires the supplied origin to be accepted, the
+# credential behaviour to be evaluated, a sensitive response to be readable
+# AND browser-relevant exploitability — so a header observation alone can
+# never confirm.
+CORS = VulnerabilityContract(
+    vulnerability_class="CORS",
+    claims=(
+        ClaimSpec("parameter_observed",
+                  "A CORS-relevant surface was observed on the target.",
+                  tx.STAGE_OBSERVED, ((tx.PARAMETER_OBSERVED,),)),
+        ClaimSpec("controlled_input_tested",
+                  "A controlled Origin was supplied to the target.",
+                  tx.STAGE_CONTROLLED, ((tx.CONTROLLED_INPUT_SENT,),)),
+        ClaimSpec("reflection_observed",
+                  "An arbitrary controlled origin was accepted (reflected or "
+                  "wildcard), as an observation — not yet a finding.",
+                  tx.STAGE_REFLECTION, (CORS_STAGE3,)),
+        ClaimSpec("payload_execution",
+                  "Credential behaviour was evaluated against the accepted "
+                  "origin and credentials were allowed.",
+                  tx.STAGE_EXPLOITABILITY, ((tx.PAYLOAD_EXECUTION,),),
+                  requires_authorization=True),
+        ClaimSpec("impact_established",
+                  "A sensitive, credential-bearing response is readable "
+                  "cross-origin from the accepted origin.",
+                  tx.STAGE_IMPACT, ((tx.IMPACT_ESTABLISHED,),),
+                  impact_claim=True),
+        ClaimSpec("authorized_testing",
+                  "Testing occurred inside the recorded authorized scope.",
+                  tx.STAGE_AUXILIARY, ((tx.AUTHORIZATION_CONFIRMED,),),
+                  requires_authorization=True),
+        _confirmation_spec(
+            class_label="CORS misconfiguration",
+            stage3_group=CORS_STAGE3,
+            confirmation_types=(tx.EXPLOITABILITY_ESTABLISHED,),
+            include_impact=True,
+        ),
+    ),
+    limitations=(
+        "an Access-Control-Allow-Origin value alone never confirms",
+        "credentials-absent CORS is a configuration observation, not a "
+        "finding",
+        "confirmation additionally requires browser-relevant exploitability, "
+        "which this runtime cannot produce",
+    ),
+)
+
+# EPIC16 §7/§8.  A redirect parameter and an HTTP 302 are never the finding:
+# the contract requires the supplied destination to be the terminal target.
+OPEN_REDIRECT = VulnerabilityContract(
+    vulnerability_class="OPEN_REDIRECT",
+    claims=(
+        ClaimSpec("parameter_observed",
+                  "A redirect-shaped parameter was observed on the target.",
+                  tx.STAGE_OBSERVED, ((tx.PARAMETER_OBSERVED,),)),
+        ClaimSpec("controlled_input_tested",
+                  "A controlled destination was supplied to the parameter.",
+                  tx.STAGE_CONTROLLED, ((tx.CONTROLLED_INPUT_SENT,),)),
+        ClaimSpec("reflection_observed",
+                  "A redirect response was observed for the supplied "
+                  "destination.",
+                  tx.STAGE_REFLECTION, ((tx.RESPONSE_OBSERVED,),)),
+        ClaimSpec("payload_execution",
+                  "The terminal destination is attacker-controlled, not "
+                  "normalized, relative-only or allowlisted.",
+                  tx.STAGE_EXPLOITABILITY, ((tx.PAYLOAD_EXECUTION,),),
+                  requires_authorization=True),
+        ClaimSpec("authorized_testing",
+                  "Testing occurred inside the recorded authorized scope.",
+                  tx.STAGE_AUXILIARY, ((tx.AUTHORIZATION_CONFIRMED,),),
+                  requires_authorization=True),
+        _confirmation_spec(
+            class_label="Open redirect",
+            stage3_group=(tx.RESPONSE_OBSERVED,),
+            confirmation_types=(tx.EXPLOITABILITY_ESTABLISHED,),
+        ),
+    ),
+    limitations=(
+        "a redirect parameter is not automatically an open redirect",
+        "a 302 response alone never confirms",
+        "confirmation additionally requires the off-scope destination to be "
+        "actually reached, which this runtime cannot produce",
+    ),
+)
+
 # Conservative fallback: an unknown class may be DESCRIBED, never CONFIRMED.
 GENERIC = VulnerabilityContract(
     vulnerability_class="GENERIC",
@@ -515,6 +604,9 @@ GENERIC = VulnerabilityContract(
 CONTRACTS: dict[str, VulnerabilityContract] = {
     "XSS": XSS, "SSRF": SSRF, "SQLI": SQLI, "IDOR": IDOR, "JWT": JWT,
     "OAUTH": OAUTH, "RECON": RECON, "CVE_RESEARCH": CVE_RESEARCH,
+    "CORS": CORS, "OPEN_REDIRECT": OPEN_REDIRECT, "REDIRECT": OPEN_REDIRECT,
+    "OPENREDIRECT": OPEN_REDIRECT,
+    "BOLA": IDOR, "IDOR_BOLA": IDOR,
 }
 
 
@@ -564,8 +656,9 @@ class AuthorizationContext:
 
 __all__ = [
     "AuthorizationContext", "CONTRACTS", "CONTRACT_RULE_VERSION",
-    "CVE_RESEARCH", "GATE_REASONS", "GENERIC", "IDOR", "JWT", "OAUTH",
-    "RECON", "SQLI", "SSRF", "XSS", "XSS_STAGE3", "ClaimSpec",
+    "CORS", "CORS_STAGE3", "CVE_RESEARCH", "GATE_REASONS", "GENERIC", "IDOR",
+    "JWT", "OAUTH", "OPEN_REDIRECT", "RECON", "SQLI", "SSRF", "XSS",
+    "XSS_STAGE3", "ClaimSpec",
     "VulnerabilityContract", "contract_catalog", "contract_for",
     "insufficient_reason", "is_known_gate_reason", "reason_for_type",
 ]
