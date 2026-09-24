@@ -132,6 +132,11 @@ def _resolution(case_id: str) -> tuple[dict | None, str]:
     runtime_detail = _runtime_case_detail(case_id)
     if runtime_detail is not None:
         return runtime_detail, ""
+    # fallback: a Finding Verification case (fcase-*) — lives in the
+    # FindingStore; the Cases index already lists these rows.
+    finding_detail = _finding_case_detail(case_id)
+    if finding_detail is not None:
+        return finding_detail, ""
     return None, "not found"
 
 
@@ -265,6 +270,8 @@ def _runtime_case_detail(case_id: str) -> dict[str, Any] | None:
 
 def _evidence_artifacts(case_id: str) -> list[dict[str, Any]]:
     """Real public evidence rows for this case (bounded)."""
+    if case_id.startswith("fcase-"):
+        return _finding_evidence_artifacts(case_id)
     out: list[dict[str, Any]] = []
     try:
         from backend.routers import aec
@@ -288,6 +295,117 @@ def _evidence_artifacts(case_id: str) -> list[dict[str, Any]]:
     except Exception:
         pass
     return out
+
+
+def _finding_case_detail(case_id: str) -> dict[str, Any] | None:
+    """Finding Verification case (``fcase-*``) → SOC case page shape.
+
+    Finding cases live in the FindingStore — neither the AEC case
+    explorer nor the runtime case list resolves them, so
+    ``/ui/soc/cases/{fcase-*}`` used to 404 even though the Cases index
+    lists the row.  This branch resolves them read-only: every value is
+    a persisted case/candidate/verification field, AEC-only columns
+    stay honest, and ``research_state`` is deliberately NOT mapped so
+    the verdict can never claim CONFIRMED (Evidence Gate VERIFIED is
+    not a confirmed-vulnerability claim).
+    """
+    if not case_id.startswith("fcase-"):
+        return None
+    try:
+        from backend.research_agents.finding.store import FindingStore
+        from backend.research_agents.runtime_store import default_store
+
+        store = default_store()
+        fs = FindingStore(store.base)
+        case = next((c for c in fs.list_cases()
+                     if c.case_id == case_id), None)
+        if case is None:
+            return None
+        cand = fs.get_candidate(case.candidate_id)
+        vers = fs.list_verifications(candidate_id=case.candidate_id)
+        ver = vers[-1] if vers else None
+        transitions = [row for row in fs.all_transitions()
+                       if _text(row.get("id")) in (case_id,
+                                                   case.candidate_id)]
+    except Exception:                            # noqa: BLE001
+        return None
+    package = case.package if isinstance(case.package, dict) else {}
+    evidence_ids = [str(x) for x in (package.get("evidence_ids") or [])]
+    auth_ids = [str(a) for a in (getattr(ver, "authorization_ids",
+                                          None) or [])]
+    return {
+        "kind": "finding-case",
+        "case": {
+            "case_id": case.case_id,
+            "candidate_id": case.candidate_id,
+            "target": _text(cand.target) if cand else "",
+            "category": _text(case.vulnerability_class)
+            or (_text(cand.vulnerability_class) if cand else ""),
+            "title": _text(case.title),
+            "state": _text(case.state),
+            "severity": _text(case.severity),
+            "severity_provenance": _text(case.severity_provenance),
+            "next_action": (_text(case.recommended_next_step)
+                            or _finding_next_action(case, cand,
+                                                    case.state in
+                                                    ("VERIFIED",
+                                                     "READY_FOR_REVIEW",
+                                                     "HANDED_OFF"))),
+            "evidence_state": (f"{len(evidence_ids)} evidence id(s) in "
+                               f"package" if evidence_ids else
+                               "no evidence ids in package"),
+            "source": "finding-verification",
+        },
+        "authorization_status": {
+            "state": "GRANTED" if auth_ids else "not_recorded",
+            "reference": ", ".join(auth_ids[:3]) if auth_ids
+            else "no persisted authorization id on this verification",
+        },
+        "audit_events": [
+            {"timestamp": _text(row.get("at")),
+             "actor": "finding-store",
+             "action": f"{_text(row.get('kind')) or 'candidate'}: "
+                       f"{_text(row.get('old')) or '—'} → "
+                       f"{_text(row.get('new')) or '—'}",
+             "result": _text(row.get("reason"))}
+            for row in transitions[:30]
+        ],
+        # plan step counts are not persisted at this layer — an empty
+        # list renders the honest "—" instead of invented counts.
+        "research_history": [],
+        "research_intel": {},
+        "agent_chain": None,
+    }
+
+
+def _finding_evidence_artifacts(case_id: str) -> list[dict[str, Any]]:
+    """Evidence ids from the finding case package (honest columns).
+
+    AEC-only columns (level/integrity/redaction/tick) are not recorded
+    for finding-package rows and are rendered as such — never guessed.
+    """
+    try:
+        from backend.research_agents.finding.store import FindingStore
+        from backend.research_agents.runtime_store import default_store
+
+        store = default_store()
+        fs = FindingStore(store.base)
+        case = fs.get_case(case_id)
+    except Exception:                            # noqa: BLE001
+        return []
+    if case is None:
+        return []
+    package = case.package if isinstance(case.package, dict) else {}
+    return [{
+        "evidence_id": str(x),
+        "evidence_level": "not_recorded",
+        "integrity": "not_recorded",
+        "redaction_status": "not_recorded",
+        "source": "finding case package",
+        "source_mode": "read-only projection",
+        "tick": "—",
+        "confidence": "not_recorded",
+    } for x in (package.get("evidence_ids") or [])][:_ARTIFACT_LIMIT]
 
 
 def case_detail(case_id: str) -> dict[str, Any] | None:
