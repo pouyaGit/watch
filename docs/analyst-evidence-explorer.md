@@ -70,6 +70,10 @@ SSRF, IDOR and CVE use the same mechanism):
   pass and never a failure.
 * **missing evidence types** are always printed, as is the **next stage** and
   what it needs.
+* **actions** (with state, safety flag, authorization id, attempt, observation
+  count, `blocked_reason`, `error`) and **requests** are rendered straight from
+  the projection, so a refused or blocked attempt is visible rather than
+  summarised away.
 * **capability** (`FULL`, `LIMITED`, `CONTRACT_ONLY`, `NOT_IMPLEMENTED`) says
   whether this runtime can reach the stage at all; a stage this runtime cannot
   reach is unavailable, not "failed".
@@ -123,11 +127,27 @@ and no blockers.
 The finding page, the SOC case page and the handoff package render **one**
 read-model for the same candidate id — the same page module calls
 `soc_findings.explorer_view(candidate_id)`, which resolves the canonical store
-and builds the projection once. `tests/test_epic17_evidence_explorer.py`
-asserts the three payloads are byte-identical (and share a `strength_digest`),
-and that all three templates include the single partial. There is no
-per-page variant, no template-side computation and no evidence
-recalculation.
+and builds the projection once. There is no per-page variant, no template-side
+computation and no evidence recalculation.
+
+The contract is enumerated field by field and asserted per field for the same
+candidate id (`test_projection_parity_contract_holds_field_by_field`):
+
+* verification state — `banner`, `chain.badge`
+* `verdict`, `verdict_source`, `verdict_reason`
+* `chain.steps`, `stage_count`, `satisfied_count`
+* `next_stage`, `next_stage_label`, `next_stage_missing_types`
+* `evidence_used`, `evidence_missing`, `evidence_missing_types`
+* `negative_results`, `contradictions`
+* `actions`, `requests`, `authorization`
+* `why_not_confirmed`, `blockers`, `trust_boundary`, `limitations`
+* `capability`
+* deep verification block — `deep`
+* `banner == chain.badge` on every surface (the UI has no state of its own)
+* one shared `strength_digest`, and all three templates include the single
+  partial
+
+No page may independently reinterpret or recompute any of these fields.
 
 ## Security requirements (§7) and where they are enforced
 

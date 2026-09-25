@@ -87,6 +87,32 @@
   <p class="text-slate-400 text-xs mb-3">Missing evidence types
     <span class="mono">{{ explorer.chain.evidence_missing_types|join(', ') }}</span></p>
   {% endif %}
+  {% if explorer.chain.actions %}
+  <h3 class="card-title mt-4">Actions attempted</h3>
+  <ul class="text-sm mb-3">
+    {% for action in explorer.chain.actions %}
+    <li class="mb-1">
+      <span class="mono">{{ action.action_type or 'action' }}</span>
+      <span class="badge-sm">{{ action.state or 'not_recorded' }}</span>
+      {% if action.authorization_id %}<span class="text-slate-500 text-xs mono">{{ action.authorization_id }}</span>{% endif %}
+      {% if action.safety %}<span class="text-slate-500 text-xs">safety {{ action.safety }}</span>{% endif %}
+      <span class="text-slate-400 text-xs">
+        {% if action.observation_count is not none %}{{ action.observation_count }} observation(s){% endif %}
+        {% if action.attempt %}attempt {{ action.attempt }}{% endif %}
+      </span>
+      {% if action.blocked_reason %}<span class="text-amber-200 text-xs">blocked: {{ action.blocked_reason }}</span>{% endif %}
+      {% if action.error %}<span class="text-amber-200 text-xs">error: {{ action.error }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if explorer.chain.requests %}
+  <p class="text-slate-400 text-xs mb-3">Requests recorded
+    <span class="mono">{{ explorer.chain.requests|length }}</span>
+    {% for request in explorer.chain.requests[:6] %}
+    <span class="text-slate-500 text-xs mono">{{ request.request_ref or request.observation_id }}</span>{% if not loop.last %}, {% endif %}
+    {% endfor %}</p>
+  {% endif %}
 
   {# ---------------------------------------- 2. observation vs proof #}
   <h3 class="card-title mt-4">Observation vs proof</h3>

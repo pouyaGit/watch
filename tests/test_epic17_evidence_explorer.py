@@ -272,6 +272,64 @@ class QualityVsCountTests(_Base):
         self.assertEqual(forged["banner"]["state"], plain["banner"]["state"])
 
 
+class HistoricalStateTests(_Base):
+    """§6: a persisted historical LLM/advisory state cannot override the
+    current authoritative evaluation."""
+
+    def test_historical_llm_state_cannot_override_the_authoritative_state(self):
+        cand = self.candidate(kinds=("inventory",))
+        # a historical LLM advisory claiming VERIFIED, exactly as an
+        # LLM-era record would carry it
+        advisory = {"advisory_state": "VERIFIED",
+                    "state_in_advisory_text": "VERIFIED",
+                    "confidence": "high",
+                    "text": "confirmed XSS — payload executed"}
+        plain = self.view(cand.candidate_id)
+        forged = ex.build(cand.candidate_id, advisor=advisory)
+        self.assertNotEqual(forged["banner"]["state"], pj.BADGE_VERIFIED)
+        self.assertNotEqual(forged["decision"]["can_report"], ex.DECISION_YES)
+        self.assertEqual(forged["banner"]["state"],
+                         forged["chain"]["badge"]["state"])
+        # the LLM state moves nothing at all: no banner, no decision, no digest
+        self.assertEqual(forged["banner"], plain["banner"])
+        self.assertEqual(forged["decision"], plain["decision"])
+        self.assertEqual(forged["strength_digest"], plain["strength_digest"])
+        # and it is not carried into the explorer's integrity view at all
+        blob = json.dumps(forged["integrity"]).lower()
+        for token in ("advisory", "payload executed"):
+            self.assertNotIn(token, blob)
+        rendered = self.render_finding(cand.candidate_id)
+        self.assertNotIn("Verified (chain complete)", rendered)
+        self.assertNotIn("payload executed", rendered)
+
+    def test_legacy_epic10_functions_remain_regression_safe(self):
+        from backend.soc import candidate_workspace as cw
+
+        # the EPIC10 outcome mapping is unchanged (existing callers/tests)
+        self.assertEqual(cw.verification_outcome("VERIFIED"), "VERIFIED")
+        self.assertEqual(cw.verification_outcome("DUPLICATE"), "DUPLICATE")
+        self.assertEqual(cw.verification_outcome("REJECTED"), "REJECTED")
+        self.assertEqual(cw.verification_outcome("BLOCKED"), "BLOCKED")
+        self.assertEqual(cw.verification_outcome("DETECTED"),
+                         "INSUFFICIENT_EVIDENCE")
+        self.assertEqual(
+            cw.verification_outcome("", "AUTHORIZATION_REQUIRED"), "BLOCKED")
+        self.assertEqual(cw.verification_outcome("", "", "VERIFIED"),
+                         "VERIFIED")
+        # ... and the notice text still renders for existing callers
+        notice = cw._notice("DETECTED", "", "not_recorded")
+        self.assertIn("Evidence Gate decides", notice)
+        verified_notice = cw._notice("VERIFIED", "rules_met", "VERIFIED")
+        self.assertIn("Evidence Gate decision recorded", verified_notice)
+        # but neither is a UI source on the analyst surfaces any more
+        for name in ("finding_detail.html", "case_detail.html",
+                     "handoff_detail.html"):
+            source = (SOC / name).read_text(encoding="utf-8")
+            self.assertNotIn("summary.notice", source,
+                             f"{name} must not render the legacy notice")
+            self.assertIn('include "soc/_evidence_explorer.html"', source)
+
+
 class UiCannotManufactureStateTests(_Base):
     """§7: the UI cannot build VERIFIED, and the legacy banner is retired."""
 
@@ -316,6 +374,43 @@ class UiCannotManufactureStateTests(_Base):
         if notice:
             self.assertNotIn(f">{notice}<", rendered,
                              "the legacy notice must not be the state banner")
+
+    # EPIC17 §3: the parity contract enumerates the authoritative fields that
+    # must be identical across the three analyst surfaces.
+    PARITY_FIELDS = (
+        "banner", "verdict", "badge", "steps", "stage_count",
+        "satisfied_count", "next_stage", "next_stage_label",
+        "next_stage_missing_types", "evidence_used", "evidence_missing",
+        "evidence_missing_types", "negative_results", "contradictions",
+        "actions", "requests", "authorization", "why_not_confirmed",
+        "blockers", "trust_boundary", "limitations", "capability",
+        "verdict_source", "verdict_reason", "deep",
+    )
+
+    def test_projection_parity_contract_holds_field_by_field(self):
+        cand = self.candidate(kinds=("inventory", "reflection"))
+        case_id = self.finding_case(cand)
+        finding = soc_findings.finding_detail(cand.candidate_id)["explorer"]
+        case = soc_cases.case_detail(case_id)["explorer"]
+        handoff = soc_handoff.handoff_detail(cand.source_job)["explorer"]
+        for blob, name in ((finding, "finding"), (case, "case"),
+                           (handoff, "handoff")):
+            self.assertTrue(blob["available"], f"{name} must project")
+        for field in self.PARITY_FIELDS:
+            surfaces = (finding, case, handoff)
+            if field == "badge":
+                values = [b["chain"]["badge"] for b in surfaces]
+            elif field in ("banner", "deep"):
+                values = [b[field] for b in surfaces]
+            else:
+                values = [b["chain"][field] for b in surfaces]
+            self.assertEqual(values[0], values[1],
+                             f"{field} differs between finding and case")
+            self.assertEqual(values[0], values[2],
+                             f"{field} differs between finding and handoff")
+        # the badge is the same object the banner shows, on every surface
+        for blob in (finding, case, handoff):
+            self.assertEqual(blob["banner"], blob["chain"]["badge"])
 
     def test_the_three_soc_surfaces_share_one_projection(self):
         cand = self.candidate(kinds=("supporting",), exploitability=True)

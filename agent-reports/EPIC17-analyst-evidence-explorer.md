@@ -152,6 +152,28 @@ types and the authorization lineage visible. Nothing was written to production.
   `web/templates/soc/case_detail.html`,
   `web/templates/soc/handoff_detail.html`
 
+## 7b. Follow-up contract (implementation round 2)
+
+Added after the first promotion, per the operator's review:
+
+* the explorer now also carries the remaining authoritative chain fields
+  **`actions`**, **`requests`** and **`loop`**, rendered in the shared partial
+  (state, safety, authorization id, attempt, observation count,
+  `blocked_reason`, `error`);
+* the parity contract is now an **enumerated, per-field test**
+  (`test_projection_parity_contract_holds_field_by_field`) covering badge,
+  state, chain, stage counts, next stage, evidence used/missing, negative
+  results, contradictions, actions, requests, authorization,
+  why-not-confirmed, blockers, trust boundary, limitations, capability,
+  verdict source and the deep block — for the same candidate id across
+  finding/case/handoff;
+* new tests: a **historical LLM state** claiming VERIFIED (advisory) changes
+  nothing — not the banner, not the decision, not the digest, and it is not
+  carried into the explorer's integrity view at all;
+* new test: **legacy EPIC10 compatibility** — `verification_outcome()` and
+  `_notice()` keep their exact behaviour (callers/tests unchanged) while no
+  analyst template renders the legacy notice any more.
+
 ## 8. Delivery
 
 * `diff_guard`: PASS (see promotion request)
