@@ -211,6 +211,35 @@ def build(candidate_id: str, *, fs: Any = None, runtime: Any = None,
                 _text(x) for x in _as_list(chain.get("evidence_missing"))],
             "evidence_missing_types": [
                 _text(x) for x in _as_list(chain.get("evidence_missing_types"))],
+            # EPIC17 §3 parity contract: every authoritative chain field the
+            # analyst may rely on is carried here verbatim (no page may
+            # reinterpret or recompute it).
+            "actions": [
+                {"action_id": _text(r.get("action_id")),
+                 "action_type": _text(r.get("action_type")),
+                 "label": _text(r.get("label")),
+                 "state": _text(r.get("state")),
+                 "safety": _text(r.get("safety")),
+                 "blocked_reason": _text(r.get("blocked_reason")),
+                 "error": _text(r.get("error")),
+                 "attempt": r.get("attempt"),
+                 "observation_count": r.get("observation_count"),
+                 "authorization_id": _text(r.get("authorization_id")),
+                 "executor": _text(r.get("executor")),
+                 "created_at": _text(r.get("created_at"))}
+                for r in _as_list(chain.get("actions"))[:40]
+                if isinstance(r, dict)],
+            "requests": [
+                {"observation_id": _text(r.get("observation_id")),
+                 "request_ref": _text(r.get("request_ref")),
+                 "response_ref": _text(r.get("response_ref")),
+                 "where": _text(r.get("where"))}
+                for r in _as_list(chain.get("requests"))[:40]
+                if isinstance(r, dict)],
+            "loop": {"available": bool(_as_dict(chain.get("loop"))),
+                     **{k: _text(v, 120) for k, v in _as_dict(
+                         chain.get("loop")).items()
+                        if isinstance(v, (str, int, float, bool))}},
             "negative_results": [
                 _text(x) for x in _as_list(chain.get("negative_results"))],
             "contradictions": [
@@ -763,6 +792,19 @@ def strength_digest(view: dict[str, Any]) -> str:
                 _as_dict(view.get("observation_vs_proof")).get("proof"))
             if isinstance(s, dict)),
         "evidence_missing_types": sorted(chain.get("evidence_missing_types") or []),
+        "contradictions": sorted(chain.get("contradictions") or []),
+        "negative_results": sorted(chain.get("negative_results") or []),
+        "blockers": sorted(chain.get("blockers") or []),
+        "actions": sorted(
+            (str(a.get("action_id", "")), str(a.get("state", "")),
+             str(a.get("blocked_reason", "")))
+            for a in _as_list(chain.get("actions")) if isinstance(a, dict)),
+        "requests": sorted(
+            str(r.get("request_ref", "")) for r in _as_list(chain.get("requests"))
+            if isinstance(r, dict)),
+        "next_stage": chain.get("next_stage"),
+        "capability": chain.get("capability"),
+        "verdict_source": chain.get("verdict_source"),
         "authorization": summary.get("authorization"),
         "unique_observations": summary.get("unique_observations"),
         "integrity_state": integrity.get("authoritative_state"),
