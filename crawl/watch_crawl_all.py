@@ -27,6 +27,7 @@ import subprocess
 import requests
 import gzip
 import shutil
+import html
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
@@ -231,11 +232,12 @@ def crawl_domain(domain, urls):
         else:
             source = "http-seed"
 
-        parsed = urlparse(u)
+        clean_url = html.unescape(u)
+        parsed = urlparse(clean_url)
         entries.append({
             "program_name": program_name,
             "subdomain": host,
-            "url": u,
+            "url": clean_url,
             "path": parsed.path or "/",
             "params": sorted(set(parse_qs(parsed.query).keys())),
             "source": source,
@@ -290,7 +292,12 @@ def main():
             skipped_domains.append(domain)
             continue
 
-        u_count, n_count = crawl_domain(domain, urls)
+        try:
+            u_count, n_count = crawl_domain(domain, urls)
+        except Exception as e:
+            log(f"ERROR crawling {domain}, skipping to next domain: {e}")
+            send_telegram_message(f"crawlAll: {domain} FAILED ({e}) -- continuing with next domain")
+            continue
         total_urls += u_count
         total_new += n_count
         done_domains += 1
@@ -310,4 +317,16 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        from backend.task_report import mark_finished
+    except Exception:
+        def mark_finished(*a, **k):  # backend/ absent (ai lane removed)
+            pass
+    try:
+        main()
+        mark_finished("success", 0)
+    except Exception as e:
+        mark_finished("failed", 1)
+        log(f"FATAL: crawlAll crashed before/outside the per-domain loop: {e}")
+        send_telegram_message(f"crawlAll CRASHED: {e}\nCheck server logs.")
+        raise

@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -45,8 +46,40 @@ CHECKPOINT_EVERY = 200     # send one Telegram progress ping every N endpoints,
                            # not per-endpoint -- avoids the notification spam
                            # you already ran into with upsert_lives
 
+# Canonical param_records vocabulary:
+#   method   -> {"GET", "POST", "PUT", "PATCH"}
+#   location -> {"query", "body"}
+#   source   -> {"crawl", "x8"}
+SUPPORTED_METHODS = {"GET", "POST", "PUT", "PATCH"}
+SUPPORTED_LOCATIONS = {"query", "body"}
+SUPPORTED_SOURCES = {"crawl", "x8"}
+
 START_TIME = time.time()
 
+def build_x8_target_url(url):
+    """
+    Build a stable x8 target from an endpoint example URL.
+
+    Discovery should run against the endpoint path itself, not against
+    previously observed query values. Query parameters are discovered
+    separately by x8.
+    """
+    try:
+        parsed = urlsplit(url)
+        if not parsed.scheme or not parsed.netloc:
+            return url
+
+        return urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path or "/",
+                "",
+                "",
+            )
+        )
+    except Exception:
+        return url
 
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
@@ -81,63 +114,191 @@ def get_wordlist_for_program(program_name):
 
 def run_x8(url, wordlist_path):
     """
-    Run x8 on a URL, return the list of discovered params.
-    Parses x8's JSON output; verify exact flags with `x8 --help` since they
-    can differ across versions.
+    Run x8 on a URL, return raw discovery records.
+
+    Returns a list of dicts preserving the per-discovery
+    provenance emitted by x8:
+        {"name": str, "method": str, "injection_place": str}
+
+    Returns ``None`` when x8 could NOT run to completion (binary not
+    found, timeout, execution error, or unparseable output) so the
+    caller can distinguish "ran and found nothing" (``[]``) from "did
+    not actually complete" (``None``) -- the latter must never mark an
+    endpoint x8_checked.
+
+    Injection-place → internal location mapping happens in
+    :func:`map_x8_location`, NOT here, so the raw values stay
+    inspectable. Parses x8's JSON output; verify exact flags
+    with `x8 --help` since they can differ across versions.
+    Compatible with x8 4.3.1-main (the installed version).
     """
     if subprocess.call(["which", "x8"], stdout=subprocess.DEVNULL) != 0:
         log("x8 not found in PATH")
-        return []
+        return None
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
         out_path = tmp.name
 
     cmd = [
         "x8",
+        # Explicit curl UA: some targets (e.g. investors.delltechnologies.com)
+        # time out when x8 sends its default browser-like User-Agent but answer
+        # immediately to curl's UA (verified live: curl/8.5.0 -> HTTP 200,
+        # x8 default UA -> timeout). --mimic-browser is deliberately NOT used.
+        "-H", "User-Agent: curl/8.5.0",
         "-u", url,
         "-w", wordlist_path,
         "-O", "json",
         "-o", out_path,
-        "-c", "5",           # concurrency per url (default 1 was too slow for 82k endpoints)
-        "-W", "1",            # concurrent urls -- keep at 1, server is resource-limited
+        "-c", "8",           # concurrency per url (bumped from 5 -- most of the slowdown was
+                             # wasted time on low-value duplicate endpoints, not raw x8 speed)
+        "-W", "2",            # concurrent urls -- bumped from 1; watch memory (free -h) on the
+                             # next scheduled run and drop back to 1 if the 4GB box struggles
         "--timeout", "10",
         "--verify",           # re-verifies found params, fewer false positives
+        # Discover hidden parameters across GET
+        # the query for GET (verified against x8 4.3.1-main's CLI).
+        "-X", "GET",
     ]
     try:
         subprocess.run(cmd, capture_output=True, text=True, timeout=X8_TIMEOUT)
     except subprocess.TimeoutExpired:
         log(f"x8 timeout: {url}")
-        return []
+        return None
     except Exception as e:
         log(f"x8 error on {url}: {e}")
-        return []
+        return None
 
-    params = set()
+    records = []
     try:
         with open(out_path, "r", errors="ignore") as f:
             data = json.load(f)
-        # x8's actual format: [{"method":..,"url":..,"status":..,"found_params":[...],"injection_place":..}]
-        if isinstance(data, list):
-            for item in data:
-                for p in item.get("found_params", []):
-                    params.add(p)
-        elif isinstance(data, dict):
-            for p in data.get("found_params", []):
-                params.add(p)
+        # x8 JSON format: [{"method":..,"url":..,"status":..,
+        #   "found_params":[{"name":..,..}],"injection_place":
+        #   "Query|Body|Path|Headers|HeaderValue"}]
+        # found_params items are dicts with a "name" key in x8
+        # 4.3.1; older formats may emit bare name strings.
+        items = data if isinstance(data, list) else [data]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            # Never invent a default HTTP method: a missing method or
+            # a missing injection_place means we cannot attribute the
+            # finding, so the whole item is discarded rather than
+            # silently downgraded to GET/query.
+            method = (item.get("method") or "").strip().upper()
+            place = (item.get("injection_place") or "").strip()
+            if not method or not place:
+                continue
+            for p in item.get("found_params", []):
+                name = p.get("name") if isinstance(p, dict) else p
+                if not name:
+                    continue
+                records.append(
+                    {
+                        "name": str(name),
+                        "method": method,
+                        "injection_place": place,
+                    }
+                )
     except Exception:
         log(f"Could not parse x8 JSON output for {url} -- check manually: {out_path}")
-        return []
+        return None
     finally:
         try:
             os.remove(out_path)
         except Exception:
             pass
 
-    return sorted(params)
+    return records
+
+
+def map_x8_location(injection_place, method):
+    """
+    Map x8's injection_place label to the internal location
+    vocabulary ("query" | "body"); return None for anything
+    unsupported so it never becomes an XSS case.
+
+    Compatible mapping for the installed x8 4.3.1-main:
+
+    - ``Query`` -> query
+    - ``Body`` -> body
+    - ``Path`` with method GET -> query
+      In x8 4.3.1 the default ``-u <url>`` template injects
+      GET parameters into the URL query string but LABELS the
+      injection point "Path" (empirically verified against the
+      installed binary). With our invocation the GET injection
+      point is always the query string, so GET/"Path" means
+      query. Non-GET "Path", "Headers", "HeaderValue" and any
+      unknown value are deliberately NOT converted.
+    """
+    place = (injection_place or "").strip().lower()
+    method = (method or "").strip().upper()
+
+    if place == "query":
+        return "query"
+    if place == "body":
+        return "body"
+    if place == "path" and method == "GET":
+        return "query"
+    return None
+
+
+def normalize_param_record(name, method, location, source):
+    """
+    Normalize one parameter-discovery record into the canonical
+    ``Endpoints.param_records`` schema:
+
+        {"name": str, "method": str, "location": str, "source": str}
+
+    with the bounded vocabulary:
+
+        method   -> GET | POST | PUT | PATCH
+        location -> query | body
+        source   -> crawl | x8
+
+    Returns the normalized dict, or ``None`` when the record must be
+    discarded. The helper is deliberately strict: it strips the name,
+    upper-cases the method and lower-cases the location, and rejects
+    empty names, missing/unsupported methods, and missing/unsupported
+    locations. It NEVER invents a method and NEVER silently converts an
+    unsupported location into query/body -- both crawl and x8 records
+    flow through here so the persisted provenance is always uniform.
+    """
+    name = (name or "").strip()
+    method = (method or "").strip().upper()
+    location = (location or "").strip().lower()
+    source = (source or "").strip().lower()
+
+    if not name or not method or not location or not source:
+        return None
+    if method not in SUPPORTED_METHODS:
+        return None
+    if location not in SUPPORTED_LOCATIONS:
+        return None
+    if source not in SUPPORTED_SOURCES:
+        return None
+
+    return {
+        "name": name,
+        "method": method,
+        "location": location,
+        "source": source,
+    }
 
 
 def get_pending_endpoints(filter_arg=None, limit=None):
-    query = Endpoints.objects(x8_checked=False)
+    # Only rows with a usable x8 target. An endpoint without an
+    # example_url can never be discovered and used to be re-fetched
+    # (then skipped) on every run -- stuck in the pending queue
+    # forever. It stays x8_checked=False (truthfully never-run) but is
+    # excluded here; once a later crawl fills example_url it becomes
+    # eligible again.
+    query = Endpoints.objects(
+        x8_checked=False,
+        example_url__exists=True,
+        example_url__nin=["", None],
+    )
     if filter_arg:
         f = filter_arg.lower()
         query = query.filter(subdomain__icontains=f)
@@ -148,13 +309,20 @@ def get_pending_endpoints(filter_arg=None, limit=None):
 
 
 def export_wordlists():
-    """Write one wordlist file per program from discovered params."""
+    """Write one wordlist file per program from discovered aggregate
+    params (unique names). Malformed entries (non-strings, empty
+    names) are filtered so they cannot pollute the wordlist; the
+    aggregate never depends on param_records, so malformed provenance
+    cannot leak in either."""
     programs = Endpoints.objects.distinct("program_name")
     saved = []
     for prog in programs:
         params = set()
         for ep in Endpoints.objects(program_name=prog).only("params"):
-            params.update(ep.params or [])
+            params.update(
+                p for p in (ep.params or [])
+                if isinstance(p, str) and p
+            )
         if not params:
             continue
         out_file = WORDLIST_DIR / f"{prog}_params.txt"
@@ -164,12 +332,98 @@ def export_wordlists():
     return saved
 
 
+def is_legacy_x8_endpoint(endpoint):
+    """
+    True when an endpoint was marked ``x8_checked=True`` BEFORE the
+    provenance schema existed: it has no ``param_records`` and no
+    ``params_from_x8``. The new discovery pass selects only
+    ``x8_checked=False`` rows, so such endpoints would otherwise be
+    skipped forever even though x8 may never have actually completed
+    (the old code marked checked even on failure).
+
+    An endpoint that already carries provenance (any ``param_records``
+    or any ``params_from_x8`` name) is NOT legacy and is left alone.
+    A not-yet-checked endpoint is already pending and is NOT legacy.
+    """
+    if not getattr(endpoint, "x8_checked", False):
+        return False
+    records = getattr(endpoint, "param_records", None) or []
+    x8_names = getattr(endpoint, "params_from_x8", None) or []
+    return not records and not x8_names
+
+
+def requeue_legacy_x8(dry_run=False, filter_arg=None):
+    """
+    Requeue legacy x8 endpoints (see :func:`is_legacy_x8_endpoint`) so
+    the new provenance-aware discovery pass runs on them again.
+
+    The ONLY field mutated is ``x8_checked`` (flipped to ``False``);
+    ``params``, ``params_from_crawl``, ``params_from_x8``,
+    ``param_records``, ``example_url`` and every other field are left
+    untouched. In dry-run mode nothing is written and the function just
+    reports how many endpoints WOULD be requeued.
+
+    Returns the number of matching endpoints (requeued, or -- in
+    dry-run -- that would be requeued). ``filter_arg`` optionally
+    narrows the scan by subdomain, mirroring the discovery run.
+
+    Idempotent for the historical backlog: once an endpoint is
+    requeued it is ``x8_checked=False`` and no longer matches. Note
+    that an endpoint the NEW pipeline later checks with genuinely zero
+    findings will match again (empty provenance); re-running x8 on it
+    is harmless, just redundant.
+    """
+    query = Endpoints.objects(x8_checked=True)
+    if filter_arg:
+        f = filter_arg.lower()
+        query = query.filter(subdomain__icontains=f)
+
+    count = 0
+    for ep in query:
+        if not is_legacy_x8_endpoint(ep):
+            continue
+        count += 1
+        if not dry_run:
+            ep.x8_checked = False
+            ep.save()
+    return count
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--filter", default=None, help="only this subdomain/keyword")
     parser.add_argument("--max-minutes", type=float, default=None)
     parser.add_argument("--limit", type=int, default=None, help="max endpoints this run")
+    parser.add_argument(
+        "--recheck-legacy-x8",
+        action="store_true",
+        help="requeue legacy endpoints (x8_checked=True but no "
+             "param_records/params_from_x8) for the new x8 pass; "
+             "only x8_checked is changed",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="with --recheck-legacy-x8: report the count without "
+             "modifying MongoDB",
+    )
     args = parser.parse_args()
+
+    if args.recheck_legacy_x8:
+        count = requeue_legacy_x8(dry_run=args.dry_run, filter_arg=args.filter)
+        mode = "DRY-RUN (no changes)" if args.dry_run else "APPLIED"
+        log(
+            f"=== Legacy x8 requeue | {mode} | "
+            f"filter={args.filter or 'NONE'} | "
+            f"endpoints={'would be' if args.dry_run else 'were'} "
+            f"requeued: {count} ==="
+        )
+        send_telegram(
+            f"paramDiscovery legacy-x8 requeue [{mode}]\n"
+            f"Filter: {args.filter or 'NONE'}\n"
+            f"Endpoints {'to requeue' if args.dry_run else 'requeued'}: {count}"
+        )
+        return
 
     if not os.path.exists(WORDLIST):
         log(f"Wordlist not found: {WORDLIST} -- set a valid one before continuing (env: X8_WORDLIST)")
@@ -198,13 +452,85 @@ def main():
         if not ep.example_url:
             continue
 
-        new_params = run_x8(ep.example_url, get_wordlist_for_program(ep.program_name))
-        if new_params:
-            merged = sorted(set((ep.params_from_x8 or []) + new_params))
-            ep.params_from_x8 = merged
-            ep.params = sorted(set((ep.params or []) + merged))
-            found_total += len(new_params)
-            log(f"[+] {ep.example_url} -> {new_params}")
+        x8_target = build_x8_target_url(ep.example_url)
+        log(
+            f"[x8] program={ep.program_name} "
+            f"endpoint={ep.example_url} "
+            f"target={x8_target}"
+        )
+        raw_records = run_x8(
+            x8_target,
+            get_wordlist_for_program(ep.program_name)
+        )
+
+        if raw_records is None:
+            # x8 did NOT complete (not found/timeout/error/parse):
+            # do not mark this endpoint checked -- it stays pending
+            # and will be retried on the next run.
+            log(f"x8 did not complete for {ep.example_url} -- leaving unchecked")
+            time.sleep(X8_RATE_LIMIT_DELAY)
+            continue
+
+        # From here on x8 executed successfully (possibly [] findings).
+        if raw_records:
+            # Map x8 injection places to our internal vocabulary.
+            # Unsupported places (Headers/HeaderValue/non-GET Path/...)
+            # are dropped here and never become cases.
+            new_records = []
+            seen = {
+                (
+                    rec.get("name"),
+                    rec.get("method"),
+                    rec.get("location"),
+                    rec.get("source"),
+                )
+                for rec in (ep.param_records or [])
+                if isinstance(rec, dict)
+            }
+            for rec in raw_records:
+                location = map_x8_location(
+                    rec.get("injection_place"), rec.get("method")
+                )
+                if location is None:
+                    continue
+                normalized = normalize_param_record(
+                    rec.get("name"), rec.get("method"), location, "x8"
+                )
+                if normalized is None:
+                    continue
+                key = (
+                    normalized["name"],
+                    normalized["method"],
+                    normalized["location"],
+                    normalized["source"],
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                new_records.append(normalized)
+
+            if new_records:
+                ep.param_records = list((ep.param_records or [])) + new_records
+                new_x8_names = sorted({
+                    r["name"]
+                    for r in new_records
+                })
+
+                ep.params_from_x8 = sorted(
+                    set(ep.params_from_x8 or []) | set(new_x8_names)
+                )
+
+                ep.params = sorted(
+                    set(ep.params or []) | set(new_x8_names)
+                )
+
+                found_total += len(new_x8_names)
+
+                log(
+                    f"[+] {ep.example_url} -> "
+                    f"new={new_x8_names} "
+                    f"total_x8={len(ep.params_from_x8)}"
+                )
 
         ep.x8_checked = True
         ep.x8_last_checked = datetime.now()
@@ -240,4 +566,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        from backend.task_report import mark_finished
+    except Exception:
+        def mark_finished(*a, **k):  # backend/ absent (ai lane removed)
+            pass
+    try:
+        main()
+        mark_finished("success", 0)
+    except Exception:
+        mark_finished("failed", 1)
+        raise

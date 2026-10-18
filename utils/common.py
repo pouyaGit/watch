@@ -1,10 +1,153 @@
 # utils/common.py
+import os
+import re
 import subprocess
 import tempfile
+import time
 import random
 import string
 from datetime import datetime
 import ipaddress
+
+# Module-level PATH for Watch subprocesses (non-interactive shells under
+# systemd do not source ~/.zshrc, so tool directories must be explicit).
+#
+# systemd compatibility: the production units run as User=root with
+#   PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin
+# so this list must work with exactly that PATH. In particular it must NOT
+# depend on any interactive user's home directory (e.g. /home/pouya_behnia/go/bin
+# is NOT on the systemd PATH); the current user's ~/go/bin is picked up
+# dynamically via $HOME so developer shells keep working without hardcoding
+# any username into the codebase.
+def _build_watch_tool_path():
+    parts = ["/opt/watch/venv/bin"]
+    home = os.environ.get("HOME")
+    if home:
+        parts.append(os.path.join(home, "go", "bin"))
+    parts += [
+        "/root/go/bin",
+        "/usr/local/go/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+    ]
+    seen = set()
+    ordered = []
+    for p in parts:
+        if p and p not in seen:
+            seen.add(p)
+            ordered.append(p)
+    return ":".join(ordered)
+
+
+WATCH_TOOL_PATH = _build_watch_tool_path()
+
+
+class ToolError(RuntimeError):
+    """Raised when a required external tool is missing or fails.
+
+    Fail-fast signal for the scheduled pipeline: a missing/failing required
+    binary must abort the affected job with a non-zero exit status, never be
+    interpreted as an empty ("0 results") outcome.
+    """
+
+
+class ToolTimeout(ToolError):
+    """A required external tool exceeded its time budget.
+
+    Separate from a generic ToolError so callers can distinguish a hang from a
+    hard failure. It is still a ToolError, so existing fail-fast handling keeps
+    working unchanged.
+    """
+
+
+# Upper bound for one NS/DNS shell command (a per-domain bulk `dnsx` call over
+# the collected subdomains, or a single-label wildcard probe). The bulk call is
+# rate-limited to ~30 DNS requests/second, so the largest realistic domains need
+# many minutes; 1 hour leaves headroom for those while still bounding a hung
+# resolver or tool instead of blocking the pipeline forever. Adjust here (one
+# constant) if the resolver rate limit or typical domain size changes.
+NS_COMMAND_TIMEOUT = 3600
+
+# Names per bulk `dnsx -l <file>` invocation.
+#
+# The NS step resolves an entire scope in one call, rate-limited to ~30
+# queries/second. A per-invocation wall-clock ceiling can only hold if the
+# work per invocation is bounded, and the collected scopes are not: the
+# indeed.net scope grew from ~42k names (2026-09-15) to 206,080 (2026-09-24,
+# 201,074 of them from daily dynamic brute-force), which needs >= 6,869s of
+# query time at the rate limit -- twice NS_COMMAND_TIMEOUT -- so every
+# pipeline run since 2026-09-17 died on ToolTimeout for that one domain.
+#
+# Larger lists are therefore split into sequential chunks of at most this many
+# names, each with its own NS_COMMAND_TIMEOUT budget. Sizing is measured, not
+# assumed. The one COMPLETE measurement is 25,001 real scope names in 2,201s =
+# 11.4 names/second (every name queried, dnsx exited 0). A second probe was
+# killed by its own 900s guard after resolving 7,666 records without finishing
+# 20,000 names, so it only bounds the rate from above (<22.2 names/second) --
+# it is a bound, not a rate, and must not be quoted as one. At 11.4 names/s a
+# 15,000-name chunk needs ~1,316s -- a 2.7x margin under the ceiling -- and the
+# 206,080-name scope that could never fit in one 3,600s call now completes as
+# 14 bounded calls. A resolver that genuinely hangs still raises ToolTimeout
+# instead of stalling the pipeline.
+#
+# NOTE: chunking bounds each invocation, it does not reduce total work. The
+# nightly DNS step still spends scope_size / throughput seconds (2.6h-5.0h for
+# the current 206,080-name scope) inside the pipeline's 6h TimeoutStartSec, so
+# unbounded scope growth remains an operational risk that needs a scope-level
+# decision, not a larger timeout.
+NS_DNSX_CHUNK_SIZE = 15000
+
+# Worst-case wall time per name for the bulk dnsx call at the project's rate
+# limit (`-rl 30`). Kept as a constant so the chunk size and the ceiling can be
+# checked against each other deterministically (see tests/test_ns_chunking.py)
+# instead of relying on a comment.
+NS_SECONDS_PER_NAME_AT_RATE_LIMIT = 1.0 / 30.0
+
+# Incremental DNS resolution (EPIC10). The pinned NS caller
+# (ns/watch_ns_all.py) hands every scope's whole candidate list to one bulk
+# `dnsx -l` call through run_command_in_zsh_ns, so eligibility has to be decided
+# here -- before chunking -- and nowhere else. See utils/dns_incremental.py for
+# the states, the policy defaults and the fail-closed contract.
+from utils import dns_incremental  # noqa: E402  (kept next to its use site)
+
+
+def tool_env(extra=None):
+    """Environment for Watch subprocesses with the canonical tool PATH first."""
+    env = dict(os.environ)
+    if extra:
+        env.update(extra)
+    base_path = env.get("PATH")
+    env["PATH"] = WATCH_TOOL_PATH + ":" + base_path if base_path else WATCH_TOOL_PATH
+    return env
+
+
+def find_tool(name):
+    """Resolve a required binary via the canonical tool PATH (or None)."""
+    import shutil
+    env_path = os.environ.get("PATH")
+    search_path = WATCH_TOOL_PATH + ":" + env_path if env_path else WATCH_TOOL_PATH
+    return shutil.which(name, path=search_path)
+
+
+def require_tool(name):
+    """Return the resolved path of a required binary or raise ToolError.
+
+    The error names the exact missing command so systemd logs and Telegram
+    failure notifications identify the broken tooling immediately.
+    """
+    resolved = find_tool(name)
+    if not resolved:
+        raise ToolError(
+            f"required tool not found: {name} "
+            f"(searched PATH={WATCH_TOOL_PATH})"
+        )
+    return resolved
+
+
+def require_tools(names):
+    """Preflight: fail fast when any required binary is unavailable."""
+    return [require_tool(name) for name in names]
 
 # Shared color codes
 class colors:
@@ -21,7 +164,9 @@ def current_time():
 # Common zsh runner (non-shell)
 def run_command_in_zsh_common(command):
     try:
-        result = subprocess.run(["zsh", "-c", command], capture_output=True, text=True)
+        env = os.environ.copy()
+        env["PATH"] = WATCH_TOOL_PATH + ":" + env["PATH"] if env.get("PATH") else WATCH_TOOL_PATH
+        result = subprocess.run(["zsh", "-c", command], capture_output=True, text=True, env=env)
         if result.returncode != 0:
             print(f"{colors.YELLOW}[{current_time()}] Error: {result.stderr.strip()}{colors.RESET}")
             return []
@@ -32,7 +177,9 @@ def run_command_in_zsh_common(command):
 
 def run_command_in_zsh_http(command):
     try:
-        result = subprocess.run(["zsh", "-c", command], capture_output=True, text=True)
+        env = os.environ.copy()
+        env["PATH"] = WATCH_TOOL_PATH + ":" + env["PATH"] if env.get("PATH") else WATCH_TOOL_PATH
+        result = subprocess.run(["zsh", "-c", command], capture_output=True, text=True, env=env)
         if result.returncode != 0:
             print(f"[{current_time()}] Error executing command: {result.stderr}")
             return False
@@ -42,14 +189,185 @@ def run_command_in_zsh_http(command):
         return []
     
 # NS zsh runner (shell=True)
+def _bounded_tail(text, limit=500):
+    """Return a single bounded tail of diagnostic text (never unbounded)."""
+    if not text:
+        return ""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return "..." + text[-limit:]
+
+
 def run_command_in_zsh_ns(command):
-    proc = subprocess.run(
-        command,
-        shell=True,
-        executable="/bin/zsh",
-        capture_output=True,
-        text=True
-    )
+    """Run an NS/DNS shell command; raise on failure instead of returning [].
+
+    Preserves the original successful behavior and the existing zsh/shell
+    command shape. The only change is failure handling: a non-zero exit now
+    raises ToolError and a hang raises ToolTimeout, so a broken dnsx can never
+    be mistaken for a successful "0 results" DNS run.
+
+    Two transforms are applied to a bulk ``dnsx -l <file>`` call, in this order
+    (EPIC10 SS9):
+
+    1. **Incremental selection** (``utils/dns_incremental.py``): only eligible
+       names -- NEW, CHANGED, RETRY_ELIGIBLE, STALE, or FORCE -- are handed to
+       dnsx; names already resolved within the freshness window (FRESH) and
+       names whose retry backoff has not elapsed are skipped for this run
+       without touching their stored results. A selector failure aborts the step
+       (fail-closed) instead of falling back to a full-scope run.
+    2. **Bounded chunking**: the selected list is split into sequential
+       invocations of at most NS_DNSX_CHUNK_SIZE names, each with its own
+       NS_COMMAND_TIMEOUT budget.
+
+    Every other command -- and a bulk call whose list is already small and fully
+    eligible -- is executed exactly as before, in one invocation with an
+    unchanged command string.
+    """
+    plan = _dnsx_run_plan(command)
+    started = time.monotonic()
+    error = None
+    try:
+        lines: list[str] = []
+        for index, chunk_command in enumerate(plan.commands):
+            lines.extend(_run_ns_command(chunk_command))
+            plan.chunks_done = index + 1
+        return lines
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        if plan.selection is not None:
+            dns_incremental.record_run_outcome(
+                plan.selection,
+                lines,
+                chunks_total=len(plan.commands),
+                chunks_done=plan.chunks_done,
+                dns_seconds=time.monotonic() - started,
+                error=error,
+            )
+        for temp_path in plan.temp_paths:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+
+#: first ``-l <file>`` argument of a command, quoted or bare
+_DNSX_LIST_ARG = re.compile(
+    r"""(?P<lead>(?:^|\s)-l\s+)(?P<quote>["']?)(?P<path>[^\s"']+)(?P=quote)"""
+)
+
+
+def _dnsx_run_plan(command):
+    """Plan one NS invocation: select eligible names, then bound the work.
+
+    Returns an ``NsRunPlan``. Anything that is not a bulk dnsx call over an
+    existing list is returned unchanged as a single-element list with no temp
+    files, so every other caller's behavior is byte-identical.
+
+    Selection runs first and may legitimately leave nothing to do (every
+    candidate FRESH) -- then ``plan.commands`` is empty and dnsx is never
+    invoked. A selector error propagates (fail-closed): the DNS step aborts
+    with a non-zero exit instead of resolving the full scope.
+    """
+    if not isinstance(command, str):
+        return dns_incremental.NsRunPlan(commands=[command])
+    match = _DNSX_LIST_ARG.search(command)
+    if not match or not command.lstrip().startswith("dnsx"):
+        return dns_incremental.NsRunPlan(commands=[command])
+    try:
+        with open(match.group("path"), "r", errors="replace") as handle:
+            names = [line.strip() for line in handle if line.strip()]
+    except OSError:
+        # unreadable/missing list: keep the original single invocation so a
+        # caller error still surfaces as a tool failure, not as a silent skip
+        return dns_incremental.NsRunPlan(commands=[command])
+
+    try:
+        selection = dns_incremental.selection_for_command(names)
+    except dns_incremental.DnsSelectionError:
+        print(
+            f"{colors.RED}[{current_time()}] DNS selection FAILED -- failing "
+            f"closed: the DNS step aborts and existing results are preserved; "
+            f"there is no fallback to full-scope resolution."
+            f"{colors.RESET}")
+        raise
+
+    selected = names if selection is None else list(selection.selected)
+
+    if selected == names and len(selected) <= NS_DNSX_CHUNK_SIZE:
+        # nothing filtered and the list already fits: byte-identical command
+        return dns_incremental.NsRunPlan(
+            commands=[command], selection=selection, names=names)
+
+    commands: list[str] = []
+    temp_paths: list[str] = []
+    try:
+        for start in range(0, len(selected), NS_DNSX_CHUNK_SIZE):
+            chunk_path = create_temp_file(selected[start:start + NS_DNSX_CHUNK_SIZE])
+            temp_paths.append(chunk_path)
+            commands.append(
+                command[:match.start("path")] + chunk_path
+                + command[match.end("path"):])
+    except Exception:
+        for temp_path in temp_paths:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+        raise
+    return dns_incremental.NsRunPlan(
+        commands=commands, temp_paths=temp_paths, selection=selection,
+        names=selected)
+
+
+def _dnsx_chunk_commands(command):
+    """Bounded invocations for a bulk ``dnsx -l <file>`` command.
+
+    Thin wrapper kept for the callers/tests that only need the command list;
+    ``run_command_in_zsh_ns`` uses the full plan (which also carries what was
+    selected and why).
+    """
+    plan = _dnsx_run_plan(command)
+    return plan.commands, plan.temp_paths
+
+
+def _run_ns_command(command):
+    """One NS/DNS shell invocation with the fail-fast timeout contract."""
+    env = os.environ.copy()
+    env["PATH"] = WATCH_TOOL_PATH + ":" + env["PATH"] if env.get("PATH") else WATCH_TOOL_PATH
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            executable="/bin/zsh",
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=NS_COMMAND_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ToolTimeout(
+            f"command timed out after {NS_COMMAND_TIMEOUT}s: "
+            f"{_bounded_tail(command, 200)}"
+        ) from exc
+    except OSError as exc:
+        raise ToolError(
+            f"command execution failed: {_bounded_tail(command, 200)}: {exc}"
+        ) from exc
+
+    if proc.returncode != 0:
+        detail = (
+            f"command failed (exit {proc.returncode}): "
+            f"{_bounded_tail(command, 200)}"
+        )
+        if proc.stderr:
+            detail += f" | stderr: {_bounded_tail(proc.stderr)}"
+        if proc.stdout:
+            detail += f" | stdout: {_bounded_tail(proc.stdout)}"
+        raise ToolError(detail)
+
     if proc.stderr:
         print(f"{colors.YELLOW}[{current_time()}] stderr: {proc.stderr.strip()}{colors.RESET}")
     return [line for line in proc.stdout.splitlines() if line.strip()]

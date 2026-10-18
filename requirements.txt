@@ -4,3 +4,9 @@ python-telegram-bot
 tldextract
 psycopg2-binary
 python-dotenv
+
+# restored with non-ai recon lane (requests/pymongo for scripts; fastapi/uvicorn for api.py dashboard)
+requests
+pymongo
+fastapi
+uvicorn[standard]
