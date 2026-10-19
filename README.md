@@ -401,7 +401,10 @@ EOF
 sudo tee /etc/systemd/system/watch.timer > /dev/null << 'EOF'
 [Unit]
 Description=Run Watch Pipeline every 12 hours (Iran Time)
-Requires=watch.service
+# Do NOT add Requires=watch.service: the timer triggers the service via Unit=
+# below, and a Requires= would make systemd stop the timer whenever the service
+# is stopped (e.g. a manual `systemctl stop watch.service` to kill a stuck run),
+# silently deactivating the schedule so the next 00:00/12:00 fire is skipped.
 
 [Timer]
 Unit=watch.service
