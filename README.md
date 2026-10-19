@@ -138,9 +138,10 @@ Put the project files here (clone or copy). Expected layout:
 ├── ns/
 │   ├── wildcard_detector.py
 │   ├── watch_ns.py, watch_ns_all.py
-│   ├── watch_dns_precheck.py    # DNS bruteforce feasibility check
-│   ├── watch_dns_static.py      # static wordlist DNS bruteforce
-│   └── watch_dns_dynamic.py     # AlterX pattern-based DNS bruteforce
+│   ├── watch_dns_precheck.py    # DNS bruteforce feasibility check (weekly)
+│   ├── watch_dns_static.py      # static wordlist DNS bruteforce (one domain)
+│   ├── watch_dns_dynamic.py     # AlterX pattern-based DNS bruteforce (one domain)
+│   └── watch_brute_worker.py    # continuous 24/7 brute orchestrator (static+dynamic, round-robin)
 ├── http/
 │   ├── watch_http.py, watch_http_all.py
 ├── crawl/
@@ -452,17 +453,80 @@ time is 06:00→12:00 and 18:00→00:00. Jobs are scheduled at **06:00** with a 
 | Friday | `watch-dns-precheck` | Refresh wildcard feasibility per domain (cheap, 60 min budget) |
 | Saturday | `watch-crawl-all` | Full katana crawl (incl. sitemaps) of every known HTTP target |
 | Sunday | `watch-param-discovery` | x8 hidden parameter discovery on unique endpoints |
-| Mon, Tue | `watch-dns-static` | Static wordlist DNS bruteforce |
-| Wed, Thu | `watch-dns-dynamic` | AlterX pattern-based DNS bruteforce |
 
-Install all five with the provided script:
+Install them with the provided script:
 ```bash
 bash setup-weekly-jobs.sh
 systemctl list-timers --all | grep watch
 ```
 
+> **DNS bruteforce is no longer a weekly timer.** It now runs as a continuous
+> 24/7 service (`watch-brute.service`) — see section 11b. `watch-dns-precheck`
+> stays weekly because it only refreshes which domains are *eligible* to brute.
+
 The evening window (18:00-00:00) is intentionally left free for now — useful headroom once
 you scale from 2-3 programs to the 10-12 you're planning for nuclei.
+
+---
+
+## 11b. Continuous DNS bruteforce worker (`watch-brute.service`)
+
+DNS bruteforce runs as a single always-on service, not a timer. One worker
+(`ns/watch_brute_worker.py`) walks every **feasible** domain (marked
+`feasible=True` by `watch_dns_precheck.py`) in round-robin order and, for each
+domain, runs **static then dynamic to completion** before moving to the next:
+
+```
+indeed.net → static → dynamic
+indeed.com → static → dynamic
+…one domain fully, then the next…        (then sleep until cooldown, repeat forever)
+```
+
+**Fairness / why it replaced the old timer.** The previous model (`watch-brute.timer`
+firing every 20 min with a 7-minute budget) ordered domains by `last_static_run`
+but only marked a domain *after it finished*. A domain that never finished inside
+the budget (dell.com: ~13M candidates / ~26 min) kept being picked first forever,
+so other domains never ran, and every fire re-sent the same Telegram banners. The
+worker instead **marks each domain at the start of its turn**, so a slow or crashing
+domain moves to the back of the queue immediately and cannot starve the others.
+Each domain is revisited roughly once per `cooldown`.
+
+### Settings (environment variables)
+
+Set these in the `[Service]` block of `/etc/systemd/system/watch-brute.service`
+(as `Environment=KEY=value`) or export them before a manual run. All optional.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `WATCH_BRUTE_COOLDOWN_HOURS` | `12` | Minimum hours before the same domain is bruteforced again. |
+| `WATCH_BRUTE_IDLE_SLEEP` | `600` | Seconds to sleep when every domain is still within cooldown. |
+| `WATCH_STATIC_MAX_CANDIDATES` | `0` (unlimited) | Cap static candidates per domain. `0` = full wordlist; set e.g. `200000` for a fast test or to bound a huge target. |
+| `WATCH_BRUTE_VERBOSE` | `0` | `1` restores the chatty per-domain "Now bruteforcing…" Telegram banners. Off by default: only new findings, errors, and a one-line per-cycle heartbeat are sent. |
+| `WATCH_DYNAMIC_MAX_INPUT_LINES` | derived | Per-domain ceiling on known subdomains fed to alterx (bounds candidate explosion). |
+
+Resource limits live in the unit itself: `CPUQuota=200%`, `MemoryMax=3G`,
+`Nice=10`, `IOSchedulingClass=idle`. A single instance is guaranteed by
+`flock -n /run/watch-brute.lock`, so a manual run and the service never overlap.
+
+### Start / stop / status
+
+```bash
+# install (first time) + start now + start on boot
+sudo cp /opt/watch/systemd/watch-brute.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now watch-brute.service
+
+# status / live logs
+systemctl status watch-brute.service
+journalctl -u watch-brute.service -f
+
+# stop / restart (e.g. after editing settings)
+sudo systemctl restart watch-brute.service
+sudo systemctl stop watch-brute.service
+```
+
+Prerequisite: run `watch_dns_precheck.py` at least once so domains are marked
+feasible — otherwise the worker idles with "no feasible domains".
 
 ---
 
@@ -489,12 +553,20 @@ you scale from 2-3 programs to the 10-12 you're planning for nuclei.
 - **`watch_dns_precheck.py`** *(weekly, Friday)* — tests a random nonexistent subdomain per
   program domain; if it resolves, the domain has a blanket wildcard and bruteforcing it is
   pointless. Result stored in `DnsBruteStatus.feasible`.
-- **`watch_dns_static.py`** *(weekly, Mon/Tue)* — merges assetnote wordlists + crunch
-  (1-4 char) into candidates, resolves with `puredns` (its own wildcard filtering), stores
-  new subdomains with provider `staticBF`, runs a quick `httpx` pass, sends Telegram.
-- **`watch_dns_dynamic.py`** *(weekly, Wed/Thu)* — generates permutations from known
-  subdomains with `alterx`, resolves with `puredns`, applies an *extra* TTL + HTTP-body-hash
-  wildcard check on top, stores new subdomains with provider `dynamicBF`.
+- **`watch_dns_static.py`** *(driven by the continuous worker; also runnable standalone
+  per-domain)* — merges assetnote wordlists + crunch (1-4 char) into candidates, resolves
+  with `puredns` (its own wildcard filtering), stores new subdomains with provider
+  `staticBF`, runs a quick `httpx` pass. Honours `WATCH_STATIC_MAX_CANDIDATES`.
+- **`watch_dns_dynamic.py`** *(driven by the continuous worker; also runnable standalone)* —
+  generates permutations from known subdomains with `alterx`, resolves with `puredns`,
+  filters wildcards with the shared multi-level `WildcardDetector`, stores new subdomains
+  with provider `dynamicBF`.
+- **`watch_brute_worker.py`** *(the `watch-brute.service` long-running process)* — the 24/7
+  orchestrator: round-robins feasible domains, marks each at the start of its turn (fair, no
+  starvation), runs static then dynamic per domain, sleeps until the oldest is eligible
+  again. See section 11b for settings. Note: wildcard probes use the plain batch resolver,
+  not the incremental selector — the selector is only for the bulk scope resolve in
+  `watch_ns_all.py`, so a single random probe no longer costs a full selection cycle.
 - **`api.py`** — FastAPI dashboard + JSON API, described below.
 
 ---
@@ -553,6 +625,13 @@ python3 crawl/watch_crawl_fresh.py --filter dell.com
 # DNS bruteforce feasibility + one bruteforce type, filtered + time-boxed
 python3 ns/watch_dns_precheck.py --filter dell.com --max-minutes 10
 python3 ns/watch_dns_static.py --filter dell.com --max-minutes 30
+
+# continuous brute worker: one fast pass over all eligible domains (test), then exit.
+# cap static candidates and ignore cooldown so it actually runs every domain once.
+WATCH_STATIC_MAX_CANDIDATES=200000 python3 ns/watch_brute_worker.py --once --cooldown-hours 0
+# ...or scope it to one program and keep Telegram quiet during the test:
+WATCH_STATIC_MAX_CANDIDATES=200000 TELEGRAM_BOT_TOKEN= TELEGRAM_CHAT_ID= \
+  python3 ns/watch_brute_worker.py --once --filter indeed --cooldown-hours 0
 
 # param discovery, small test batch
 python3 crawl/watch_param_discovery.py --filter dell.com --limit 10 --max-minutes 10
