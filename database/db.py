@@ -32,14 +32,11 @@ def get_domain_name(url):
 
 # Connect to MongoDB
 # connect(db='watch', host='mongodb://127.0.0.1:27017/watch')
-# connect(
-#     db='watch',
-#     host='mongodb://pouya:YourStrongPassword123@127.0.0.1:27017/watch?authSource=admin'
-# )
 connect(
     db='watch',
-    host='mongodb://pouya:YourStrongPassword123@35.202.201.30:27017/?authSource=admin'
+    host='mongodb://pouya:YourStrongPassword123@127.0.0.1:27017/watch?authSource=admin'
 )
+
 
 # Define the Programs model
 class Programs(Document):
@@ -619,6 +616,26 @@ def get_feasible_domains_ordered(run_field):
     statuses = list(DnsBruteStatus.objects(feasible=True))
     statuses.sort(key=lambda s: getattr(s, run_field) or datetime.min)
     return [(s.program_name, s.domain) for s in statuses]
+
+
+def get_feasible_domains_brute_ordered():
+    """Feasible domains ordered for the continuous brute worker (watch_brute_worker.py).
+
+    Ordered least-recently-*worked* first, where "worked" is the more recent of
+    last_static_run / last_dynamic_run (the worker runs both for a domain in one
+    turn, so the two timestamps move together). Never-worked domains sort first.
+    Returns [(program_name, domain, last_worked_or_None), ...] so the worker can
+    apply a cooldown without a second query.
+    """
+    out = []
+    for s in DnsBruteStatus.objects(feasible=True):
+        last_worked = max(
+            [t for t in (s.last_static_run, s.last_dynamic_run) if t],
+            default=None,
+        )
+        out.append((s.program_name, s.domain, last_worked))
+    out.sort(key=lambda row: row[2] or datetime.min)
+    return out
 
 # ============================================================
 # Add to db.py -- replaces the per-URL upsert_url() loop in crawl scripts

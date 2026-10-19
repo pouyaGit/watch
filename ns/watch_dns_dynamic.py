@@ -52,8 +52,8 @@ from database.db import Subdomains, upsert_subdomain, upsert_lives, upsert_http,
 from utils.common import detect_cdn, normalize_ips
 from wildcard_detector import WildcardDetector
 from dns_brute_common import (
-    log, send_telegram, run_puredns, run_httpx_quick, WORKDIR,
-    estimate_minutes, count_lines, require_tool, require_tools, tool_env,
+    log, send_telegram, send_telegram_verbose, run_puredns, run_httpx_quick,
+    WORKDIR, estimate_minutes, count_lines, require_tool, require_tools, tool_env,
     ToolError, ToolTimeout,
     DYNAMIC_MAX_INPUT_LINES, DYNAMIC_MAX_CANDIDATES,
     bounded_deterministic_sample, is_valid_hostname, stream_valid_candidates,
@@ -322,7 +322,7 @@ def process_domain(program_name, domain):
         return 0
 
     eta = estimate_minutes(candidate_count)
-    send_telegram(
+    send_telegram_verbose(
         f"Now bruteforcing {program_name} ({domain}) [dynamicBF]\n"
         f"Candidates: {candidate_count:,} | ETA: ~{eta} min"
     )
@@ -343,7 +343,7 @@ def process_domain(program_name, domain):
 
     if not new_names:
         mark_dynamic_run(domain)
-        send_telegram(
+        send_telegram_verbose(
             f"Result -- {program_name} ({domain}) [dynamicBF]\n"
             f"Tested: {candidate_count:,} | Resolved: {len(resolved_names):,} | New: 0"
         )
@@ -362,7 +362,7 @@ def process_domain(program_name, domain):
     ]
 
     if not confirmed_live:
-        send_telegram("\n".join(result_lines))
+        send_telegram_verbose("\n".join(result_lines))
         return 0
 
     httpx_results = run_httpx_quick(confirmed_live)

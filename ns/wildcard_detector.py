@@ -4,7 +4,7 @@ import ipaddress
 from utils.common import (
     colors,
     current_time,
-    run_command_in_zsh_ns,
+    run_command_in_zsh_common,
     random_label,
     normalize_ips,
     create_temp_file,
@@ -58,11 +58,16 @@ class WildcardDetector:
         ips_set = set()
 
         try:
+            # Plain batch resolver, NOT run_command_in_zsh_ns: a wildcard probe
+            # is a single random throwaway label, so routing it through the
+            # incremental selector (freshness/retry bookkeeping, meant for real
+            # scope names) only added ~1.5s of per-probe overhead and a spurious
+            # "Candidates: 1" report per call -- the root cause of ns being slow.
             cmd = (
                 f"dnsx -l {temp_file_path} -silent -a -resp -json -t 10 -rl 30 "
                 "-r 8.8.8.8,1.1.1.1,9.9.9.9,208.67.222.222"
             )
-            results = run_command_in_zsh_ns(cmd)
+            results = run_command_in_zsh_common(cmd)
 
             for line in results:
                 if not line.strip():
@@ -137,7 +142,7 @@ def get_wildcard_ips(domain, num_tests=3):
                 f"dnsx -l {temp_file_path} -silent -a -resp -json -t 10 -rl 30 "
                 "-r 8.8.8.8,1.1.1.1,9.9.9.9,208.67.222.222"
             )
-            results = run_command_in_zsh_ns(cmd)
+            results = run_command_in_zsh_common(cmd)
 
             if not results:
                 continue

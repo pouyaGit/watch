@@ -1,0 +1,31 @@
+[Unit]
+Description=Watch DNS brute worker (continuous 24/7: static + dynamic, round-robin)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+# Long-running worker (replaces the old oneshot + every-20-min timer, which
+# re-started the first domain from scratch each fire and never reached the
+# rest -- see ns/watch_brute_worker.py header). It walks every feasible domain
+# in round-robin order, revisiting each about once per cooldown, forever.
+Type=simple
+User=root
+WorkingDirectory=/opt/watch
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+Environment=PYTHONUNBUFFERED=1
+# Tunables (optional): WATCH_BRUTE_COOLDOWN_HOURS, WATCH_BRUTE_IDLE_SLEEP,
+# WATCH_STATIC_MAX_CANDIDATES, WATCH_BRUTE_VERBOSE.
+# flock keeps a single instance even across a restart or a manual invocation.
+ExecStart=/usr/bin/flock -n /run/watch-brute.lock /opt/watch/venv/bin/python3 /opt/watch/ns/watch_brute_worker.py
+Restart=always
+RestartSec=30
+
+CPUQuota=200%
+MemoryMax=3G
+Nice=10
+IOSchedulingClass=idle
+KillMode=control-group
+TimeoutStopSec=60s
+
+[Install]
+WantedBy=multi-user.target

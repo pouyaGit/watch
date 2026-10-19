@@ -27,12 +27,21 @@ from database.db import upsert_subdomain, upsert_lives, upsert_http, mark_static
 from utils.common import detect_cdn, normalize_ips
 from wildcard_detector import WildcardDetector
 from dns_brute_common import (
-    log, send_telegram, run_puredns, run_httpx_quick, WORKDIR,
-    estimate_minutes, count_lines, require_tools, tool_env, ToolError,
+    log, send_telegram, send_telegram_verbose, run_puredns, run_httpx_quick,
+    WORKDIR, estimate_minutes, count_lines, require_tools, tool_env, ToolError,
 )
 
 START_TIME = time.time()
 MERGED_WORDLIST = WORKDIR / "static-merged.txt"
+
+# Optional safety valve / test knob. Default 0 = unlimited (full wordlist, the
+# intended behaviour for the 24/7 worker). Set WATCH_STATIC_MAX_CANDIDATES=N to
+# cap candidates per domain (e.g. for a fast functional test, or to bound a
+# pathologically large target).
+try:
+    STATIC_MAX_CANDIDATES = int(os.environ.get("WATCH_STATIC_MAX_CANDIDATES", "0") or 0)
+except ValueError:
+    STATIC_MAX_CANDIDATES = 0
 
 
 def elapsed_minutes():
@@ -138,14 +147,14 @@ def process_domain(program_name, domain):
     ensure_static_wordlist()
 
     candidates_file = WORKDIR / f"{domain}.static.txt"
-    subprocess.run(
-        f'awk -v d="{domain}" \'{{print $0"."d}}\' "{MERGED_WORDLIST}" > "{candidates_file}"',
-        shell=True
-    )
+    gen = f'awk -v d="{domain}" \'{{print $0"."d}}\' "{MERGED_WORDLIST}"'
+    if STATIC_MAX_CANDIDATES > 0:
+        gen += f' | head -n {STATIC_MAX_CANDIDATES}'
+    subprocess.run(f'{gen} > "{candidates_file}"', shell=True)
 
     candidate_count = count_lines(candidates_file)
     eta = estimate_minutes(candidate_count)
-    send_telegram(
+    send_telegram_verbose(
         f"Now bruteforcing {program_name} ({domain}) [staticBF]\n"
         f"Candidates: {candidate_count:,} | ETA: ~{eta} min"
     )
@@ -181,7 +190,7 @@ def process_domain(program_name, domain):
     ]
 
     if not confirmed_live:
-        send_telegram("\n".join(result_lines))
+        send_telegram_verbose("\n".join(result_lines))
         return 0
 
     httpx_results = run_httpx_quick(confirmed_live)

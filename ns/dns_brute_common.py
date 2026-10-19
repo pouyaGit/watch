@@ -43,6 +43,20 @@ def send_telegram(text):
         log(f"Telegram error: {e}")
 
 
+# The continuous brute worker (watch_brute_worker.py) processes a domain roughly
+# once per cooldown, forever. The per-domain "Now bruteforcing ..." banners and
+# empty-result pings are pure noise at that cadence (this is the Telegram spam
+# that prompted the rewrite). They are gated behind WATCH_BRUTE_VERBOSE, which
+# the worker leaves off; failures and genuine new-finding results always send.
+BRUTE_VERBOSE = os.environ.get("WATCH_BRUTE_VERBOSE", "0") not in ("0", "", "false", "False")
+
+
+def send_telegram_verbose(text):
+    """Send a progress/noise message only when WATCH_BRUTE_VERBOSE is enabled."""
+    if BRUTE_VERBOSE:
+        send_telegram(text)
+
+
 # ====================== ETA estimation ======================
 # Based on the throughput already benchmarked in static.sh for these exact
 # puredns settings: ~30M records/hour at -t 100 --wildcard-tests 1
