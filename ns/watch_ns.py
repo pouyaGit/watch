@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from database.db import *
 from utils.common import (
     colors, current_time, run_command_in_zsh_common,
-    create_temp_file, normalize_ips, detect_cdn
+    create_temp_file, normalize_ips, detect_cdn, dnsx_resolve_flags
 )
 from wildcard_detector import WildcardDetector
 
@@ -24,8 +24,7 @@ def dnsx(subdomains_array, domain):
 
         command = (
             f"dnsx -l {temp_file_path} -silent "
-            "-a -resp -json -t 10 -rl 30 "
-            "-r 8.8.8.8,1.1.1.1,9.9.9.9,208.67.222.222"
+            f"-a -resp -json {dnsx_resolve_flags()}"
         )
 
         print(f"{colors.GRAY}[{current_time()}] Executing dnsx: {command}{colors.RESET}")

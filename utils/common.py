@@ -98,11 +98,44 @@ NS_COMMAND_TIMEOUT = 3600
 # decision, not a larger timeout.
 NS_DNSX_CHUNK_SIZE = 15000
 
-# Worst-case wall time per name for the bulk dnsx call at the project's rate
-# limit (`-rl 30`). Kept as a constant so the chunk size and the ceiling can be
-# checked against each other deterministically (see tests/test_ns_chunking.py)
-# instead of relying on a comment.
-NS_SECONDS_PER_NAME_AT_RATE_LIMIT = 1.0 / 30.0
+
+def _ns_env_int(name, default):
+    try:
+        v = int(os.environ.get(name, ""))
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+# dnsx resolve tuning for the bulk scope resolve (watch_ns_all.py / watch_ns.py).
+# The default resolvers are the four big, reliable anycast providers, NOT the
+# full public resolvers.txt: dnsx has no trusted/untrusted split like puredns,
+# so a large untrusted list would trade accuracy (poisoned/stale answers) for
+# speed. These four tolerate a high query rate, so throughput is raised via the
+# rate limit + thread count instead. All three are env-overridable:
+#   NS_DNSX_THREADS, NS_DNSX_RATE_LIMIT, NS_DNSX_RESOLVERS
+# (e.g. point NS_DNSX_RESOLVERS at /opt/watch/resolvers.txt only if you
+# knowingly accept the accuracy tradeoff for a one-off bulk pass).
+NS_DNSX_THREADS = _ns_env_int("NS_DNSX_THREADS", 50)
+NS_DNSX_RATE_LIMIT = _ns_env_int("NS_DNSX_RATE_LIMIT", 150)
+NS_DNSX_RESOLVERS = os.environ.get(
+    "NS_DNSX_RESOLVERS", "8.8.8.8,1.1.1.1,9.9.9.9,208.67.222.222"
+).strip()
+
+
+def dnsx_resolve_flags():
+    """`-t <threads> -rl <rate> -r <resolvers>` built from the env-tunable
+    NS_DNSX_* settings. Used by the bulk scope resolve so rate/threads/resolvers
+    can be tuned without editing the scripts."""
+    resolvers = NS_DNSX_RESOLVERS
+    # Allow pointing at a resolvers file (dnsx accepts a path after -r too).
+    return f"-t {NS_DNSX_THREADS} -rl {NS_DNSX_RATE_LIMIT} -r {resolvers}"
+
+
+# Worst-case wall time per name for the bulk dnsx call at the configured rate
+# limit. Kept as a constant so the chunk size and the ceiling can be checked
+# against each other deterministically instead of relying on a comment.
+NS_SECONDS_PER_NAME_AT_RATE_LIMIT = 1.0 / max(1, NS_DNSX_RATE_LIMIT)
 
 # Incremental DNS resolution (EPIC10). The pinned NS caller
 # (ns/watch_ns_all.py) hands every scope's whole candidate list to one bulk

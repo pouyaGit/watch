@@ -538,6 +538,16 @@ feasible — otherwise the worker idles with "no feasible domains".
   assetfinder, abuseipdb, waybackurls → `Subdomains`, tagged by provider.
 - **`watch_ns_all.py`** — resolves subdomains with `dnsx`, filters wildcards
   (IP-subset cascading check via `wildcard_detector.py`) → `LiveSubdomains`.
+  Resolve tuning is env-overridable (defaults in parentheses): `NS_DNSX_THREADS`
+  (50), `NS_DNSX_RATE_LIMIT` (150 queries/sec), `NS_DNSX_RESOLVERS` (the four
+  reliable public anycast resolvers). The default resolver set is deliberately
+  *not* the full `resolvers.txt` — dnsx has no trusted/untrusted split like
+  puredns, so a big untrusted list trades answer accuracy for speed; throughput
+  is raised via rate + threads on known-good resolvers instead. The biggest win
+  is on large rate-bound scopes (e.g. a 206k-name scope: ~115 min at the old
+  `-rl 30` → ~23 min at `-rl 150`); small scopes are DNS-latency-bound and change
+  little. Wildcard probes use the plain batch resolver, not the incremental
+  selector.
 - **`watch_http_all.py`** — `httpx` scan (title/status/tech/headers) on live subdomains →
   `Http`.
 - **`watch_crawl_fresh.py`** *(every 12h)* — light `katana` crawl of just the last 24h of
