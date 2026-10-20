@@ -13,20 +13,40 @@ def crtsh(domain):
                       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
     }
 
+    # crt.sh is frequently overloaded (502/503/504) and rate-limits (429); a
+    # single attempt returns 0 far too often (observed 502 then 429 back to
+    # back). Retry with growing backoff on every transient failure -- timeouts,
+    # connection errors and 429/5xx -- so a busy crt.sh degrades to "slower",
+    # not "no data". A genuine non-retryable status still returns [].
+    RETRYABLE = {429, 500, 502, 503, 504}
+    MAX_ATTEMPTS = 5
+    r = None
     try:
-        # تأخیر تصادفی برای جلوگیری از بلاک شدن
-        time.sleep(random.uniform(1.5, 3.0))
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            if attempt == 1:
+                time.sleep(random.uniform(1.5, 3.0))  # gentle initial jitter
+            try:
+                r = requests.get(url, headers=headers, timeout=30)
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                if attempt == MAX_ATTEMPTS:
+                    print(f"[{current_time()}] crt.sh network error after {attempt} attempts: {exc}")
+                    return []
+                wait = min(30, 3 * attempt) + random.uniform(0, 2)
+                print(f"[{current_time()}] crt.sh {type(exc).__name__} (attempt {attempt}) — retry in {wait:.0f}s")
+                time.sleep(wait)
+                continue
 
-        r = requests.get(url, headers=headers, timeout=20)
+            if r.status_code == 200:
+                break
+            if r.status_code in RETRYABLE and attempt < MAX_ATTEMPTS:
+                wait = min(30, 3 * attempt) + random.uniform(0, 2)
+                print(f"[{current_time()}] crt.sh HTTP {r.status_code} (attempt {attempt}) — retry in {wait:.0f}s")
+                time.sleep(wait)
+                continue
+            print(f"[{current_time()}] crt.sh HTTP Error: {r.status_code} (attempt {attempt})")
+            return []
 
-        if r.status_code == 429:
-            print(f"[{current_time()}] Got 429 — retrying...")
-            # یک بار دیگه با تأخیر امتحان می‌کنیم
-            time.sleep(random.uniform(3, 5))
-            r = requests.get(url, headers=headers, timeout=20)
-
-        if r.status_code != 200:
-            print(f"[{current_time()}] HTTP Error: {r.status_code}")
+        if r is None or r.status_code != 200:
             return []
 
         data = r.json()

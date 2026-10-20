@@ -29,7 +29,8 @@ if __name__ == "__main__":
             enum_path = get_path("enum")
             run_command_in_zsh(f"python {enum_path}/watch_crtsh.py {scope}")
             run_command_in_zsh(f"python {enum_path}/watch_subfinder.py {scope}")
-            run_command_in_zsh(f"python {enum_path}/watch_abuseipdb.py {scope}")
+            # certspotter + OTX (keyless) replaces the dead abuseipdb whois scrape
+            run_command_in_zsh(f"python {enum_path}/watch_certspotter.py {scope}")
             run_command_in_zsh(f"python {enum_path}/watch_wayback.py {scope}")
             run_command_in_zsh(f"python {enum_path}/watch_findomain.py {scope}")
             run_command_in_zsh(f"python {enum_path}/watch_assetfinder.py {scope}")
