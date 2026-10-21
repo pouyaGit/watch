@@ -177,16 +177,18 @@ def process_domain(program_name, domain):
     new_names = [n for n in resolved_names if n not in existing]
     log(f"{domain}: {len(new_names)} genuinely new subdomains")
 
-    for name in new_names:
-        upsert_subdomain(program_name, name, "staticBF")
-
+    # Wildcard-filter BEFORE storing to Subdomains (same fix as the dynamic
+    # brute): only names that survive the multi-level WildcardDetector become
+    # subdomains, so wildcard zones never pollute the store.
     confirmed_live = resolve_ip_and_store(program_name, domain, new_names)
+    for name in confirmed_live:
+        upsert_subdomain(program_name, name, "staticBF")
     mark_static_run(domain)
 
     result_lines = [
         f"Result -- {program_name} ({domain}) [staticBF]",
         f"Tested: {candidate_count:,} | Resolved: {len(resolved_names):,} | "
-        f"New: {len(new_names)} | Confirmed live (post-wildcard-filter): {len(confirmed_live)}",
+        f"New (pre-filter): {len(new_names)} | Stored (non-wildcard): {len(confirmed_live)}",
     ]
 
     if not confirmed_live:

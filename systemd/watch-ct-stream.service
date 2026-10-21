@@ -1,0 +1,20 @@
+[Unit]
+Description=Watch — real-time Certificate Transparency subdomain ingestion (passive)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/watch
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/watch/venv/bin/python3 /opt/watch/enum/watch_ct_stream.py
+Restart=always
+RestartSec=5
+# Passive, low-footprint; keep it modest.
+Nice=10
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

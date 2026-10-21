@@ -113,11 +113,34 @@ def _terminate_process_group(proc):
         pass
 
 
+def _looks_synthetic(name):
+    """True for names bearing the permutation-stacking signature that must NOT
+    be fed back into alterx, or the dynamic brute re-explodes.
+
+    alterx prepends/inserts words into known names. When a wildcard zone makes
+    those permutations "resolve", storing them and re-feeding them next run
+    produces acc-acc-acc-...  / absurdly deep names. This catches that signature
+    conservatively (real infra names stay well under these limits):
+      - >10 labels deep, or
+      - a leftmost label stuffed with >5 hyphen-separated words, or
+      - an adjacent duplicated token in the leftmost label (acc-acc, www-www).
+    """
+    labels = name.split(".")
+    if len(labels) > 10:
+        return True
+    head = labels[0].split("-")
+    if len(head) > 5:
+        return True
+    return any(a == b for a, b in zip(head, head[1:]))
+
+
 def build_known_file(domain, known_file, max_input_lines):
     """Build a deduplicated, validated alterx input file for one domain.
 
     - streams the Subdomains cursor (no second full copy of the list)
     - drops empty / malformed hostnames (never silently keeps garbage)
+    - drops permutation-stacking garbage (acc-acc-...) so it is never re-fed to
+      alterx -- the feedback loop that exploded dynamicBF to 280k+ names
     - removes exact duplicate lines while preserving content (no case changes)
     - deterministically caps the input at max_input_lines using an evenly-spaced
       sample of the sorted unique set when the domain is pathologically large
@@ -128,12 +151,16 @@ def build_known_file(domain, known_file, max_input_lines):
     unique = set()
     total = 0
     malformed = 0
+    synthetic = 0
 
     for doc in Subdomains.objects(scope=domain).only("subdomain"):
         total += 1
         name = (doc.subdomain or "").strip()
         if not name or not is_valid_hostname(name):
             malformed += 1
+            continue
+        if _looks_synthetic(name):
+            synthetic += 1
             continue
         unique.add(name)
 
@@ -145,7 +172,8 @@ def build_known_file(domain, known_file, max_input_lines):
         "total": total,
         "unique": len(unique),
         "malformed": malformed,
-        "duplicates": total - malformed - len(unique),
+        "synthetic": synthetic,
+        "duplicates": total - malformed - synthetic - len(unique),
         "selected": len(selected),
         "truncated": len(unique) > len(selected),
         "names": unique,
@@ -300,7 +328,7 @@ def process_domain(program_name, domain):
     log(
         f"{domain}: known input total={stats['total']} unique={stats['unique']} "
         f"duplicates={stats['duplicates']} malformed={stats['malformed']} "
-        f"selected={stats['selected']}"
+        f"synthetic_dropped={stats['synthetic']} selected={stats['selected']}"
         + (" (truncated to safety limit)" if stats["truncated"] else "")
     )
 
@@ -349,16 +377,23 @@ def process_domain(program_name, domain):
         )
         return 0
 
-    for name in new_names:
-        upsert_subdomain(program_name, name, "dynamicBF")
-
+    # Wildcard-filter BEFORE storing to Subdomains. resolve_ip_and_store runs
+    # the multi-level WildcardDetector and returns only the names that are NOT
+    # wildcard noise. Storing the raw puredns output here (as before) was the
+    # root cause of the dynamicBF explosion: indeed's nested wildcard zones
+    # (*.qa.indeed.net, *.ext-apply.qa.indeed.net, ...) made every alterx
+    # permutation "resolve", and those names were then re-fed to alterx next run
+    # -> acc-acc-acc-... growth to 280k+. Only confirmed, non-wildcard names
+    # become subdomains now, so the feedback loop cannot start.
     confirmed_live = resolve_ip_and_store(program_name, domain, new_names)
+    for name in confirmed_live:
+        upsert_subdomain(program_name, name, "dynamicBF")
     mark_dynamic_run(domain)
 
     result_lines = [
         f"Result -- {program_name} ({domain}) [dynamicBF]",
         f"Tested: {candidate_count:,} | Resolved: {len(resolved_names):,} | "
-        f"New: {len(new_names)} | Confirmed live (post-wildcard-filter): {len(confirmed_live)}",
+        f"New (pre-filter): {len(new_names)} | Stored (non-wildcard): {len(confirmed_live)}",
     ]
 
     if not confirmed_live:
