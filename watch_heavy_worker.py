@@ -328,8 +328,11 @@ def run_lane(heavy, name, lane_min):
     heavy.end_lane()
     heavy.tick()
     log(f"--- lane '{name}' done in {mins:.1f}m (rc={rc})")
-    if isinstance(rc, str) and rc != "SKIPPED":  # hard-timeout or spawn error -> worth a ping
-        send_telegram(f"HeavyWorker: lane '{name}' ended abnormally (rc={rc})")
+    # A hard-timeout is an expected, benign cutoff for continuous resumable work:
+    # the lane used its whole slice and resumes next rotation -- log it, don't
+    # alarm. Only a genuine spawn failure (ERROR) is worth a Telegram ping.
+    if isinstance(rc, str) and rc.startswith("ERROR"):
+        send_telegram(f"HeavyWorker: lane '{name}' failed to start (rc={rc})")
     return mins
 
 

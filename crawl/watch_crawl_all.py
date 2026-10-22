@@ -57,6 +57,13 @@ KATANA_PARALLELISM  = 3
 KATANA_RATE_LIMIT   = 40
 KATANA_TIMEOUT      = 8
 KATANA_CRAWL_DURATION = "5m"  # a bit more room than fresh since this runs weekly
+# Hard wall-clock cap per domain. `-ct` is unreliable across katana versions
+# (observed: a crawler trap on knowledge.digicert.com produced 460k+ URLs and
+# ran far past -ct), so we also wrap katana in the `timeout` coreutil, which
+# kills the whole process group -- unlike subprocess shell=True + timeout, which
+# only kills the shell and orphans katana. Keeps one trap domain from eating the
+# entire heavy-worker lane budget.
+KATANA_HARD_TIMEOUT = int(os.getenv("KATANA_HARD_TIMEOUT", "420"))  # seconds (7m)
 ROBOTS_WORKERS      = 5
 
 # -kf all (sitemap.xml/robots.txt) IS kept here since this is the weekly,
@@ -142,7 +149,11 @@ def run_katana(targets_file, out_file):
     # -kf all kept here (weekly thorough pass), but -ct caps wall-clock time
     # so a crawler trap or huge sitemap can't run forever. Verify flag name
     # with `katana -h`, it may differ across versions.
+    # `timeout -k 10 N` sends SIGTERM to katana after N seconds, then SIGKILL 10s
+    # later, and (unlike a shell=True subprocess timeout) reliably ends the whole
+    # process group so a crawler trap cannot keep running orphaned.
     cmd = (
+        f'timeout -k 10 {KATANA_HARD_TIMEOUT} '
         f'katana -list "{targets_file}" '
         f'-d {KATANA_DEPTH} -jc -kf all -fs rdn '
         f'-c {KATANA_CONCURRENCY} -p {KATANA_PARALLELISM} '
@@ -152,9 +163,10 @@ def run_katana(targets_file, out_file):
     )
     log(f"$ {cmd}")
     try:
-        subprocess.run(cmd, shell=True, timeout=3600)
+        # Python-level backstop a bit beyond the coreutil timeout.
+        subprocess.run(cmd, shell=True, timeout=KATANA_HARD_TIMEOUT + 30)
     except subprocess.TimeoutExpired:
-        log(f"katana timeout on {targets_file}")
+        log(f"katana hard-timeout on {targets_file}")
 
     if not out_file.exists():
         return []
