@@ -1,0 +1,10 @@
+[Unit]
+Description=Run watch-crawl every Sunday at 02:00 Asia/Tehran
+
+[Timer]
+Unit=watch-crawl.service
+OnCalendar=Sun *-*-* 02:00:00 Asia/Tehran
+Persistent=false
+
+[Install]
+WantedBy=timers.target

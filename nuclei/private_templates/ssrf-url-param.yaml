@@ -1,0 +1,32 @@
+id: ssrf-url-param-custom
+info:
+  name: SSRF via URL/Redirect Param (Custom)
+  author: watch-recon
+  severity: high
+  description: Checks if url/redirect/next params fetch internal resources
+  tags: ssrf,generic
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/?url=http://127.0.0.1:80"
+      - "{{BaseURL}}/?redirect=http://127.0.0.1:80"
+      - "{{BaseURL}}/?next=http://127.0.0.1:80"
+      - "{{BaseURL}}/?callback=http://127.0.0.1:80"
+      - "{{BaseURL}}/?return=http://127.0.0.1:80"
+      - "{{BaseURL}}/?target=http://127.0.0.1:80"
+      - "{{BaseURL}}/?dest=http://127.0.0.1:80"
+      - "{{BaseURL}}/?goto=http://127.0.0.1:80"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "Apache"
+          - "nginx"
+          - "IIS"
+          - "Server"
+        condition: or

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% set title = "Targets" %}
+{% block content %}
+<h1 style="margin:0 0 6px;color:var(--blue);">Targets</h1>
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+<div class="card" style="margin-bottom:16px;">
+  <h3>Add target</h3>
+  <form method="post" action="/api/targets">
+    <div class="form-row">
+      <label for="new-name">Program name (a-z, 0-9, _ or -)</label>
+      <input id="new-name" type="text" name="program_name" required maxlength="64" pattern="[a-z0-9_\-]+">
+    </div>
+    <div class="form-row">
+      <label for="new-scopes">Scopes (bare domains, one per line or comma-separated)</label>
+      <textarea id="new-scopes" name="scopes" rows="3" required></textarea>
+    </div>
+    <div class="form-row">
+      <label for="new-oos">Out of scope (optional, bare domains)</label>
+      <textarea id="new-oos" name="ooscopes" rows="2"></textarea>
+    </div>
+    <button class="btn primary" type="submit">Add target</button>
+  </form>
+</div>
+
+<table class="data">
+  <tr><th data-sort>Name</th><th>Scopes</th><th data-sort>Subdomains</th><th data-sort>HTTP</th><th data-sort>Created</th><th>Actions</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="/ui/program/{{ r.name }}">{{ r.name }}</a></td>
+    <td class="mono">{{ r.scopes | join(", ") }}{% if r.ooscopes %}<div class="muted">out: {{ r.ooscopes | join(", ") }}</div>{% endif %}</td>
+    <td>{{ r.subs }}</td>
+    <td>{{ r.http }}</td>
+    <td class="mono">{{ r.created }}</td>
+    <td style="min-width:260px;">
+      <details>
+        <summary>Edit scopes</summary>
+        <form method="post" action="/api/targets/{{ r.name }}">
+          <div class="form-row"><textarea name="scopes" rows="3">{{ r.scopes | join("\n") }}</textarea></div>
+          <div class="form-row"><textarea name="ooscopes" rows="2" placeholder="out of scope">{{ r.ooscopes | join("\n") }}</textarea></div>
+          <button class="btn" type="submit">Save</button>
+        </form>
+      </details>
+      <details style="margin-top:6px;">
+        <summary style="color:var(--red);">Delete target</summary>
+        <form method="post" action="/api/targets/{{ r.name }}/delete" data-confirm-name="{{ r.name }}">
+          <div class="muted">Deletes subdomains, live hosts and HTTP rows for this target. Type <b class="mono">{{ r.name }}</b> to confirm.</div>
+          <div class="form-row"><input type="text" name="confirm" autocomplete="off" aria-label="Type target name to confirm"></div>
+          <button class="btn danger" type="submit">Delete {{ r.name }}</button>
+        </form>
+      </details>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">No targets yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

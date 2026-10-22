@@ -1,0 +1,36 @@
+id: sqli-error-based-custom
+info:
+  name: SQLi Error-Based (Custom)
+  author: watch-recon
+  severity: high
+  description: Checks for SQL error messages in response
+  tags: sqli,generic
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/?id=1'"
+      - "{{BaseURL}}/?id=1%27"
+      - "{{BaseURL}}/?id=1%22"
+      - "{{BaseURL}}/?q=1'"
+      - "{{BaseURL}}/?search=1'"
+      - "{{BaseURL}}/?name=1'"
+      - "{{BaseURL}}/?user=1'"
+      - "{{BaseURL}}/?page=1'"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+          - 500
+      - type: regex
+        regex:
+          - "SQL syntax"
+          - "mysql_fetch"
+          - "ORA-[0-9]"
+          - "PostgreSQL.*ERROR"
+          - "Microsoft.*ODBC"
+          - "Unclosed quotation mark"
+          - "syntax error at or near"
+        condition: or

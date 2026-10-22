@@ -1,0 +1,35 @@
+id: idor-numeric-id-custom
+info:
+  name: IDOR via Numeric ID Params (Custom)
+  author: watch-recon
+  severity: medium
+  description: Checks if changing numeric ID returns different user data
+  tags: idor,generic
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/?id=1"
+      - "{{BaseURL}}/?id=2"
+      - "{{BaseURL}}/?id=0"
+      - "{{BaseURL}}/?id=999"
+      - "{{BaseURL}}/?user_id=1"
+      - "{{BaseURL}}/?user_id=2"
+      - "{{BaseURL}}/?userId=1"
+      - "{{BaseURL}}/?userId=2"
+      - "{{BaseURL}}/?account_id=1"
+      - "{{BaseURL}}/?account_id=2"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "email"
+          - "username"
+          - "password"
+          - "phone"
+          - "address"
+        condition: or

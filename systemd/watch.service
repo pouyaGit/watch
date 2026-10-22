@@ -1,0 +1,19 @@
+[Unit]
+Description=Watch Bug Bounty Pipeline Service
+After=network.target docker.service
+Wants=watch.timer
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/watch
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/bin/flock -w 1800 /run/watch-pipeline.lock /opt/watch/run-pipeline.sh
+
+CPUQuota=200%
+MemoryMax=4G
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

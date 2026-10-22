@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% set title = "Run log" %}
+{% block content %}
+<div class="muted"><a href="/ui/runs">&larr; Runs</a></div>
+<h1 style="margin:6px 0;color:var(--blue);font-size:22px;">{{ run.task_id }} <span class="muted">{{ run.target or "global" }}</span></h1>
+<div class="kpis">
+  <div class="kpi"><div class="v" style="font-size:16px;"><span class="badge-status st-{{ run.status }}">{{ run.status }}</span></div><div class="l">Status</div></div>
+  <div class="kpi"><div class="v" style="font-size:16px;">{{ run.exit_code if run.exit_code is not none else "-" }}</div><div class="l">Exit code</div></div>
+  <div class="kpi"><div class="v" style="font-size:16px;">{{ run.pid or "-" }}</div><div class="l">PID</div></div>
+  <div class="kpi"><div class="v" style="font-size:16px;">{% if run.duration_seconds is not none %}{{ run.duration_seconds }}s{% else %}-{% endif %}</div><div class="l">Duration</div></div>
+</div>
+{% if running %}
+<div data-autorefresh style="margin-bottom:10px;">
+  <button class="btn danger" data-stop="{{ run.task_id }}" data-run-id="{{ run.id }}">Stop run</button>
+</div>
+{% endif %}
+<pre class="log">{{ lines or "(no output yet)" }}</pre>
+{% endblock %}

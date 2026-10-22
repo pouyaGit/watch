@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% set title = "Runs" %}
+{% block content %}
+<h1 style="margin:0 0 6px;color:var(--blue);">Runs &amp; Control Center</h1>
+<p class="muted" style="margin:0 0 14px;">Everything running on the server, a launch panel, and history. Live refreshes every 5 seconds.</p>
+
+<section class="card" style="margin-bottom:16px;">
+  <h2 style="margin:0 0 8px;">A. Live now <span class="muted" id="live-updated" style="font-size:13px;font-weight:normal;"></span></h2>
+  <div id="live-flash"></div>
+  <table class="data">
+    <tr><th>Name</th><th>Scope / target</th><th>Status</th><th>Elapsed</th><th>Activity</th><th>Actions</th></tr>
+    <tbody id="live-body">
+      <tr><td colspan="6" class="muted">Loading…</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="card" style="margin-bottom:16px;">
+  <h2 style="margin:0 0 8px;">B. Launch</h2>
+  <form id="launch-form">
+    <fieldset class="launch-part">
+      <legend>Tools</legend>
+      <div class="tool-grid">
+        {% for t in tools %}
+        <label class="tool-opt">
+          <input type="checkbox" name="tools" value="{{ t.tool }}" data-whole-db="{{ 1 if t.whole_db else 0 }}">
+          {{ t.name }} <code>{{ t.tool }}</code>
+          {% if t.heavy %}<span class="badge-status st-paused">heavy lane</span>{% endif %}
+        </label>
+        {% endfor %}
+      </div>
+      <p class="muted" style="margin:6px 0 0;">Heavy-lane tools are refused while watch-heavy.service is active. Whole-DB tools only run with scope "All".</p>
+    </fieldset>
+
+    <fieldset class="launch-part">
+      <legend>Scope</legend>
+      <label><input type="radio" name="scope_kind" value="all" checked> All</label>
+      <label><input type="radio" name="scope_kind" value="programs"> Programs</label>
+      <label><input type="radio" name="scope_kind" value="domains"> Domains</label>
+      <div class="scope-programs" hidden>
+        <select name="programs" multiple size="6" aria-label="Programs">
+          {% for p in programs %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="scope-domains" hidden>
+        <textarea name="domains" rows="4" placeholder="one in-scope domain per line" aria-label="Domains"></textarea>
+      </div>
+    </fieldset>
+
+    <fieldset class="launch-part">
+      <legend>Duration</legend>
+      <label><input type="radio" name="duration" value="until" checked> Until stopped</label>
+      <label><input type="radio" name="duration" value="minutes"> Minutes
+        <input type="number" name="minutes" min="1" max="1440" value="30" style="width:90px;" aria-label="Minutes">
+      </label>
+      <p class="muted" style="margin:6px 0 0;">Scripts with their own time budget use it; others are stopped by a watchdog when the budget ends. Pausing freezes the process, and long network scans may drop connections on resume.</p>
+    </fieldset>
+
+    <div class="launch-actions">
+      <button class="btn primary" type="submit">Run</button>
+      <span id="launch-msg" class="muted"></span>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2 style="margin:0 0 8px;">C. History</h2>
+  <form method="get" action="/ui/runs" class="filter-row">
+    <select name="status" aria-label="Filter by status" class="btn">
+      <option value="">any status</option>
+      {% for s in statuses %}
+      <option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <select name="tool" aria-label="Filter by tool" class="btn">
+      <option value="">any tool</option>
+      {% for t in tools %}
+      <option value="{{ t.tool }}" {% if tool == t.tool %}selected{% endif %}>{{ t.tool }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn" type="submit">Filter</button>
+  </form>
+
+  <table class="data">
+    <tr><th>Tool</th><th>Scope</th><th>Status</th><th>Started</th><th>Duration</th><th>Budget</th><th>Result</th><th>Actions</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.tool }}</td>
+      <td>{{ r.scope|join(", ") if r.scope else (r.target or "all") }}</td>
+      <td><span class="badge-status st-{{ r.status }}">{{ r.status }}</span></td>
+      <td class="mono">{{ r.started_at[:19].replace("T", " ") if r.started_at }}</td>
+      <td>{% if r.duration_seconds is not none %}{{ r.duration_seconds }}s{% endif %}</td>
+      <td>{{ (r.max_minutes ~ "m") if r.max_minutes else "until stopped" }}</td>
+      <td>
+        {% set s = r.summary %}
+        {% if s and s.new_subs is defined %}
+          → {{ s.new_subs }} new subs · {{ s.new_live }} live · {{ s.new_http }} http
+          {% if s.program %}
+          (<a href="/ui/subdomains/program/{{ s.program|urlencode }}">subs</a> ·
+           <a href="/ui/lives/program/{{ s.program|urlencode }}">live</a> ·
+           <a href="/ui/http/program/{{ s.program|urlencode }}">http</a>)
+          {% endif %}
+        {% elif s and s.note %}
+          <span class="muted">{{ s.note }}</span>
+        {% endif %}
+      </td>
+      <td style="white-space:nowrap;">
+        <button class="btn" type="button" data-log-run="{{ r.id }}" data-log-title="{{ r.tool }}">log</button>
+        <button class="btn" type="button" data-post="/api/tasks/runs/{{ r.id }}/rerun" data-reload="1">re-run</button>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="muted">No runs match.</td></tr>
+    {% endfor %}
+  </table>
+
+  <div class="pager">
+    {% if page > 1 %}<a href="/ui/runs?page={{ page - 1 }}&status={{ status or '' }}&tool={{ tool or '' }}">&laquo; newer</a>{% endif %}
+    page {{ page }} · {{ total }} runs
+    {% if page * limit < total %}<a href="/ui/runs?page={{ page + 1 }}&status={{ status or '' }}&tool={{ tool or '' }}">older &raquo;</a>{% endif %}
+  </div>
+</section>
+
+<dialog id="log-drawer" class="log-drawer">
+  <header class="log-drawer-head">
+    <strong id="log-title"></strong>
+    <span class="muted" id="log-state"></span>
+    <button class="btn" type="button" data-log-close>Close</button>
+  </header>
+  <pre class="log" id="log-text"></pre>
+</dialog>
+{% endblock %}

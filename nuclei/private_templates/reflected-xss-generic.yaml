@@ -1,0 +1,31 @@
+id: reflected-xss-generic-custom
+info:
+  name: Generic Reflected XSS (Custom)
+  author: watch-recon
+  severity: medium
+  description: Checks if any query param is reflected unencoded in response
+  tags: xss,reflected,generic
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/?xss=%3Cscript%3Ealert(1)%3C/script%3E"
+      - "{{BaseURL}}/?q=%3Cscript%3Ealert(1)%3C/script%3E"
+      - "{{BaseURL}}/?search=%3Cscript%3Ealert(1)%3C/script%3E"
+      - "{{BaseURL}}/?id=%3Cscript%3Ealert(1)%3C/script%3E"
+      - "{{BaseURL}}/?name=%3Cscript%3Ealert(1)%3C/script%3E"
+      - "{{BaseURL}}/?redirect=%3Cscript%3Ealert(1)%3C/script%3E"
+      - "{{BaseURL}}/?url=%3Cscript%3Ealert(1)%3C/script%3E"
+      - "{{BaseURL}}/?next=%3Cscript%3Ealert(1)%3C/script%3E"
+      - "{{BaseURL}}/?callback=%3Cscript%3Ealert(1)%3C/script%3E"
+      - "{{BaseURL}}/?return=%3Cscript%3Ealert(1)%3C/script%3E"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "<script>alert(1)</script>"
+        condition: and

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% set title = "Dashboard" %}
+{% block content %}
+<h1 style="margin:0 0 4px;color:var(--blue);">Dashboard</h1>
+<div class="muted">Server-side counts across all targets.</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="v">{{ kpis.programs }}</div><div class="l">Targets</div></div>
+  <div class="kpi"><div class="v">{{ kpis.subdomains }}</div><div class="l">Subdomains</div></div>
+  <div class="kpi"><div class="v">{{ kpis.live }}</div><div class="l">Live subs</div></div>
+  <div class="kpi"><div class="v">{{ kpis.http }}</div><div class="l">HTTP services</div></div>
+  <div class="kpi"><div class="v">{{ kpis.urls }}</div><div class="l">URLs</div></div>
+  <div class="kpi"><div class="v">{{ kpis.endpoints }}</div><div class="l">Endpoints</div></div>
+</div>
+
+<div class="flash ok" style="display:flex;gap:18px;flex-wrap:wrap;">
+  <span>Fresh (24h): {{ fresh.subdomains }} subdomains</span>
+  <a href="/ui/http/fresh">{{ fresh.http }} new HTTP services &rarr;</a>
+</div>
+
+{% if global_running %}
+<div class="card" data-autorefresh style="margin:12px 0;">
+  <h3>Running now (global)</h3>
+  {% for r in global_running %}
+  <div class="mono">{{ r.task_id }} <span class="badge-status st-running">{{ r.status }}</span>
+    <a href="/ui/runs/{{ r.id }}">log</a>
+    <button class="btn danger" data-stop="{{ r.task_id }}" data-run-id="{{ r.id }}">Stop</button></div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<h2 style="color:var(--orange);margin-top:22px;">Targets</h2>
+<div class="cards">
+{% for c in cards %}
+  <div class="card" {% if c.running %}data-autorefresh{% endif %}>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <h3><a href="/ui/program/{{ c.name }}">{{ c.name }}</a></h3>
+      <div class="menu">
+        <button class="btn" data-menu-toggle>Run &#9662;</button>
+        <div class="menu-list">
+          {% for t in tasks %}
+          <button data-run="{{ t.id }}" data-target="{{ c.name }}">{{ t.id }}{% if not t.filter %} <span class="muted">(global)</span>{% endif %}</button>
+          {% endfor %}
+          <div class="note">Global stages have no per-target filter and run for every target.</div>
+        </div>
+      </div>
+    </div>
+    <div class="muted">subs {{ c.subs }} · live {{ c.live }} · http {{ c.http }} · urls {{ c.urls }} · endpoints {{ c.endpoints }}</div>
+    {% if c.running %}
+    <div style="margin-top:8px;">
+      {% for r in c.running %}
+      <span class="badge-status st-running">{{ r.task_id }} running</span>
+      <button class="btn danger" data-stop="{{ r.task_id }}" data-run-id="{{ r.id }}">Stop</button>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <div style="margin-top:10px;">
+      {% for tech, n in c.techs %}<span class="badge">{{ tech }} <span class="muted">{{ n }}</span></span>{% endfor %}
+    </div>
+    <div style="margin-top:8px;">
+      {% for prov, n in c.providers %}
+      <span class="badge{% if prov in bf_providers %} badge-bf{% endif %}">{{ prov }} {{ n }}</span>
+      {% endfor %}
+    </div>
+  </div>
+{% else %}
+  <div class="card"><span class="muted">No targets yet. <a href="/ui/targets">Add one.</a></span></div>
+{% endfor %}
+</div>
+
+<h2 style="color:var(--orange);margin-top:22px;">Recent changes</h2>
+{% if events %}
+<table class="data">
+  <tr><th>Time</th><th>Target</th><th>Subdomain</th><th>Event</th><th>Change</th></tr>
+  {% for e in events %}
+  <tr><td class="mono">{{ e.time }}</td><td>{{ e.program }}</td><td class="mono">{{ e.subdomain }}</td><td>{{ e.label }}</td>
+      <td class="mono">{{ e.old }}{% if e.old or e.new %} &rarr; {% endif %}{{ e.new }}</td></tr>
+  {% endfor %}
+</table>
+<div style="margin-top:8px;"><a href="/ui/changes">All changes &rarr;</a></div>
+{% else %}<div class="muted">No change events yet.</div>{% endif %}
+{% endblock %}

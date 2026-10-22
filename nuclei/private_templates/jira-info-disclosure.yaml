@@ -1,0 +1,28 @@
+id: jira-info-disclosure-custom
+info:
+  name: Jira Unauthenticated Info Disclosure (Custom)
+  author: watch-recon
+  severity: medium
+  description: Checks if Jira exposes server info or user data without auth
+  tags: jira,info-disclosure
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/rest/api/2/serverInfo"
+      - "{{BaseURL}}/rest/api/2/project"
+      - "{{BaseURL}}/rest/api/2/user/picker?query=admin"
+      - "{{BaseURL}}/secure/Dashboard.jspa"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "version"
+          - "baseUrl"
+          - "projects"
+          - "users"
+        condition: or

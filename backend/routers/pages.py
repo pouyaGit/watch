@@ -1,0 +1,377 @@
+"""HTML pages. Console pages render Jinja templates; legacy list pages keep their paths."""
+from datetime import datetime, timedelta
+
+from bson import ObjectId
+from bson.errors import InvalidId
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse
+
+from backend.helpers import (
+    build_url, html_list_page, html_subdomain_list_page, html_url_list_page, paginate, render_page,
+    unique_provider_count, get_unique_provider_subdomains, BF_PROVIDERS, PROVIDERS,
+)
+from backend.models import TaskRun
+from backend.search import SearchError, run_search
+from backend.task_runner import ACTIVE_STATUSES, list_runs, read_log_tail, reconcile, serialize_run
+from backend.tasks_registry import TASKS_REGISTRY, TOOL_TO_TASK
+from backend.templating import templates
+from database.change_events import event_label, recent_events
+from database.db import (
+    DnsBruteStatus, Endpoints, Http, LiveSubdomains, Programs, Subdomains, Urls,
+)
+
+router = APIRouter()
+
+
+def _page(request, template, active, **ctx):
+    return templates.TemplateResponse(request, template, {"active": active, **ctx})
+
+
+def _task_menu():
+    return [{"id": t, "filter": e["arg_style"] == "filter_flag"} for t, e in TASKS_REGISTRY.items()]
+
+
+def _tool_menu():
+    return [{
+        "tool": e["tool"],
+        "name": e["name"],
+        "heavy": e["heavy"],
+        "whole_db": e["arg_style"] == "none",
+    } for e in TASKS_REGISTRY.values()]
+
+
+def _top_techs(program_name, limit=12):
+    rows = Http._get_collection().aggregate([
+        {"$match": {"program_name": program_name}},
+        {"$unwind": "$tech"},
+        {"$match": {"tech": {"$nin": [None, ""]}}},
+        {"$group": {"_id": "$tech", "n": {"$sum": 1}}},
+        {"$sort": {"n": -1}},
+        {"$limit": limit},
+    ])
+    return [(r["_id"].strip(), r["n"]) for r in rows]
+
+
+def _providers(program_name):
+    rows = Subdomains._get_collection().aggregate([
+        {"$match": {"program_name": program_name}},
+        {"$unwind": "$providers"},
+        {"$group": {"_id": "$providers", "n": {"$sum": 1}}},
+        {"$sort": {"n": -1}},
+    ])
+    return [(r["_id"], r["n"]) for r in rows]
+
+
+def _event_rows(events):
+    return [{
+        "time": e.created_date.strftime("%Y-%m-%d %H:%M") if e.created_date else "",
+        "program": e.program_name,
+        "subdomain": e.subdomain or "",
+        "label": event_label(e.event_type),
+        "old": e.old_value or "",
+        "new": e.new_value or "",
+    } for e in events]
+
+
+def _running_runs(**filters):
+    out = []
+    for run in TaskRun.objects(status__in=list(ACTIVE_STATUSES), **filters).order_by("-started_at"):
+        run = reconcile(run)
+        if run.status in ACTIVE_STATUSES:
+            out.append(serialize_run(run))
+    return out
+
+
+@router.get("/", response_class=HTMLResponse)
+def dashboard(request: Request):
+    cutoff = datetime.now() - timedelta(hours=24)
+    kpis = {
+        "programs": Programs.objects().count(),
+        "subdomains": Subdomains.objects().count(),
+        "live": LiveSubdomains.objects().count(),
+        "http": Http.objects().count(),
+        "urls": Urls.objects().count(),
+        "endpoints": Endpoints.objects().count(),
+    }
+    fresh = {
+        "subdomains": Subdomains.objects(created_date__gte=cutoff).count(),
+        "http": Http.objects(created_date__gte=cutoff).count(),
+    }
+    cards = []
+    for p in Programs.objects().order_by("program_name"):
+        name = p.program_name
+        cards.append({
+            "name": name,
+            "subs": Subdomains.objects(program_name=name).count(),
+            "live": LiveSubdomains.objects(program_name=name).count(),
+            "http": Http.objects(program_name=name).count(),
+            "urls": Urls.objects(program_name=name).count(),
+            "endpoints": Endpoints.objects(program_name=name).count(),
+            "techs": _top_techs(name),
+            "providers": _providers(name),
+            "running": _running_runs(target=name),
+        })
+    return _page(request, "dashboard.html", "dashboard", kpis=kpis, fresh=fresh, cards=cards,
+                 tasks=_task_menu(), global_running=_running_runs(target=None),
+                 events=_event_rows(recent_events(limit=8)), bf_providers=BF_PROVIDERS)
+
+
+@router.get("/ui/program/{name}", response_class=HTMLResponse)
+def ui_program(name: str, request: Request):
+    if Programs.objects(program_name=name).first() is None:
+        raise HTTPException(status_code=404, detail="target not found")
+    techs = _top_techs(name, limit=60)
+    unique = []
+    for provider in BF_PROVIDERS + PROVIDERS:
+        count = unique_provider_count(name, provider)
+        if count:
+            unique.append((provider, count))
+    runs = [serialize_run(r) for r in TaskRun.objects(target=name).order_by("-started_at").limit(10)]
+    return _page(request, "program.html", "targets", name=name,
+                 counts={
+                     "subs": Subdomains.objects(program_name=name).count(),
+                     "live": LiveSubdomains.objects(program_name=name).count(),
+                     "http": Http.objects(program_name=name).count(),
+                     "urls": Urls.objects(program_name=name).count(),
+                     "endpoints": Endpoints.objects(program_name=name).count(),
+                 },
+                 techs=techs, providers=_providers(name), unique=unique, runs=runs,
+                 running=_running_runs(target=name), tasks=_task_menu(), bf_providers=BF_PROVIDERS)
+
+
+@router.get("/ui/targets", response_class=HTMLResponse)
+def ui_targets(request: Request, ok: str = None, err: str = None):
+    rows = []
+    for p in Programs.objects().order_by("program_name"):
+        rows.append({
+            "name": p.program_name,
+            "scopes": p.scopes,
+            "ooscopes": p.ooscopes,
+            "created": p.created_date.strftime("%Y-%m-%d") if p.created_date else "",
+            "subs": Subdomains.objects(program_name=p.program_name).count(),
+            "http": Http.objects(program_name=p.program_name).count(),
+        })
+    return _page(request, "targets.html", "targets", rows=rows, ok=ok, err=err)
+
+
+@router.get("/ui/runs", response_class=HTMLResponse)
+def ui_runs(request: Request, page: int = 1, status: str = None, tool: str = None):
+    total, items = list_runs(page=page, limit=25, task_id=TOOL_TO_TASK.get(tool) if tool else None, status=status)
+    rows = [serialize_run(r) for r in items]
+    programs = [p.program_name for p in Programs.objects().order_by("program_name")]
+    return _page(request, "runs.html", "runs", rows=rows, total=total, page=page, limit=25,
+                 status=status, tool=tool, tools=_tool_menu(), programs=programs,
+                 statuses=["queued", "running", "paused", "success", "failed", "stopped", "unknown"])
+
+
+@router.get("/ui/runs/{run_id}", response_class=HTMLResponse)
+def ui_run_log(run_id: str, request: Request, tail: int = 400):
+    try:
+        run = TaskRun.objects(id=ObjectId(run_id)).first()
+    except (InvalidId, TypeError):
+        run = None
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    run = reconcile(run)
+    lines = read_log_tail(run, lines=tail)
+    return _page(request, "run_log.html", "runs", run=serialize_run(run), lines="".join(lines),
+                 running=run.status in ("queued", "running", "paused"))
+
+
+@router.get("/ui/search", response_class=HTMLResponse)
+def ui_search(request: Request, q: str = "", kind: str = None, page: int = 1):
+    error = None
+    result = None
+    try:
+        result = run_search(q, kind=kind if kind in ("subdomains", "http", "urls", "endpoints") else None,
+                            page=page, limit=50)
+    except SearchError as exc:
+        error = str(exc)
+    return _page(request, "search.html", "search", q=q, result=result, error=error, kind=kind, page=page,
+                 limit=50)
+
+
+@router.get("/ui/changes", response_class=HTMLResponse)
+def ui_changes(request: Request, program: str = None):
+    events = recent_events(limit=200, program_name=program or None)
+    return _page(request, "changes.html", "changes", events=_event_rows(events), program=program or "",
+                 programs=[p.program_name for p in Programs.objects().order_by("program_name")])
+
+
+# ====================== legacy list pages (paths unchanged) ======================
+@router.get("/ui/subdomains/unique/{program_name}/{provider}", response_class=HTMLResponse)
+def ui_subdomains_unique(program_name: str, provider: str, page: int = 1, limit: int = 100):
+    rows, total = get_unique_provider_subdomains(program_name, provider, page, limit)
+    title = f"{program_name} — Exclusive to: {provider}"
+    return html_subdomain_list_page(title, rows, page, limit, total,
+                                     f"/ui/subdomains/unique/{program_name}/{provider}")
+
+
+
+@router.get("/ui/http/fresh", response_class=HTMLResponse)
+def ui_http_fresh(hours: int = 24, page: int = 1, limit: int = 100):
+    cutoff = datetime.now() - timedelta(hours=hours)
+    qs = Http.objects(created_date__gte=cutoff).only("url", "subdomain")
+    total = qs.count()
+    return html_url_list_page(f"Fresh HTTP ({hours}h)", list(paginate(qs, page, limit)),
+                               page, limit, total, f"/ui/http/fresh?hours={hours}")
+
+
+@router.get("/ui/http/provider/{program_name}/{provider}", response_class=HTMLResponse)
+def ui_http_provider(program_name: str, provider: str, page: int = 1, limit: int = 100):
+    """Same $lookup+$facet approach as provider_counts() -- avoids pulling
+    thousands of subdomain names into Python before querying Http."""
+    sub_coll = Subdomains._get_collection()
+    http_coll_name = Http._get_collection().name
+    page = max(page, 1)
+    skip = (page - 1) * limit
+
+    pipeline = [
+        {"$match": {"program_name": program_name, "providers": provider}},
+        {"$lookup": {
+            "from": http_coll_name,
+            "let": {"sub": "$subdomain", "prog": "$program_name"},
+            "pipeline": [
+                {"$match": {"$expr": {"$and": [
+                    {"$eq": ["$subdomain", "$$sub"]},
+                    {"$eq": ["$program_name", "$$prog"]},
+                ]}}},
+                {"$project": {"_id": 0, "url": 1, "subdomain": 1}},
+            ],
+            "as": "http_match",
+        }},
+        {"$unwind": "$http_match"},
+        {"$facet": {
+            "total": [{"$count": "count"}],
+            "items": [{"$skip": skip}, {"$limit": limit}],
+        }},
+    ]
+    result = list(sub_coll.aggregate(pipeline))
+    total, items = 0, []
+    if result:
+        doc = result[0]
+        total = doc["total"][0]["count"] if doc["total"] else 0
+        items = [i["http_match"] for i in doc["items"]]
+
+    class _Row:
+        __slots__ = ("url", "subdomain")
+        def __init__(self, url, subdomain):
+            self.url, self.subdomain = url, subdomain
+
+    rows = [_Row(i.get("url"), i.get("subdomain")) for i in items]
+    title = f"{program_name} — Provider: {provider}"
+    return html_url_list_page(title, rows, page, limit, total,
+                               f"/ui/http/provider/{program_name}/{provider}")
+
+
+# ====================== صفحات HTML قابل مرور ======================
+@router.get("/ui/subdomains/program/{p_name}", response_class=HTMLResponse)
+def ui_subdomains(p_name: str, page: int = 1, limit: int = 100):
+    qs = Subdomains.objects(program_name=p_name).only("subdomain", "providers")
+    total = qs.count()
+    rows = [(s.subdomain, s.providers) for s in paginate(qs, page, limit)]
+    return html_subdomain_list_page(f"Subdomains — {p_name}", rows, page, limit, total, f"/ui/subdomains/program/{p_name}")
+
+
+@router.get("/ui/lives/program/{p_name}", response_class=HTMLResponse)
+def ui_lives(p_name: str, page: int = 1, limit: int = 100):
+    qs = LiveSubdomains.objects(program_name=p_name).only("subdomain")
+    total = qs.count()
+    page_items = list(paginate(qs, page, limit))
+    names = [s.subdomain for s in page_items]
+    # LiveSubdomains has no providers field -- join with Subdomains for this page only
+    provider_map = {
+        s.subdomain: s.providers
+        for s in Subdomains.objects(subdomain__in=names).only("subdomain", "providers")
+    }
+    rows = [(n, provider_map.get(n, [])) for n in names]
+    return html_subdomain_list_page(f"Live Subdomains — {p_name}", rows, page, limit, total, f"/ui/lives/program/{p_name}")
+
+
+@router.get("/ui/http/program/{p_name}", response_class=HTMLResponse)
+def ui_http(p_name: str, page: int = 1, limit: int = 100):
+    qs = Http.objects(program_name=p_name).only("url", "subdomain")
+    total = qs.count()
+    return html_url_list_page(f"HTTP — {p_name}", list(paginate(qs, page, limit)),
+                               page, limit, total, f"/ui/http/program/{p_name}")
+
+
+@router.get("/ui/http/tech/{program_name}/{tech}", response_class=HTMLResponse)
+def ui_http_tech(program_name: str, tech: str, page: int = 1, limit: int = 100):
+    qs = Http.objects(program_name=program_name, tech=tech).only("url", "subdomain")
+    total = qs.count()
+    return html_url_list_page(f"{program_name} — Tech: {tech}", list(paginate(qs, page, limit)),
+                               page, limit, total, f"/ui/http/tech/{program_name}/{tech}")
+
+
+@router.get("/ui/urls/program/{p_name}", response_class=HTMLResponse)
+def ui_urls(p_name: str, page: int = 1, limit: int = 200):
+    qs = Urls.objects(program_name=p_name).only("url")
+    total = qs.count()
+    items = [u.url for u in paginate(qs, page, limit)]
+    return html_list_page(f"URLs — {p_name}", items, page, limit, total, f"/ui/urls/program/{p_name}")
+
+
+@router.get("/ui/endpoints/program/{p_name}", response_class=HTMLResponse)
+def ui_endpoints(p_name: str, page: int = 1, limit: int = 100):
+    qs = Endpoints.objects(program_name=p_name).order_by("-hit_count")
+    total = qs.count()
+    lis = ""
+    for e in paginate(qs, page, limit):
+        params_str = f" — params: {', '.join(e.params)}" if e.params else ""
+        link = e.example_url or f"https://{e.subdomain}{e.path}"
+        lis += f'<li><a href="{link}" target="_blank" rel="noopener">{e.path}</a> (hits: {e.hit_count}){params_str}</li>\n'
+    total_pages = max(1, (total + limit - 1) // limit)
+    nav = f'<div class="pagenav">Page {page}/{total_pages} — total {total}'
+    if page > 1:
+        nav += f' | <a href="{build_url(f"/ui/endpoints/program/{p_name}", page=page-1, limit=limit)}">« Prev</a>'
+    if page < total_pages:
+        nav += f' | <a href="{build_url(f"/ui/endpoints/program/{p_name}", page=page+1, limit=limit)}">Next »</a>'
+    nav += "</div>"
+    home = build_url("/")
+    body = f"<h2>Endpoints — {p_name}</h2>{nav}<ul>{lis}</ul>{nav}<br><a href='{home}'>← Back to Dashboard</a>"
+    return HTMLResponse(render_page(f"Endpoints — {p_name}", body))
+
+
+@router.get("/ui/dns-bruteforce/status", response_class=HTMLResponse)
+def ui_dns_bruteforce_status():
+    """Health-check page for the weekly DNS bruteforce jobs -- shows, per
+    domain, whether it's feasible and when static/dynamic last actually ran.
+    This is the quickest way to confirm the jobs are alive and progressing
+    without digging through Telegram history or journalctl."""
+    statuses = list(DnsBruteStatus.objects().order_by("program_name", "domain"))
+
+    def fmt(dt):
+        if not dt:
+            return '<span class="note">never</span>'
+        days_ago = (datetime.now() - dt).days
+        stale = ' style="color:#f85149;"' if days_ago > 8 else ""
+        return f'<span{stale}>{dt.strftime("%Y-%m-%d %H:%M")} ({days_ago}d ago)</span>'
+
+    rows = ""
+    for s in statuses:
+        feasible_badge = (
+            '<span class="badge" style="border-color:#3fb950;color:#3fb950;">yes</span>'
+            if s.feasible else
+            '<span class="badge" style="border-color:#f85149;color:#f85149;">no (wildcard)</span>'
+        )
+        rows += (
+            f"<tr><td>{s.program_name}</td><td>{s.domain}</td><td>{feasible_badge}</td>"
+            f"<td>{fmt(s.last_static_run)}</td><td>{fmt(s.last_dynamic_run)}</td></tr>"
+        )
+
+    home = build_url("/")
+    body = f"""
+    <a href="{home}">← Back to Dashboard</a>
+    <h2>DNS Bruteforce Status</h2>
+    <p class="note">Red timestamp = more than 8 days since last run (something's probably stuck --
+    check <code>systemctl status watch-dns-static</code> / <code>watch-dns-dynamic</code>).</p>
+    <table style="width:100%; border-collapse:collapse;">
+      <tr style="text-align:left; border-bottom:1px solid #30363d;">
+        <th style="padding:6px;">Program</th><th>Domain</th><th>Feasible</th>
+        <th>Last static run</th><th>Last dynamic run</th>
+      </tr>
+      {rows}
+    </table>
+    """
+    return HTMLResponse(render_page("DNS Bruteforce Status", body))

@@ -124,7 +124,7 @@ async def delete_target(name: str, request: Request):
         return _fail(request, str(exc))
     if (data.get("confirm") or "") != name:
         return _fail(request, "confirmation does not match the target name")
-    for run in TaskRun.objects(target=name, status="running"):
+    for run in TaskRun.objects(target=name, status__in=["queued", "running", "paused"]):
         stop_task(str(run.id))
     delete_program_and_related(name)
     _remove_program_file(name)

@@ -1,0 +1,20 @@
+[Unit]
+Description=Watch weekly crawl (fresh URLs, then param discovery)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/watch
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/flock -n /run/watch-crawl.lock /opt/watch/venv/bin/python3 /opt/watch/crawl/watch_crawl_fresh.py
+ExecStart=/usr/bin/flock -n /run/watch-crawl.lock /opt/watch/venv/bin/python3 /opt/watch/crawl/watch_param_discovery.py --max-minutes 240
+
+CPUQuota=300%
+MemoryMax=5G
+Nice=10
+TimeoutStartSec=5h
+KillMode=control-group
+TimeoutStopSec=30s

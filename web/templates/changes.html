@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% set title = "Recent changes" %}
+{% block content %}
+<h1 style="margin:0 0 6px;color:var(--blue);">Recent changes</h1>
+<form method="get" action="/ui/changes" style="margin-bottom:12px;">
+  <select name="program" class="btn" aria-label="Filter by target">
+    <option value="">all targets</option>
+    {% for p in programs %}<option value="{{ p }}" {% if program == p %}selected{% endif %}>{{ p }}</option>{% endfor %}
+  </select>
+  <button class="btn" type="submit">Filter</button>
+</form>
+{% if events %}
+<table class="data">
+  <tr><th data-sort>Time</th><th data-sort>Target</th><th>Subdomain</th><th>Event</th><th>Change</th></tr>
+  {% for e in events %}
+  <tr><td class="mono">{{ e.time }}</td><td>{{ e.program }}</td><td class="mono">{{ e.subdomain }}</td><td>{{ e.label }}</td>
+      <td class="mono">{{ e.old }}{% if e.old or e.new %} &rarr; {% endif %}{{ e.new }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}<div class="muted">No change events.</div>{% endif %}
+{% endblock %}

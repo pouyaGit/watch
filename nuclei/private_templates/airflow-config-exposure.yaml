@@ -1,0 +1,37 @@
+id: airflow-config-exposure-custom
+info:
+  name: Airflow Config Exposure (Custom)
+  author: watch-recon
+  severity: high
+  description: Checks if Airflow config endpoint exposes sensitive configuration
+  tags: airflow,config,exposure
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/config"
+      - "{{BaseURL}}/api/v1/variables"
+      - "{{BaseURL}}/api/v1/connections"
+      - "{{BaseURL}}/api/v1/pools"
+      - "{{BaseURL}}/api/v1/roles"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "variables"
+          - "connections"
+          - "pools"
+          - "secret"
+          - "password"
+          - "key"
+        condition: or
+
+    extractors:
+      - type: json
+        json:
+          - '.variables[]?.key'
+          - '.connections[]?.conn_id'

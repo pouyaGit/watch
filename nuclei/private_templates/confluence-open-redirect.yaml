@@ -1,0 +1,22 @@
+id: confluence-open-redirect-custom
+info:
+  name: Confluence Open Redirect via os_destination (Custom)
+  author: watch-recon
+  severity: medium
+  description: Checks if Confluence login reflects os_destination in redirect
+  tags: confluence,open-redirect
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/login.action?os_destination=https://evil.example/"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 302
+          - 301
+      - type: regex
+        regex:
+          - "location.*evil\\.example"

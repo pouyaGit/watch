@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% set title = "Search" %}
+{% block content %}
+<h1 style="margin:0 0 6px;color:var(--blue);">Search</h1>
+<form method="get" action="/ui/search" style="margin-bottom:10px;">
+  <input type="search" name="q" value="{{ q }}" aria-label="Search query" style="width:100%;padding:10px 12px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;font-family:ui-monospace,Consolas,monospace;">
+</form>
+<details class="grammar" style="margin-bottom:14px;">
+  <summary>Query grammar</summary>
+  <div>free text &mdash; matches subdomains, HTTP (host/title/url), URLs and endpoints (path/params)</div>
+  <div>tech:&lt;name&gt; &mdash; HTTP only, exact technology match</div>
+  <div>status:&lt;code&gt; &mdash; HTTP and URLs</div>
+  <div>provider:&lt;name&gt; &mdash; subdomains with that provider, and their HTTP rows</div>
+  <div>program:&lt;name&gt; &mdash; one target only</div>
+  <div>example: <code>tech:nginx program:dell status:200</code></div>
+</details>
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+{% if result is none %}
+  <div class="muted">Enter a term or a filter.</div>
+{% else %}
+  {% for name, group in result.results.items() %}
+  <h2 style="color:var(--orange);font-size:18px;margin-top:18px;">
+    {{ name }} <span class="muted">({{ group.total }})</span>
+    {% if not kind and group.total > 10 %}<a class="muted" style="font-size:13px;" href="/ui/search?q={{ q | urlencode }}&kind={{ name }}">show all &rarr;</a>{% endif %}
+  </h2>
+  {% if name == "subdomains" %}
+    <table class="data">
+      <tr><th>Target</th><th>Subdomain</th><th>Providers</th></tr>
+      {% for r in group["items"] %}
+      <tr><td>{{ r.program }}</td><td class="mono"><a href="https://{{ r.subdomain }}" target="_blank" rel="noopener">{{ r.subdomain }}</a><span class="copy" data-copy="{{ r.subdomain }}">copy</span></td>
+          <td>{% for p in r.providers %}<span class="badge-sm{% if p in ['staticBF','dynamicBF'] %} bf{% endif %}">{{ p }}</span>{% endfor %}</td></tr>
+      {% endfor %}
+    </table>
+  {% elif name == "http" %}
+    <table class="data">
+      <tr><th>Target</th><th>URL</th><th>Status</th><th>Title</th><th>Tech</th></tr>
+      {% for r in group["items"] %}
+      <tr><td>{{ r.program }}</td>
+          <td class="mono"><a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.url }}</a><span class="copy" data-copy="{{ r.url }}">copy</span></td>
+          <td>{% if r.status_code %}<span class="code-{{ r.status_code // 100 }}xx">{{ r.status_code }}</span>{% endif %}</td>
+          <td>{{ r.title or "" }}</td>
+          <td>{% for t in r.tech or [] %}<span class="badge-sm">{{ t }}</span>{% endfor %}</td></tr>
+      {% endfor %}
+    </table>
+  {% elif name == "urls" %}
+    <table class="data">
+      <tr><th>Target</th><th>URL</th><th>Status</th></tr>
+      {% for r in group["items"] %}
+      <tr><td>{{ r.program }}</td><td class="mono"><a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.url }}</a></td>
+          <td>{% if r.status_code %}<span class="code-{{ r.status_code // 100 }}xx">{{ r.status_code }}</span>{% endif %}</td></tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <table class="data">
+      <tr><th>Target</th><th>Subdomain</th><th>Path</th><th>Params</th><th>Hits</th></tr>
+      {% for r in group["items"] %}
+      <tr><td>{{ r.program }}</td><td class="mono">{{ r.subdomain }}</td><td class="mono">{{ r.path }}</td>
+          <td class="mono">{{ r.params | join(", ") }}</td><td>{{ r.hit_count }}</td></tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+  {% else %}
+  <div class="muted">No matches.</div>
+  {% endfor %}
+  {% if kind %}
+  <div class="pager">
+    {% if page > 1 %}<a href="/ui/search?q={{ q | urlencode }}&kind={{ kind }}&page={{ page - 1 }}">&laquo; prev</a>{% endif %}
+    page {{ page }}
+    {% if result.results.get(kind) and page * limit < result.results[kind].total %}<a href="/ui/search?q={{ q | urlencode }}&kind={{ kind }}&page={{ page + 1 }}">next &raquo;</a>{% endif %}
+  </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

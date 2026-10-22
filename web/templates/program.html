@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% set title = name %}
+{% block content %}
+<div class="muted"><a href="/">&larr; Dashboard</a> · <a href="/ui/targets">Targets</a></div>
+<h1 style="margin:6px 0;color:var(--blue);">{{ name }}</h1>
+
+<div class="tabs">
+  <a class="active" href="/ui/program/{{ name }}">Overview</a>
+  <a href="/ui/subdomains/program/{{ name }}">Subdomains ({{ counts.subs }})</a>
+  <a href="/ui/lives/program/{{ name }}">Live ({{ counts.live }})</a>
+  <a href="/ui/http/program/{{ name }}">HTTP ({{ counts.http }})</a>
+  <a href="/ui/urls/program/{{ name }}">URLs ({{ counts.urls }})</a>
+  <a href="/ui/endpoints/program/{{ name }}">Endpoints ({{ counts.endpoints }})</a>
+  <a href="/api/wordlist/{{ name }}">Params wordlist</a>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="v">{{ counts.subs }}</div><div class="l">Subdomains</div></div>
+  <div class="kpi"><div class="v">{{ counts.live }}</div><div class="l">Live</div></div>
+  <div class="kpi"><div class="v">{{ counts.http }}</div><div class="l">HTTP</div></div>
+  <div class="kpi"><div class="v">{{ counts.urls }}</div><div class="l">URLs</div></div>
+  <div class="kpi"><div class="v">{{ counts.endpoints }}</div><div class="l">Endpoints</div></div>
+</div>
+
+<div class="card" style="margin-bottom:14px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <h3>Recon stages</h3>
+    <div class="menu">
+      <button class="btn primary" data-menu-toggle>Run &#9662;</button>
+      <div class="menu-list">
+        {% for t in tasks %}
+        <button data-run="{{ t.id }}" data-target="{{ name }}">{{ t.id }}{% if not t.filter %} <span class="muted">(global)</span>{% endif %}</button>
+        {% endfor %}
+        <div class="note">Global stages have no per-target filter and run for every target.</div>
+      </div>
+    </div>
+  </div>
+  {% if running %}
+  <div data-autorefresh>
+    {% for r in running %}
+    <div class="mono"><span class="badge-status st-running">{{ r.task_id }} running</span> pid {{ r.pid }}
+      <button class="btn danger" data-stop="{{ r.task_id }}" data-run-id="{{ r.id }}">Stop</button></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+<h3>Technologies</h3>
+<div>{% for tech, n in techs %}<a class="badge" href="/ui/http/tech/{{ name }}/{{ tech }}">{{ tech }} ({{ n }})</a>{% else %}<span class="muted">none</span>{% endfor %}</div>
+
+<h3 style="margin-top:16px;">Providers</h3>
+<div>{% for prov, n in providers %}<a class="badge{% if prov in bf_providers %} badge-bf{% endif %}" href="/ui/http/provider/{{ name }}/{{ prov }}">{{ prov }} ({{ n }})</a>{% else %}<span class="muted">none</span>{% endfor %}</div>
+
+<h3 style="margin-top:16px;">Exclusive finds (this provider only)</h3>
+<div>{% for prov, n in unique %}<a class="badge{% if prov in bf_providers %} badge-bf{% endif %}" href="/ui/subdomains/unique/{{ name }}/{{ prov }}">{{ prov }} only ({{ n }})</a>{% else %}<span class="muted">none</span>{% endfor %}</div>
+
+<h3 style="margin-top:16px;">Recent runs</h3>
+{% if runs %}
+<table class="data">
+  <tr><th>Stage</th><th>Status</th><th>Started</th><th>Exit</th><th></th></tr>
+  {% for r in runs %}
+  <tr><td>{{ r.task_id }}</td>
+      <td><span class="badge-status st-{{ r.status }}">{{ r.status }}</span></td>
+      <td class="mono">{{ r.started_at }}</td><td>{{ r.exit_code if r.exit_code is not none else "" }}</td>
+      <td><a href="/ui/runs/{{ r.id }}">log</a></td></tr>
+  {% endfor %}
+</table>
+{% else %}<div class="muted">No runs for this target yet.</div>{% endif %}
+{% endblock %}
