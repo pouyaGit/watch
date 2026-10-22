@@ -10,8 +10,6 @@ from database.notifications import (
     notify_new_live_subdomain,
     notify_updated_live_subdomain_ip,
     notify_updated_live_subdomain_cdn,
-    notify_title_change,
-    notify_status_change,
     notify_new_http
 )
 # Change tracking for the dashboard "Recent Changes" timeline. Best-effort:
@@ -329,14 +327,12 @@ def upsert_http(obj):
 
     if existing:
         if obj.get('title') != existing.title:
-            notify_title_change(obj.get('subdomain'), existing.title, obj.get('title'))
             record_change(program_name, obj.get('subdomain'),
                           "title_changed", existing.title, obj.get('title'))
             print(f"[{current_time()}] Title changed for {obj.get('subdomain')}: {existing.title} -> {obj.get('title')}")
             existing.title = obj.get('title')
 
         if obj.get('status_code') != existing.status_code:
-            notify_status_change(obj.get('subdomain'), existing.status_code, obj.get('status_code'))
             record_change(program_name, obj.get('subdomain'),
                           "status_changed", existing.status_code, obj.get('status_code'))
             print(f"[{current_time()}] Status code changed for {obj.get('subdomain')}: {existing.status_code} -> {obj.get('status_code')}")
