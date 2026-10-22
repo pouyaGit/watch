@@ -22,7 +22,7 @@ import requests
 import gzip
 import shutil
 import html
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -65,11 +65,14 @@ def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
 
 
-def get_fresh_targets():
+def get_fresh_targets(hours=24):
+    # Read straight from MongoDB instead of the auth-gated /api/http/fresh route
+    # (returned 0 whenever API_KEY was unset). Fresh = HTTP seen in the last
+    # `hours`. Same output shape as before.
     try:
-        r = requests.get(API, headers={"X-API-Key": config().get("API_KEY", "")}, timeout=30)
-        r.raise_for_status()
-        lines = [x.strip() for x in r.text.splitlines() if x.strip().startswith("http")]
+        cutoff = datetime.now() - timedelta(hours=hours)
+        lines = [h.url for h in Http.objects(created_date__gte=cutoff).only("url")
+                 if h.url and h.url.startswith("http")]
         cleaned = [u.rstrip("/") for u in lines if not BAD_EXT.search(u)]
         return sorted(set(cleaned))
     except Exception as e:

@@ -86,10 +86,14 @@ def get_host(url):
 
 
 def get_all_targets(filter_arg=None):
+    # Read targets straight from MongoDB rather than the local HTTP API. The
+    # /api/http/all route requires auth (X-API-Key), so this returned 0 targets
+    # whenever API_KEY was unset; it also needlessly coupled crawling to the
+    # dashboard being up. Same output as before (http-prefixed URLs, bad
+    # extensions dropped, optional substring filter, de-duplicated).
     try:
-        r = requests.get(API, headers={"X-API-Key": config().get("API_KEY", "")}, timeout=60)
-        r.raise_for_status()
-        lines = [x.strip() for x in r.text.splitlines() if x.strip().startswith("http")]
+        lines = [h.url for h in Http.objects().only("url")
+                 if h.url and h.url.startswith("http")]
         cleaned = [u.rstrip("/") for u in lines if not BAD_EXT.search(u)]
         if filter_arg:
             f = filter_arg.lower()

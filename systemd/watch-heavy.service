@@ -1,0 +1,27 @@
+[Unit]
+Description=Watch heavy worker (serialized brute -> crawl -> param, 24/7)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+# One always-on worker that time-slices the three heavy lanes one at a time
+# (see watch_heavy_worker.py). Replaces the standalone watch-brute.service and
+# the weekly watch-crawl*/watch-param-discovery timers.
+Type=simple
+User=root
+WorkingDirectory=/opt/watch
+# Resource caps live in watch-heavy.slice (CPUQuota=60%, MemoryMax=3G,
+# IOWeight=20) so the heavy work never starves the 12h pipeline or the API.
+Slice=watch-heavy.slice
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+Environment=PYTHONUNBUFFERED=1
+# Tunables: WATCH_HEAVY_LANE_MINUTES, WATCH_HEAVY_IDLE_SLEEP, WATCH_HEAVY_LANES,
+# and the per-lane knobs (WATCH_BRUTE_*, WATCH_STATIC_MAX_CANDIDATES, X8_WORDLIST).
+ExecStart=/opt/watch/venv/bin/python3 /opt/watch/watch_heavy_worker.py
+Restart=always
+RestartSec=30
+KillMode=control-group
+TimeoutStopSec=120s
+
+[Install]
+WantedBy=multi-user.target

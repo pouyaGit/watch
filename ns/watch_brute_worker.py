@@ -88,13 +88,17 @@ def process_one_domain(program_name, domain):
     return new_live
 
 
-def run_pass(filter_arg, cooldown, mark_only_eligible=True):
+def run_pass(filter_arg, cooldown, mark_only_eligible=True, deadline=None):
     """Process every currently-eligible domain once, oldest first.
 
     Returns (processed, total_new, seconds_until_next_eligible_or_None).
     A domain is eligible when it was last worked more than `cooldown` ago (or
     never). When nothing is eligible, returns the wait until the oldest becomes
     eligible so the caller can sleep instead of busy-looping.
+
+    `deadline` (time.monotonic seconds) time-boxes the pass: once reached, it
+    stops between domains and returns. Used by the heavy worker to give the
+    brute lane a bounded slice before rotating to crawl/param.
     """
     rows = get_feasible_domains_brute_ordered()
     if filter_arg:
@@ -109,6 +113,9 @@ def run_pass(filter_arg, cooldown, mark_only_eligible=True):
     total_new = 0
 
     for program_name, domain, last_worked in rows:
+        if deadline is not None and time.monotonic() >= deadline:
+            log(f"Brute time budget reached after {processed} domain(s) -- yielding")
+            return processed, total_new, None
         if mark_only_eligible and last_worked is not None and last_worked > cutoff:
             # rows are sorted oldest-first, so the first fresh one means the
             # rest are fresh too: report how long until it becomes eligible.
@@ -132,27 +139,35 @@ def main():
                         help="minimum hours between brute runs of the same domain")
     parser.add_argument("--idle-sleep", type=int, default=DEFAULT_IDLE_SLEEP,
                         help="seconds to sleep when every domain is within cooldown")
+    parser.add_argument("--max-minutes", type=float, default=None,
+                        help="time-box the run (implies a single bounded pass); "
+                             "used by the heavy worker's brute lane")
     args = parser.parse_args()
 
     cooldown = timedelta(hours=args.cooldown_hours)
+    # --max-minutes bounds a single pass and exits (lane mode for the heavy
+    # worker). Without it, behaviour is unchanged (--once = one full pass,
+    # otherwise continuous).
+    deadline = time.monotonic() + args.max_minutes * 60 if args.max_minutes else None
+    bounded = args.once or args.max_minutes is not None
 
     # Preflight once: the tools every turn needs. Missing binaries abort the
     # worker loudly instead of marking every domain as a failed turn forever.
     require_tools(["puredns", "dnsx", "alterx"])
 
-    log(f"=== Brute worker starting | mode={'once' if args.once else 'continuous'} "
+    log(f"=== Brute worker starting | mode={'bounded' if bounded else 'continuous'} "
         f"| cooldown={args.cooldown_hours}h | idle_sleep={args.idle_sleep}s "
-        f"| filter={args.filter or 'none'} ===")
-    send_telegram(
-        f"BruteWorker started ({'single pass' if args.once else '24/7'}) "
-        f"-- cooldown {args.cooldown_hours}h"
-    )
+        f"| filter={args.filter or 'none'} | max_minutes={args.max_minutes or 'none'} ===")
+    # Only the standalone continuous service announces itself; the heavy worker
+    # invokes this as a bounded lane repeatedly, which would spam Telegram.
+    if not bounded:
+        send_telegram(f"BruteWorker started (24/7) -- cooldown {args.cooldown_hours}h")
 
     cycle = 0
     while True:
         cycle += 1
         started = time.time()
-        processed, total_new, wait = run_pass(args.filter, cooldown)
+        processed, total_new, wait = run_pass(args.filter, cooldown, deadline=deadline)
 
         if processed:
             summary = (
@@ -165,7 +180,7 @@ def main():
             # one line per cycle (findings themselves are sent per-domain).
             send_telegram(summary)
 
-        if args.once:
+        if bounded:
             if not processed and wait is None:
                 log("No feasible domains (run watch_dns_precheck.py first)")
             break

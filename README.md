@@ -123,7 +123,8 @@ Put the project files here (clone or copy). Expected layout:
 ├── api.py                       # FastAPI dashboard + JSON API (replaces old Flask app.py)
 ├── config.py
 ├── run-pipeline.sh              # core 12h pipeline (sync/enum/dns/http/crawl-fresh)
-├── setup-weekly-jobs.sh         # installs the 5 weekly systemd timers
+├── watch_heavy_worker.py        # 24/7 heavy worker: serializes brute→crawl→param lanes
+├── setup-weekly-jobs.sh         # installs watch-heavy.slice + the precheck timer
 ├── resolvers.txt                # resolver list for puredns/dnsx
 ├── database/
 │   └── db.py                    # all Mongo models + upsert/bulk-write helpers
@@ -141,14 +142,14 @@ Put the project files here (clone or copy). Expected layout:
 │   ├── watch_dns_precheck.py    # DNS bruteforce feasibility check (weekly)
 │   ├── watch_dns_static.py      # static wordlist DNS bruteforce (one domain)
 │   ├── watch_dns_dynamic.py     # AlterX pattern-based DNS bruteforce (one domain)
-│   └── watch_brute_worker.py    # continuous 24/7 brute orchestrator (static+dynamic, round-robin)
+│   └── watch_brute_worker.py    # brute lane: fair round-robin static+dynamic (run by watch_heavy_worker.py; also usable standalone)
 ├── http/
 │   ├── watch_http.py, watch_http_all.py
 ├── crawl/
 │   ├── watch_crawl.py           # manual/heavy crawl (gospider), not scheduled
 │   ├── watch_crawl_fresh.py     # light katana crawl of fresh HTTP results (12h pipeline)
-│   ├── watch_crawl_all.py       # full katana crawl of ALL HTTP results (weekly)
-│   ├── watch_param_discovery.py # x8 hidden parameter discovery (weekly)
+│   ├── watch_crawl_all.py       # full katana crawl of ALL HTTP results (heavy-worker crawl lane)
+│   ├── watch_param_discovery.py # x8 hidden parameter discovery (heavy-worker param lane)
 │   ├── migrate_urls_to_endpoints.py   # one-time migration script
 │   ├── compact_endpoints.py           # one-time path-normalization cleanup
 │   └── cleanup_unknown_scope.py       # one-time out-of-scope data cleanup
@@ -442,94 +443,101 @@ sudo systemctl enable --now watch-api
 
 ---
 
-## 11. Weekly heavy jobs (crawl-all, param discovery, DNS bruteforce)
+## 11. Weekly jobs (`watch-dns-precheck` only)
 
-These don't fit in the 12h cycle — they're resumable (`--max-minutes` + least-recently-run
-ordering) and run once a week each, in the server's free window.
-
-**Free window on this server:** pipeline runs 00:00→~05:00 and 12:00→~17:00 Tehran, so free
-time is 06:00→12:00 and 18:00→00:00. Jobs are scheduled at **06:00** with a 300-minute
-(5h) budget, leaving a 1h buffer before the noon pipeline run.
+The only remaining weekly timer is the DNS-bruteforce feasibility precheck. The
+heavy work (bruteforce, crawl, param discovery) now runs continuously in one
+serialized worker — see section 11b.
 
 | Day | Job | Purpose |
 |---|---|---|
-| Friday | `watch-dns-precheck` | Refresh wildcard feasibility per domain (cheap, 60 min budget) |
-| Saturday | `watch-crawl-all` | Full katana crawl (incl. sitemaps) of every known HTTP target |
-| Sunday | `watch-param-discovery` | x8 hidden parameter discovery on unique endpoints |
+| Friday | `watch-dns-precheck` | Refresh wildcard feasibility per domain (cheap, 60 min budget) — marks which domains the brute lane is *eligible* to run on. |
 
-Install them with the provided script:
+Install it with the provided script:
 ```bash
 bash setup-weekly-jobs.sh
 systemctl list-timers --all | grep watch
 ```
 
-> **DNS bruteforce is no longer a weekly timer.** It now runs as a continuous
-> 24/7 service (`watch-brute.service`) — see section 11b. `watch-dns-precheck`
-> stays weekly because it only refreshes which domains are *eligible* to brute.
-
-The evening window (18:00-00:00) is intentionally left free for now — useful headroom once
-you scale from 2-3 programs to the 10-12 you're planning for nuclei.
+> **Crawl, param discovery and DNS bruteforce are no longer weekly timers.** They
+> are the three lanes of the continuous `watch-heavy.service` (section 11b). If
+> `setup-weekly-jobs.sh` still installs `watch-crawl-all.timer` / `watch-crawl.timer`
+> / `watch-param-discovery.timer`, disable them so work is not done twice:
+> `sudo systemctl disable --now watch-crawl-all.timer watch-crawl.timer watch-param-discovery.timer`.
 
 ---
 
-## 11b. Continuous DNS bruteforce worker (`watch-brute.service`)
+## 11b. Continuous heavy worker (`watch-heavy.service`)
 
-DNS bruteforce runs as a single always-on service, not a timer. One worker
-(`ns/watch_brute_worker.py`) walks every **feasible** domain (marked
-`feasible=True` by `watch_dns_precheck.py`) in round-robin order and, for each
-domain, runs **static then dynamic to completion** before moving to the next:
+All heavy, long-running work runs in **one always-on, single-threaded worker**
+(`watch_heavy_worker.py`) that time-slices three lanes **one at a time**,
+round-robin, forever:
 
 ```
-indeed.net → static → dynamic
-indeed.com → static → dynamic
-…one domain fully, then the next…        (then sleep until cooldown, repeat forever)
+brute  →  crawl  →  param  →  brute  → …   (each lane gets WATCH_HEAVY_LANE_MINUTES, then rotate)
 ```
 
-**Fairness / why it replaced the old timer.** The previous model (`watch-brute.timer`
-firing every 20 min with a 7-minute budget) ordered domains by `last_static_run`
-but only marked a domain *after it finished*. A domain that never finished inside
-the budget (dell.com: ~13M candidates / ~26 min) kept being picked first forever,
-so other domains never ran, and every fire re-sent the same Telegram banners. The
-worker instead **marks each domain at the start of its turn**, so a slow or crashing
-domain moves to the back of the queue immediately and cannot starve the others.
-Each domain is revisited roughly once per `cooldown`.
+Each lane is driven by its existing, resumable script, so a lane always resumes
+where it left off and none starves the others:
+
+| Lane | Script | What it does |
+|---|---|---|
+| `brute` | `ns/watch_brute_worker.py --max-minutes N` | Fair round-robin over **feasible** domains (marked by `watch_dns_precheck.py`); for each, **static then dynamic**. Marks each domain at the *start* of its turn so a slow/crashing domain can't starve the rest. |
+| `crawl` | `crawl/watch_crawl_all.py --max-minutes N` | katana crawl of known HTTP targets, least-recently-crawled first. Reads targets **straight from MongoDB** (no dependency on the dashboard API). |
+| `param` | `crawl/watch_param_discovery.py --max-minutes N` | x8 hidden-parameter discovery on unique endpoints, unchecked first, at a polite rate. |
+
+**Why one worker instead of three 24/7 services:** the VPS is small (2 cores /
+4 GB) and param discovery is *active scanning*. Serializing keeps exactly one
+heavy job running at any moment — bounding CPU/RAM/IO (via `watch-heavy.slice`)
+and the outbound scan footprint — while still making continuous progress on
+every lane.
 
 ### Settings (environment variables)
 
-Set these in the `[Service]` block of `/etc/systemd/system/watch-brute.service`
+Set these in the `[Service]` block of `/etc/systemd/system/watch-heavy.service`
 (as `Environment=KEY=value`) or export them before a manual run. All optional.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `WATCH_BRUTE_COOLDOWN_HOURS` | `12` | Minimum hours before the same domain is bruteforced again. |
-| `WATCH_BRUTE_IDLE_SLEEP` | `600` | Seconds to sleep when every domain is still within cooldown. |
-| `WATCH_STATIC_MAX_CANDIDATES` | `0` (unlimited) | Cap static candidates per domain. `0` = full wordlist; set e.g. `200000` for a fast test or to bound a huge target. |
-| `WATCH_BRUTE_VERBOSE` | `0` | `1` restores the chatty per-domain "Now bruteforcing…" Telegram banners. Off by default: only new findings, errors, and a one-line per-cycle heartbeat are sent. |
-| `WATCH_DYNAMIC_MAX_INPUT_LINES` | derived | Per-domain ceiling on known subdomains fed to alterx (bounds candidate explosion). |
+| `WATCH_HEAVY_LANE_MINUTES` | `20` | Per-lane time slice before rotating to the next lane. |
+| `WATCH_HEAVY_IDLE_SLEEP` | `900` | Seconds to sleep when a whole cycle found nothing to do anywhere. |
+| `WATCH_HEAVY_LANES` | `brute,crawl,param` | Restrict/reorder lanes, e.g. `brute,param`. |
+| `WATCH_BRUTE_COOLDOWN_HOURS` | `12` | Min hours before the same domain is bruteforced again (brute lane). |
+| `WATCH_STATIC_MAX_CANDIDATES` | `0` (unlimited) | Cap static candidates per domain (`0` = full wordlist; e.g. `200000` for a fast test). |
+| `WATCH_BRUTE_VERBOSE` | `0` | `1` restores chatty per-domain "Now bruteforcing…" Telegram banners. Off = only findings, errors, per-cycle heartbeat. |
+| `WATCH_DYNAMIC_MAX_INPUT_LINES` | derived | Per-domain ceiling on known subdomains fed to alterx. |
+| `X8_WORDLIST` | seclists burp-parameter-names | Param-discovery wordlist (param lane). |
 
-Resource limits live in the unit itself: `CPUQuota=200%`, `MemoryMax=3G`,
-`Nice=10`, `IOSchedulingClass=idle`. A single instance is guaranteed by
-`flock -n /run/watch-brute.lock`, so a manual run and the service never overlap.
+Resource limits come from **`watch-heavy.slice`** (installed by
+`setup-weekly-jobs.sh`): `CPUQuota=60%`, `MemoryMax=3G`, `MemoryHigh=2500M`,
+`IOWeight=20`.
 
 ### Start / stop / status
 
 ```bash
-# install (first time) + start now + start on boot
-sudo cp /opt/watch/systemd/watch-brute.service /etc/systemd/system/
+# prerequisite: slice must exist (bash setup-weekly-jobs.sh installs it)
+sudo cp /opt/watch/systemd/watch-heavy.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now watch-brute.service
+sudo systemctl enable --now watch-heavy.service
 
-# status / live logs
-systemctl status watch-brute.service
-journalctl -u watch-brute.service -f
+systemctl status watch-heavy.service
+journalctl -u watch-heavy.service -f      # watch it rotate brute → crawl → param
 
-# stop / restart (e.g. after editing settings)
-sudo systemctl restart watch-brute.service
-sudo systemctl stop watch-brute.service
+sudo systemctl restart watch-heavy.service   # after editing settings
 ```
 
-Prerequisite: run `watch_dns_precheck.py` at least once so domains are marked
-feasible — otherwise the worker idles with "no feasible domains".
+Quick manual test (one bounded cycle, no 24/7):
+```bash
+cd /opt/watch && python3 watch_heavy_worker.py --once --lane-minutes 5
+```
+
+Prerequisites: run `watch_dns_precheck.py` at least once (so the brute lane has
+feasible domains), and make sure the brute/crawl/param tools are installed
+(`puredns`, `dnsx`, `alterx`, `katana`, `x8`) — see sections 2 and 2·DNS.
+
+> **Standalone brute service retired.** The old `watch-brute.service` (continuous
+> brute only) is replaced by `watch-heavy.service`. If upgrading:
+> `sudo systemctl disable --now watch-brute.service`.
 
 ---
 
@@ -556,12 +564,13 @@ feasible — otherwise the worker idles with "no feasible domains".
 - **`watch_crawl_fresh.py`** *(every 12h)* — light `katana` crawl of just the last 24h of
   `Http` results (no sitemap fetch, capped at 5000 URLs/domain, 3-minute crawl ceiling) →
   `Urls` + `Endpoints`, scope-filtered, bulk-written.
-- **`watch_crawl_all.py`** *(weekly)* — same, but on **every** `Http` result, including
-  sitemap/robots.txt (`-kf all`), capped at 50000 URLs/domain. Resumable — picks up the
-  least-recently-crawled domain first.
-- **`watch_param_discovery.py`** *(weekly)* — runs `x8` on unique `Endpoints` (deduped by
-  normalized path, so `/user/123` and `/user/456` are tested once), merges base
-  (SecLists) + program-specific wordlist, writes results back + exports
+- **`watch_crawl_all.py`** *(heavy-worker crawl lane)* — same, but on **every** `Http`
+  result, including sitemap/robots.txt (`-kf all`), capped at 50000 URLs/domain. Resumable —
+  picks up the least-recently-crawled domain first. Reads its target list straight from
+  MongoDB (`Http.url`), not the auth-gated `/api/http/all` route.
+- **`watch_param_discovery.py`** *(heavy-worker param lane)* — runs `x8` on unique
+  `Endpoints` (deduped by normalized path, so `/user/123` and `/user/456` are tested once),
+  merges base (SecLists) + program-specific wordlist, writes results back + exports
   `/opt/watch/wordlists/{program}_params.txt`.
 - **`watch_dns_precheck.py`** *(weekly, Friday)* — tests a random nonexistent subdomain per
   program domain; if it resolves, the domain has a blanket wildcard and bruteforcing it is
