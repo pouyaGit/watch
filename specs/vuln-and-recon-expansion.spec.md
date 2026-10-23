@@ -31,7 +31,7 @@ continuous — a **lane of the 24/7 heavy worker**, never a new always-on servic
   live in `base.html`. Examples: `/ui/dns-bruteforce/status`, `/ui/crawl/status`,
   `/ui/x8/status`.
 - **Installed tools**: nuclei, ffuf, dnsx, httpx, katana, subfinder, alterx,
-  puredns, x8. **Missing** (install in setup + README): `naabu`, `gau`.
+  puredns, x8. **Missing** (install in setup + README): `gau`. (naabu NOT wanted.)
   Optional: `trufflehog` (or use a Python secret-regex pass).
 - **`nuclei/watch_nuclei_all.py` already exists** but is **wired into nothing**.
   Review and reuse/replace it rather than starting from zero.
@@ -136,20 +136,37 @@ Keep it polite + bounded (don't download huge bundles; cap count per run).
 
 ## 5. Data/coverage tools (install + integrate)
 
-- **`gau`** (getallurls): aggregate historical URLs (wayback + commoncrawl +
-  urlscan + OTX) — far more than the current `waybackurls`. Add an enum step
-  `enum/watch_gau.py` (per-domain, provider tag `gau`), feed `Subdomains`/`Urls`.
-- **`naabu`** (port scan): currently only `:443` is probed. Add a light port
-  scan (top-100 or a curated list) over `LiveSubdomains`, then run `httpx` on the
-  discovered open ports so non-443 services enter `Http`. Make it a lane or a
-  step before http. Respect rate limits / program rules.
+> **Port scanning (naabu) is OUT of scope — do not implement it.** The operator
+> only wants `:443`. Remove the earlier naabu/port-scan item entirely.
+
+- **`gau` merged INTO the crawl lane (katana)** — NOT a separate lane/enum step.
+  gau (getallurls) aggregates historical URLs (wayback + commoncrawl + urlscan +
+  OTX), which are then used as **extra katana seeds**, so the crawl goes deeper
+  from known-historical paths instead of only from live `Http` URLs. In
+  `crawl/watch_crawl_all.py`, per domain, BEFORE launching katana:
+  1. run `gau` for the domain (include subdomains), bounded and killable:
+     `timeout -k 10 N gau <domain> --subs --threads <n>` (verify flags with
+     `gau -h`; some builds use `getallurls`/different flags).
+  2. keep only in-scope hosts (host endswith an in-scope apex, drop `ooscopes`),
+     drop junk/static extensions (reuse the crawl's `BAD_EXT`), de-duplicate, and
+     **cap** at `GAU_MAX_SEEDS` (env, default e.g. 20000) so a huge history can't
+     blow up the lane or katana.
+  3. merge that capped set into the existing `seeds.txt` fed to katana (union
+     with the live-HTTP seeds), then crawl as normal.
+  4. persist the gau URLs via the **URL-only** writer (so they populate `Urls`
+     but do NOT create `Endpoints` — raw historical URLs would feed x8 junk;
+     this is exactly the url-only bulk writer added in §1).
+  Gate with `GAU_ENABLED` (default on) and keep it inside the crawl lane's
+  `--max-minutes` budget. One tool, one lane — no new heavy-worker lane for gau.
 - **`ffuf` content discovery**: ffuf is installed but unused. Add a bounded
   dir/file fuzz over selected live hosts (small wordlist, per-host cap, polite
-  rate), storing interesting responses as `Endpoints`/`Findings`. Gate behind an
-  env flag; this is active + noisy, keep it narrow.
+  rate), storing interesting responses as `Endpoints`/`Findings`. Opt-in lane
+  (`WATCH_HEAVY_LANES` does not include it by default); active + noisy, keep it
+  narrow.
 
-Install the missing binaries in `setup-weekly-jobs.sh`/README (`go install`
-for gau/naabu). `require_tools` preflight each.
+Install `gau` in `setup-weekly-jobs.sh`/README (`go install
+github.com/lc/gau/v2/cmd/gau@latest`). `require_tools(["gau"])` preflight the
+crawl lane's gau step (skip gracefully if absent, don't fail the whole crawl).
 
 ## 6. Notifications — make Telegram useful, not spammy
 
@@ -198,7 +215,9 @@ for gau/naabu). `require_tools` preflight each.
    source; dashboard shows open-findings counts.
 3. A takeover candidate is detected and alerted on a test domain with a dangling
    CNAME.
-4. gau/naabu feed new URLs/ports into the DB; non-443 services appear in `Http`.
+4. gau is merged into the crawl lane: historical URLs become extra katana seeds
+   and land in `Urls` (url-only, no `Endpoints`); no separate gau lane exists.
+   (No port scanning.)
 5. A once-daily digest arrives; routine unchanged assets do NOT spam.
 6. Killing `watch-ct-stream` (test) triggers one watchdog alert.
 7. No out-of-scope host is ever scanned; no unbounded tool run; all behind auth.
@@ -208,7 +227,7 @@ for gau/naabu). `require_tools` preflight each.
 1. **Nuclei smart lane + Finding model + `/ui/findings` + medium+ alerts.**
 2. **Subdomain takeover** (as a nuclei pass).
 3. **Health watchdog** + **daily digest** (cheap reliability/ signal wins).
-4. **gau** + **naabu** (coverage).
+4. **gau merged into the crawl lane** (coverage). (No naabu/port scan.)
 5. **Secret/JS scanning**.
 6. **ffuf content discovery** + **asnmap** + **Mongo indexes/archiving**.
 
@@ -216,11 +235,12 @@ for gau/naabu). `require_tools` preflight each.
 
 - `database/db.py` — `Finding` model + `upsert_finding`; indexes.
 - `nuclei/watch_nuclei_run.py` (new, resumable) — reuse `watch_nuclei_all.py`.
-- `enum/watch_gau.py` (new); port-scan step/lane; `ffuf` content step (new).
+- `crawl/watch_crawl_all.py` — add the gau step that feeds katana seeds (no
+  separate gau file, no port-scan). `ffuf` content step (new, opt-in lane).
 - `watch_heavy_worker.py` — add `nuclei` (and any new) lane to `LANE_CMDS`.
 - `systemd/watch-heavy.service` — env knobs; new `systemd/watch-health.{service,timer}`.
 - `backend/routers/pages.py` — `/ui/findings` (+ dashboard tile); nav link in
   `web/templates/base.html`; reuse `table.status`.
 - Notifications: a digest sender + `change_events`-driven new-asset alerts.
-- `setup-weekly-jobs.sh` + `README.md` — install naabu/gau(/trufflehog), document
+- `setup-weekly-jobs.sh` + `README.md` — install gau(/trufflehog) — NOT naabu, document
   the nuclei/health/digest additions and all new env knobs.
