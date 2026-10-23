@@ -20,6 +20,10 @@ Environment=PYTHONUNBUFFERED=1
 # getting hard-killed every visit). shuf-sampling (not head) keeps coverage
 # rotating across visits. ~4M ≈ 8 min of puredns; raise if lane minutes grow.
 Environment=WATCH_STATIC_MAX_CANDIDATES=4000000
+# Send brute-lane progress banners to Telegram too (per-domain "Now bruteforcing
+# ... Candidates/ETA" + results), so the operator sees brute activity alongside
+# crawl/param -- not just the quiet new-findings + heartbeat. Set to 0 to mute.
+Environment=WATCH_BRUTE_VERBOSE=1
 # Tunables: WATCH_HEAVY_LANE_MINUTES, WATCH_HEAVY_IDLE_SLEEP, WATCH_HEAVY_LANES,
 # and the per-lane knobs (WATCH_BRUTE_*, WATCH_STATIC_MAX_CANDIDATES, X8_WORDLIST).
 ExecStart=/opt/watch/venv/bin/python3 /opt/watch/watch_heavy_worker.py
