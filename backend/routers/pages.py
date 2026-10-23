@@ -346,7 +346,7 @@ def ui_dns_bruteforce_status():
             return '<span class="note">never</span>'
         days_ago = (datetime.now() - dt).days
         stale = ' style="color:#f85149;"' if days_ago > 8 else ""
-        return f'<span{stale}>{dt.strftime("%Y-%m-%d %H:%M")} ({days_ago}d ago)</span>'
+        return f'<span{stale}>{dt.strftime("%b %d, %H:%M")} · {days_ago}d</span>'
 
     rows = ""
     for s in statuses:
@@ -356,8 +356,11 @@ def ui_dns_bruteforce_status():
             '<span class="badge" style="border-color:#f85149;color:#f85149;">no (wildcard)</span>'
         )
         rows += (
-            f"<tr><td>{s.program_name}</td><td>{s.domain}</td><td>{feasible_badge}</td>"
-            f"<td>{fmt(s.last_static_run)}</td><td>{fmt(s.last_dynamic_run)}</td></tr>"
+            f'<tr><td class="name" data-label="Domain">{s.domain}</td>'
+            f'<td data-label="Program">{s.program_name}</td>'
+            f'<td data-label="Feasible">{feasible_badge}</td>'
+            f'<td class="ts" data-label="Last static">{fmt(s.last_static_run)}</td>'
+            f'<td class="ts" data-label="Last dynamic">{fmt(s.last_dynamic_run)}</td></tr>'
         )
 
     home = build_url("/")
@@ -365,13 +368,94 @@ def ui_dns_bruteforce_status():
     <a href="{home}">← Back to Dashboard</a>
     <h2>DNS Bruteforce Status</h2>
     <p class="note">Red timestamp = more than 8 days since last run (something's probably stuck --
-    check <code>systemctl status watch-dns-static</code> / <code>watch-dns-dynamic</code>).</p>
-    <table style="width:100%; border-collapse:collapse;">
-      <tr style="text-align:left; border-bottom:1px solid #30363d;">
-        <th style="padding:6px;">Program</th><th>Domain</th><th>Feasible</th>
-        <th>Last static run</th><th>Last dynamic run</th>
-      </tr>
-      {rows}
-    </table>
+    check <code>systemctl status watch-heavy</code>).</p>
+    <div class="table-wrap"><table class="status">
+      <thead><tr>
+        <th>Domain</th><th>Program</th><th>Feasible</th>
+        <th>Last static</th><th>Last dynamic</th>
+      </tr></thead>
+      <tbody>{rows}</tbody>
+    </table></div>
     """
     return HTMLResponse(render_page("DNS Bruteforce Status", body))
+
+
+def _count(qs_fn):
+    try:
+        return qs_fn()
+    except Exception:
+        return None
+
+
+def _num(v):
+    return f"{v:,}" if isinstance(v, int) else "—"
+
+
+@router.get("/ui/crawl/status", response_class=HTMLResponse)
+def ui_crawl_status():
+    """Per-program crawl progress: URLs and endpoints discovered, and how many
+    URLs were (re)crawled in the last 24h (the live-progress signal)."""
+    cutoff = datetime.now() - timedelta(hours=24)
+    rows = ""
+    for p in Programs.objects().order_by("program_name"):
+        name = p.program_name
+        urls = _count(lambda: Urls.objects(program_name=name).count())
+        eps = _count(lambda: Endpoints.objects(program_name=name).count())
+        fresh = _count(lambda: Urls.objects(program_name=name, last_update__gte=cutoff).count())
+        fresh_html = (f'<span style="color:#3fb950;">{fresh:,}</span>'
+                      if isinstance(fresh, int) and fresh else _num(fresh))
+        rows += (
+            f'<tr><td class="name" data-label="Program">{name}</td>'
+            f'<td class="num" data-label="URLs">{_num(urls)}</td>'
+            f'<td class="num" data-label="Endpoints">{_num(eps)}</td>'
+            f'<td class="num" data-label="Fresh URLs (24h)">{fresh_html}</td></tr>'
+        )
+    home = build_url("/")
+    body = f"""
+    <a href="{home}">← Back to Dashboard</a>
+    <h2>Crawl Status</h2>
+    <p class="note">katana crawl of HTTP targets (heavy-worker crawl lane). "Fresh URLs (24h)"
+    is the live-progress signal — if it stays 0 while the crawl lane is running, something is stuck.</p>
+    <div class="table-wrap"><table class="status">
+      <thead><tr><th>Program</th><th>URLs</th><th>Endpoints</th><th>Fresh URLs (24h)</th></tr></thead>
+      <tbody>{rows}</tbody>
+    </table></div>
+    """
+    return HTMLResponse(render_page("Crawl Status", body))
+
+
+@router.get("/ui/x8/status", response_class=HTMLResponse)
+def ui_x8_status():
+    """Per-program x8 parameter-discovery progress: endpoints checked vs total,
+    and the size of the exported per-program parameter wordlist."""
+    rows = ""
+    for p in Programs.objects().order_by("program_name"):
+        name = p.program_name
+        eps = _count(lambda: Endpoints.objects(program_name=name).count())
+        checked = _count(lambda: Endpoints.objects(program_name=name, x8_checked=True).count())
+        pct = (round(100 * checked / eps) if isinstance(eps, int) and isinstance(checked, int) and eps else 0)
+        try:
+            with open(f"/opt/watch/wordlists/{name}_params.txt") as fh:
+                wl = sum(1 for line in fh if line.strip())
+        except Exception:
+            wl = 0
+        rows += (
+            f'<tr><td class="name" data-label="Program">{name}</td>'
+            f'<td class="num" data-label="Endpoints">{_num(eps)}</td>'
+            f'<td class="num" data-label="Checked">{_num(checked)}</td>'
+            f'<td class="num" data-label="% done">{pct}%</td>'
+            f'<td class="num" data-label="Params (wordlist)">{wl:,}</td></tr>'
+        )
+    home = build_url("/")
+    body = f"""
+    <a href="{home}">← Back to Dashboard</a>
+    <h2>x8 Parameter Discovery</h2>
+    <p class="note">Hidden-parameter discovery with x8 (heavy-worker param lane). "Checked" is how
+    many unique endpoints x8 has tested; "Params" is the per-program wordlist exported to
+    <code>/opt/watch/wordlists/{{program}}_params.txt</code>.</p>
+    <div class="table-wrap"><table class="status">
+      <thead><tr><th>Program</th><th>Endpoints</th><th>Checked</th><th>% done</th><th>Params (wordlist)</th></tr></thead>
+      <tbody>{rows}</tbody>
+    </table></div>
+    """
+    return HTMLResponse(render_page("x8 Parameter Discovery", body))
