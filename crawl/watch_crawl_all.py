@@ -64,6 +64,14 @@ KATANA_CRAWL_DURATION = "5m"  # a bit more room than fresh since this runs weekl
 # only kills the shell and orphans katana. Keeps one trap domain from eating the
 # entire heavy-worker lane budget.
 KATANA_HARD_TIMEOUT = int(os.getenv("KATANA_HARD_TIMEOUT", "420"))  # seconds (7m)
+# Out-of-scope regex katana must NOT follow (katana -cos). Targets the infinite
+# URL spaces that waste the crawl: social share endpoints and the Salesforce-KB
+# "/solution/" + error-decoder loops that trapped knowledge.digicert.com.
+# Override/extend per deployment with KATANA_OUT_SCOPE.
+KATANA_OUT_SCOPE = os.getenv(
+    "KATANA_OUT_SCOPE",
+    r"(/intent/|/sharer|share-offsite|[?&]share=|/solution/|error-decoder|/error404)",
+)
 ROBOTS_WORKERS      = 5
 
 # -kf all (sitemap.xml/robots.txt) IS kept here since this is the weekly,
@@ -156,7 +164,8 @@ def run_katana(targets_file, out_file):
         f'timeout -k 10 {KATANA_HARD_TIMEOUT} '
         f'katana -list "{targets_file}" '
         f'-d {KATANA_DEPTH} -jc -kf all -fs rdn '
-        f'-c {KATANA_CONCURRENCY} -p {KATANA_PARALLELISM} '
+        + (f'-cos "{KATANA_OUT_SCOPE}" ' if KATANA_OUT_SCOPE else '')
+        + f'-c {KATANA_CONCURRENCY} -p {KATANA_PARALLELISM} '
         f'-rl {KATANA_RATE_LIMIT} -timeout {KATANA_TIMEOUT} -retry 1 '
         f'-ct {KATANA_CRAWL_DURATION} '
         f'-silent -o "{out_file}"'

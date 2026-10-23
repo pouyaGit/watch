@@ -149,7 +149,12 @@ def process_domain(program_name, domain):
     candidates_file = WORKDIR / f"{domain}.static.txt"
     gen = f'awk -v d="{domain}" \'{{print $0"."d}}\' "{MERGED_WORDLIST}"'
     if STATIC_MAX_CANDIDATES > 0:
-        gen += f' | head -n {STATIC_MAX_CANDIDATES}'
+        # Random sample, NOT `head`: `head -n N` always tests the same first N
+        # (alphabetically-first) candidates and never the rest. `shuf -n N`
+        # reservoir-samples a different N each run, so over repeated visits a
+        # capped domain's whole wordlist is still covered -- while each run stays
+        # inside the heavy-worker lane budget.
+        gen += f' | shuf -n {STATIC_MAX_CANDIDATES}'
     subprocess.run(f'{gen} > "{candidates_file}"', shell=True)
 
     candidate_count = count_lines(candidates_file)
