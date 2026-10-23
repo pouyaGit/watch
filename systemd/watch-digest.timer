@@ -1,0 +1,9 @@
+[Unit]
+Description=Send the Watch daily digest at 09:00 Asia/Tehran
+
+[Timer]
+OnCalendar=*-*-* 09:00:00 Asia/Tehran
+Persistent=true
+
+[Install]
+WantedBy=timers.target

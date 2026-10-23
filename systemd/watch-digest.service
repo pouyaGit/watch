@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch daily Telegram digest
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/watch
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/opt/watch/venv/bin/python3 /opt/watch/scripts/watch_digest.py

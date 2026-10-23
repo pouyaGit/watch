@@ -61,7 +61,11 @@ sudo mv findomain /usr/local/bin/
 ```bash
 go install -v github.com/projectdiscovery/katana/cmd/katana@latest
 go install -v github.com/Sh1Yo/x8@latest
+go install github.com/lc/gau/v2/cmd/gau@latest
 ```
+
+`gau` feeds the crawl lane (archived URLs from wayback/commoncrawl/otx/urlscan). If it is
+missing the crawl lane simply runs without it.
 
 x8 needs a parameter-name wordlist. We use SecLists' `burp-parameter-names.txt`:
 ```bash
@@ -470,11 +474,11 @@ systemctl list-timers --all | grep watch
 ## 11b. Continuous heavy worker (`watch-heavy.service`)
 
 All heavy, long-running work runs in **one always-on, single-threaded worker**
-(`watch_heavy_worker.py`) that time-slices three lanes **one at a time**,
+(`watch_heavy_worker.py`) that time-slices its lanes **one at a time**,
 round-robin, forever:
 
 ```
-brute  →  crawl  →  param  →  brute  → …   (each lane gets WATCH_HEAVY_LANE_MINUTES, then rotate)
+brute  →  crawl  →  param  →  nuclei  →  brute  → …   (each lane gets WATCH_HEAVY_LANE_MINUTES, then rotate)
 ```
 
 Each lane is driven by its existing, resumable script, so a lane always resumes
@@ -483,8 +487,14 @@ where it left off and none starves the others:
 | Lane | Script | What it does |
 |---|---|---|
 | `brute` | `ns/watch_brute_worker.py --max-minutes N` | Fair round-robin over **feasible** domains (marked by `watch_dns_precheck.py`); for each, **static then dynamic**. Marks each domain at the *start* of its turn so a slow/crashing domain can't starve the rest. |
-| `crawl` | `crawl/watch_crawl_all.py --max-minutes N` | katana crawl of known HTTP targets, least-recently-crawled first. Reads targets **straight from MongoDB** (no dependency on the dashboard API). |
+| `crawl` | `crawl/watch_crawl_all.py --max-minutes N` | katana crawl of known HTTP targets, least-recently-crawled first, seeded with gau archived URLs (in-scope only). Reads targets **straight from MongoDB** (no dependency on the dashboard API). gau-only URLs are stored in `Urls` only. |
 | `param` | `crawl/watch_param_discovery.py --max-minutes N` | x8 hidden-parameter discovery on unique endpoints, unchecked first, at a polite rate. |
+| `nuclei` | `nuclei/watch_nuclei_run.py --max-minutes N` | Subdomain-takeover pass, then nuclei templates on `Http` hosts, grouped by tech. Findings go to `Finding`. |
+| `secret` *(opt-in)* | `secret/watch_secret_run.py --max-minutes N` | Fetches in-scope `.js` URLs from `Urls` and scans them for secrets. Only redacted matches are stored. |
+| `ffuf` *(opt-in)* | `content/watch_ffuf_run.py --max-minutes N` | Bounded content discovery on in-scope `Http` hosts with a small wordlist. Sensitive paths become `Finding`s. |
+
+`secret` and `ffuf` are **not** in the default lane list. Enable them by adding them to
+`WATCH_HEAVY_LANES` in `watch-heavy.service` (see the settings table below).
 
 **Why one worker instead of three 24/7 services:** the VPS is small (2 cores /
 4 GB) and param discovery is *active scanning*. Serializing keeps exactly one
@@ -501,12 +511,32 @@ Set these in the `[Service]` block of `/etc/systemd/system/watch-heavy.service`
 |---|---|---|
 | `WATCH_HEAVY_LANE_MINUTES` | `20` | Per-lane time slice before rotating to the next lane. |
 | `WATCH_HEAVY_IDLE_SLEEP` | `900` | Seconds to sleep when a whole cycle found nothing to do anywhere. |
-| `WATCH_HEAVY_LANES` | `brute,crawl,param` | Restrict/reorder lanes, e.g. `brute,param`. |
+| `WATCH_HEAVY_LANES` | `brute,crawl,param,nuclei` | Restrict/reorder lanes, e.g. `brute,param`. Add `secret,ffuf` to enable the opt-in lanes. |
 | `WATCH_BRUTE_COOLDOWN_HOURS` | `12` | Min hours before the same domain is bruteforced again (brute lane). |
 | `WATCH_STATIC_MAX_CANDIDATES` | `0` (unlimited) | Cap static candidates per domain (`0` = full wordlist; e.g. `200000` for a fast test). |
 | `WATCH_BRUTE_VERBOSE` | `0` | `1` restores chatty per-domain "Now bruteforcing…" Telegram banners. Off = only findings, errors, per-cycle heartbeat. |
 | `WATCH_DYNAMIC_MAX_INPUT_LINES` | derived | Per-domain ceiling on known subdomains fed to alterx. |
 | `X8_WORDLIST` | seclists burp-parameter-names | Param-discovery wordlist (param lane). |
+| `GAU_ENABLED` | `1` | `0` disables gau in the crawl lane. |
+| `GAU_MAX_SEEDS` | `20000` | Cap on gau URLs fed to katana per domain. |
+| `GAU_TIMEOUT` | `300` | gau time budget in seconds; clamped to the remaining lane minutes. |
+| `NUCLEI_BATCH_SIZE` | `200` | Hosts per nuclei batch. |
+| `NUCLEI_CONCURRENCY` | `10` | nuclei `-c`. |
+| `NUCLEI_RATE_LIMIT` | `50` | nuclei `-rl`. |
+| `NUCLEI_GROUP_TIMEOUT` | `900` | Hard timeout per nuclei invocation, seconds. |
+| `NUCLEI_RESCAN_DAYS` | `7` | Days before a host is re-scanned. |
+| `NUCLEI_TAKEOVER_BATCH` | `500` | Subdomains per takeover pass. |
+| `SECRET_BATCH` | `300` | URLs per secret-lane run. |
+| `SECRET_MAX_BYTES` | `2000000` | Per-file download cap. Larger bodies are cut off. |
+| `SECRET_DELAY_MS` | `200` | Pause between fetches. |
+| `SECRET_RESCAN_DAYS` | `30` | Days before a URL is scanned again. |
+| `SECRET_TIMEOUT` | `10` | Per-request timeout, seconds. |
+| `FFUF_BATCH_HOSTS` | `20` | Hosts per ffuf run. |
+| `FFUF_HOST_TIMEOUT` | `240` | Hard timeout per host, seconds. |
+| `FFUF_RATE` | `10` | ffuf requests per second. |
+| `FFUF_THREADS` | `4` | ffuf threads. |
+| `FFUF_RESCAN_DAYS` | `14` | Days before a host is fuzzed again. |
+| `FFUF_WORDLIST` | `wordlists/watch_content_small.txt` | Content-discovery wordlist. |
 
 Resource limits come from **`watch-heavy.slice`** (installed by
 `setup-weekly-jobs.sh`): `CPUQuota=60%`, `MemoryMax=3G`, `MemoryHigh=2500M`,
@@ -589,6 +619,24 @@ feasible domains), and make sure the brute/crawl/param tools are installed
   again. See section 11b for settings. Note: wildcard probes use the plain batch resolver,
   not the incremental selector — the selector is only for the bulk scope resolve in
   `watch_ns_all.py`, so a single random probe no longer costs a full selection cycle.
+- **`watch_nuclei_run.py`** *(heavy-worker nuclei lane)* — subdomain-takeover pass on
+  `Subdomains`, then nuclei on `Http` hosts grouped by technology. Each finding is upserted
+  into `Finding` (deduped on target + name); only new medium+ findings alert.
+- **`watch_secret_run.py`** *(opt-in secret lane)* — fetches in-scope `.js` URLs (no
+  redirects followed, streamed size cap), runs regex rules (AWS keys, Slack/Stripe tokens,
+  Google API keys, private key blocks, JWTs, generic secret assignments) and stores only
+  redacted matches in `Finding`. Out-of-scope URLs are marked and never fetched.
+- **`watch_ffuf_run.py`** *(opt-in ffuf lane)* — ffuf with `-ac` and a status filter on
+  in-scope `Http` hosts. Output is written only at exit, so each run is capped below the
+  host timeout to keep partial results. Sensitive paths (`.env`, `.git/config`, backups,
+  actuator, admin, ...) are `medium`; everything else is `info`.
+- **`scripts/watch_health.py`** *(watch-health timer)* — checks the systemd units in
+  `WATCH_HEALTH_UNITS`, MongoDB ping and optional `WATCH_HEALTH_URLS`. Alerts once when a
+  check goes down and once when it recovers.
+- **`scripts/watch_digest.py`** *(watch-digest timer)* — one Telegram summary per day with
+  new subdomains, live hosts, HTTP services and findings by severity, per program.
+- **`scripts/watch_maintenance.py`** *(watch-maintenance timer)* — prunes `Urls` not seen
+  within `URLS_RETENTION_MONTHS` and trims `ChangeEvent` to `CHANGE_EVENTS_MAX` rows.
 - **`api.py`** — FastAPI dashboard + JSON API, described below.
 
 ---
@@ -665,3 +713,66 @@ sudo systemctl status watch-api
 systemctl list-timers --all | grep watch
 sudo journalctl -u watch-api -n 50 --no-pager
 ```
+
+---
+
+## 16. Recon expansion: health, digest, retention, scope rules
+
+**Scope and tooling rules that apply to every component**
+
+- Every external call is checked against the program's scope *and* out-of-scope list
+  before it is made (`utils/recon.py` → `in_scope`, `scope_index`).
+- Every external tool runs through `run_tool()`: argv list, no `shell=True`, a hard
+  `timeout -k` wrapper, and partial output is kept when the timeout fires.
+- **No port scanning.** naabu and any other port scanner are not installed or called.
+- `asnmap` is **deferred**: it is optional in the spec and not installed on this host.
+- `trufflehog` is **not installed**. The secret lane uses its own regex rules instead.
+- The new web UI (`/ui/findings`) sits behind the same auth middleware as the rest of the dashboard.
+
+**Timers**
+
+| Timer | When | Unit | What it does |
+|---|---|---|---|
+| `watch-health.timer` | every 10 min | `watch-health.service` | Unit, MongoDB and URL checks; alerts on DOWN and RECOVERED transitions only |
+| `watch-digest.timer` | daily 09:00 Asia/Tehran | `watch-digest.service` | One summary message; skipped if one was sent in the last 20 h |
+| `watch-maintenance.timer` | Sunday 04:00 Asia/Tehran | `watch-maintenance.service` | Prunes old `Urls`, trims `ChangeEvent`, ensures indexes |
+
+Install (the script also installs gau and copies these units into `/etc/systemd/system`):
+```bash
+bash setup-weekly-jobs.sh
+systemctl list-timers --all | grep -E 'watch-(health|digest|maintenance)'
+```
+
+> Re-running `setup-weekly-jobs.sh` also re-applies the heavy-job timer setup from
+> section 11, so only run it when you want that reset.
+
+**Enabling the opt-in lanes**
+
+Add `secret` and/or `ffuf` to `WATCH_HEAVY_LANES` in `/etc/systemd/system/watch-heavy.service`,
+then `sudo systemctl daemon-reload && sudo systemctl restart watch-heavy.service`.
+
+**Health settings**
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `WATCH_HEALTH_UNITS` | `watch-heavy.service,watch-ct-stream.service,watch.timer` | Units checked with `systemctl is-active`. |
+| `WATCH_HEALTH_URLS` | empty | Comma list of URLs. Only non-5xx responses count as healthy. |
+| `WATCH_HEALTH_TIMEOUT` | `10` | Per-check timeout, seconds. |
+| `WATCH_HEALTH_STATE` | `logs/health_state.json` | Transition state. |
+
+**Digest settings:** `WATCH_DIGEST_WINDOW_HOURS` (24, used only when there is no previous run),
+`WATCH_DIGEST_STATE` (`logs/digest_state.json`). The state advances only after Telegram accepts
+the message, so a failed send is retried on the next run.
+
+**Retention settings:** `URLS_RETENTION_MONTHS` (12), `CHANGE_EVENTS_MAX` (200000),
+`MAINTENANCE_BATCH` (5000). Run the script without `--apply` to see what would be removed.
+
+```bash
+python3 scripts/watch_health.py --dry-run
+python3 scripts/watch_digest.py --dry-run
+python3 scripts/watch_maintenance.py          # dry run; add --apply to delete
+```
+
+**Indexes** added for the dashboard and digest queries: `Subdomains.scope`, `Subdomains.providers`,
+`Subdomains.created_date`, `Http.created_date`, `LiveSubdomains.created_date`. `ensure_indexes`
+runs with `watch_maintenance.py --ensure-indexes` (the weekly timer does this).

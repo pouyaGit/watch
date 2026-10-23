@@ -58,10 +58,16 @@ class Subdomains(Document):
     providers = ListField(StringField())
     created_date = DateTimeField(default=datetime.now())
     last_update = DateTimeField(default=datetime.now())
+    last_takeover_check = DateTimeField()
 
     meta = {
         'indexes': [
-            {'fields': ['program_name', 'subdomain'], 'unique': True}  # Create a unique index on program_name and subdomain
+            {'fields': ['program_name', 'subdomain'], 'unique': True},  # Create a unique index on program_name and subdomain
+            {'fields': ['program_name', 'last_update']},
+            {'fields': ['last_takeover_check']},
+            {'fields': ['scope']},
+            {'fields': ['providers']},
+            {'fields': ['created_date']},
         ]
     }
 
@@ -79,10 +85,17 @@ class Http(Document):
     favicon    = StringField()
     created_date = DateTimeField(default=datetime.now())
     last_update  = DateTimeField(default=datetime.now())
+    last_nuclei_run = DateTimeField()
+    last_ffuf_run   = DateTimeField()
 
     meta = {
         'indexes': [
-            {'fields': ['program_name', 'subdomain'], 'unique': True}
+            {'fields': ['program_name', 'subdomain'], 'unique': True},
+            {'fields': ['program_name', 'created_date']},
+            {'fields': ['created_date']},
+            {'fields': ['last_update']},
+            {'fields': ['last_nuclei_run']},
+            {'fields': ['last_ffuf_run']},
         ]
     }
 
@@ -97,7 +110,10 @@ class LiveSubdomains(Document):
 
     meta = {
         'indexes': [
-            {'fields': ['program_name', 'subdomain'], 'unique': True}  # Create a unique index on program_name + subdomain
+            {'fields': ['program_name', 'subdomain'], 'unique': True},  # Create a unique index on program_name + subdomain
+            {'fields': ['program_name', 'created_date']},
+            {'fields': ['created_date']},
+            {'fields': ['scope']},
         ]
     }
 
@@ -112,10 +128,13 @@ class Urls(Document):
     status_code  = IntField()
     created_date = DateTimeField(default=datetime.now())
     last_update  = DateTimeField(default=datetime.now())
- 
+    secret_scanned_at = DateTimeField()
+
     meta = {
         'indexes': [
-            {'fields': ['program_name', 'url'], 'unique': True}
+            {'fields': ['program_name', 'url'], 'unique': True},
+            {'fields': ['program_name', 'path']},
+            {'fields': ['last_update']},
         ]
     }
 
@@ -195,6 +214,96 @@ class XssFindings(Document):
             {'fields': ['-updated_at']},
         ]
     }
+
+
+FINDING_SEVERITIES = ("info", "low", "medium", "high", "critical", "unknown")
+
+
+class Finding(Document):
+    program_name = StringField(required=True)
+    scope        = StringField()
+    target       = StringField(required=True)
+    source       = StringField(required=True)   # nuclei | takeover | secret | content
+    name         = StringField()
+    severity     = StringField()
+    matched      = StringField()
+    extra        = DictField()
+    first_seen   = DateTimeField(default=datetime.now)
+    last_seen    = DateTimeField(default=datetime.now)
+    status       = StringField(default="open")  # open | triaged | false_positive | fixed
+
+    meta = {
+        'indexes': [
+            {'fields': ['program_name', 'severity']},
+            {'fields': ['source']},
+            {'fields': ['-first_seen']},
+            {'fields': ['target', 'name'], 'unique': True},
+        ]
+    }
+
+
+class ScopeRunStatus(Document):
+    lane         = StringField(required=True)
+    program_name = StringField(required=True)
+    scope        = StringField(required=True)
+    last_run     = DateTimeField()
+
+    meta = {
+        'indexes': [
+            {'fields': ['lane', 'scope'], 'unique': True},
+        ]
+    }
+
+
+def _bounded(value, limit):
+    if value is None:
+        return None
+    text = str(value)
+    return text[:limit]
+
+
+def _bounded_extra(extra):
+    out = {}
+    for key, value in list((extra or {}).items())[:20]:
+        if isinstance(value, (list, tuple)):
+            out[str(key)] = [_bounded(v, 300) for v in list(value)[:10]]
+        elif isinstance(value, (int, float, bool)) or value is None:
+            out[str(key)] = value
+        else:
+            out[str(key)] = _bounded(value, 300)
+    return out
+
+
+def upsert_finding(obj):
+    """Insert or refresh a Finding keyed on (target, name).
+
+    Returns True only when this call created the row, so callers alert on
+    first sight and never again for the same asset/check.
+    """
+    now = datetime.now()
+    severity = obj.get("severity") or "unknown"
+    if severity not in FINDING_SEVERITIES:
+        severity = "unknown"
+    result = Finding._get_collection().update_one(
+        {"target": obj["target"], "name": obj.get("name") or ""},
+        {
+            "$set": {
+                "last_seen": now,
+                "severity": severity,
+                "matched": _bounded(obj.get("matched"), 500) or "",
+                "extra": _bounded_extra(obj.get("extra")),
+            },
+            "$setOnInsert": {
+                "program_name": obj["program_name"],
+                "scope": obj.get("scope") or "",
+                "source": obj["source"],
+                "first_seen": now,
+                "status": "open",
+            },
+        },
+        upsert=True,
+    )
+    return result.upserted_id is not None
 
 
 # Upsert Programs
@@ -795,3 +904,35 @@ def _snapshot_endpoint_params(keys):
         print(f"[_snapshot_endpoint_params] snapshot failed -- skipping event recording")
         return None
     return out
+
+
+def bulk_upsert_urls(entries):
+    """URL-only bulk upsert (Urls collection, no Endpoints side effects).
+
+    Used by sources whose history is too noisy to feed the x8 Endpoints pipeline
+    (e.g. gau). entries: dicts {program_name, subdomain, url, path, params, source}.
+    Returns the number of newly created Urls documents.
+    """
+    if not entries:
+        return 0
+    now = datetime.now()
+    ops = [
+        UpdateOne(
+            {"program_name": e["program_name"], "url": e["url"]},
+            {
+                "$addToSet": {"sources": e["source"], "params": {"$each": e.get("params") or []}},
+                "$set": {"subdomain": e["subdomain"], "path": e["path"], "last_update": now},
+                "$setOnInsert": {"created_date": now},
+            },
+            upsert=True,
+        )
+        for e in entries
+    ]
+    created = 0
+    coll = Urls._get_collection()
+    for i in range(0, len(ops), 2000):
+        try:
+            created += coll.bulk_write(ops[i:i + 2000], ordered=False).upserted_count
+        except BulkWriteError as bwe:
+            created += bwe.details.get("nUpserted", 0)
+    return created

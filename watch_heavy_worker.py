@@ -2,9 +2,9 @@
 """
 watch_heavy_worker.py -- one serialized, always-on heavy worker.
 
-Runs the three heavy lanes ONE AT A TIME, round-robin, forever:
+Runs the heavy lanes ONE AT A TIME, round-robin, forever:
 
-    brute  ->  crawl  ->  param  ->  brute  -> ...
+    brute  ->  crawl  ->  param  ->  nuclei  ->  brute  -> ...
 
 Each lane is given a bounded time slice (WATCH_HEAVY_LANE_MINUTES) and is driven
 by the existing, resumable per-lane scripts, so a lane always picks up where it
@@ -16,6 +16,12 @@ left off and no lane starves the others:
             domain first)
   - param : crawl/watch_param_discovery.py --max-minutes N  (unchecked endpoints
             first, x8 at a polite rate)
+  - nuclei: nuclei/watch_nuclei_run.py --max-minutes N  (subdomain takeover pass,
+            then never-scanned / stalest live services)
+  - secret: secret/watch_secret_run.py --max-minutes N  (opt-in: JS bundles, redacted
+            secret matches)
+  - ffuf  : content/watch_ffuf_run.py --max-minutes N  (opt-in: bounded content
+            discovery on live hosts)
 
 Why one worker instead of three 24/7 services: the VPS is small (2 cores / 4 GB)
 and param discovery is ACTIVE scanning. Serializing the heavy work keeps exactly
@@ -30,11 +36,12 @@ Live status and control (shared with the dashboard, see backend/task_runner.py):
 Env knobs:
   WATCH_HEAVY_LANE_MINUTES  per-lane time slice   (default 20)
   WATCH_HEAVY_IDLE_SLEEP    sleep when a whole cycle found nothing to do (default 900)
-  WATCH_HEAVY_LANES         comma list to restrict/reorder lanes (default brute,crawl,param)
+  WATCH_HEAVY_LANES         comma list to restrict/reorder lanes (default brute,crawl,param,nuclei).
+                            secret and ffuf are opt-in: add them here to enable them.
 
 Usage:
   python3 watch_heavy_worker.py                 # continuous (service default)
-  python3 watch_heavy_worker.py --once          # one brute+crawl+param cycle, then exit
+  python3 watch_heavy_worker.py --once          # one pass over the configured lanes, then exit
   python3 watch_heavy_worker.py --lane-minutes 10 --once   # quick test
 """
 import argparse
@@ -80,6 +87,9 @@ LANE_CMDS = {
     "brute": [VENV_PY, "ns/watch_brute_worker.py", "--max-minutes"],
     "crawl": [VENV_PY, "crawl/watch_crawl_all.py", "--max-minutes"],
     "param": [VENV_PY, "crawl/watch_param_discovery.py", "--max-minutes"],
+    "nuclei": [VENV_PY, "nuclei/watch_nuclei_run.py", "--max-minutes"],
+    "secret": [VENV_PY, "secret/watch_secret_run.py", "--max-minutes"],
+    "ffuf": [VENV_PY, "content/watch_ffuf_run.py", "--max-minutes"],
 }
 
 # lane name -> (regex on a log line, extractor returning the target)
@@ -88,6 +98,9 @@ TARGET_PATTERNS = {
     "crawl": (re.compile(r"--- Crawling (\S+) \("), lambda m: m.group(1)),
     "param": (re.compile(r"\[x8\] program=\S+ endpoint=(\S+)"),
               lambda m: urlparse(m.group(1)).hostname),
+    "nuclei": (re.compile(r"--- Nuclei (?:takeover pass|batch): (\S+)"), lambda m: m.group(1)),
+    "secret": (re.compile(r"--- Secret scan: (\S+)"), lambda m: m.group(1)),
+    "ffuf": (re.compile(r"--- ffuf host: (\S+)"), lambda m: m.group(1)),
 }
 
 
@@ -339,7 +352,7 @@ def run_lane(heavy, name, lane_min):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true",
-                        help="run one brute+crawl+param cycle, then exit")
+                        help="run one cycle over the configured lanes, then exit")
     parser.add_argument("--lane-minutes", type=float, default=DEFAULT_LANE_MIN,
                         help="per-lane time slice in minutes")
     parser.add_argument("--idle-sleep", type=int, default=DEFAULT_IDLE_SLEEP,
@@ -347,9 +360,9 @@ def main():
     args = parser.parse_args()
 
     lanes = [l.strip() for l in os.environ.get(
-        "WATCH_HEAVY_LANES", "brute,crawl,param").split(",") if l.strip() in LANE_CMDS]
+        "WATCH_HEAVY_LANES", "brute,crawl,param,nuclei").split(",") if l.strip() in LANE_CMDS]
     if not lanes:
-        lanes = ["brute", "crawl", "param"]
+        lanes = ["brute", "crawl", "param", "nuclei"]
 
     log(f"=== Heavy worker starting | lanes={lanes} | lane_minutes={args.lane_minutes} "
         f"| mode={'once' if args.once else 'continuous'} ===")

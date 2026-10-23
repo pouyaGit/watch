@@ -238,6 +238,29 @@ WantedBy=timers.target
 UNIT
 
 # ==================================================
+# gau - feeds the crawl lane (no separate lane; no port scanner is used)
+# ==================================================
+
+if command -v go > /dev/null 2>&1 || [ -x /usr/local/go/bin/go ]; then
+    export PATH="$PATH:/usr/local/go/bin:/root/go/bin"
+    go install github.com/lc/gau/v2/cmd/gau@latest
+else
+    echo "go not found: skipping gau install (crawl lane runs without gau)"
+fi
+
+# ==================================================
+# Health, digest and retention - units are kept in systemd/ of this repo
+# ==================================================
+
+for u in \
+    watch-health.service watch-health.timer \
+    watch-digest.service watch-digest.timer \
+    watch-maintenance.service watch-maintenance.timer
+do
+    sudo install -m 0644 "/opt/watch/systemd/${u}" "${SYSTEMD_DIR}/${u}"
+done
+
+# ==================================================
 # Apply
 # ==================================================
 
@@ -268,7 +291,13 @@ do
     sudo systemctl restart "${t}.timer"
 done
 
+# Health watchdog, daily digest and weekly retention.
+for t in watch-health watch-digest watch-maintenance; do
+    sudo systemctl enable "${t}.timer"
+    sudo systemctl restart "${t}.timer"
+done
+
 echo
 echo "=== Heavy Jobs setup complete ==="
 echo
-systemctl list-timers --all | grep -E 'watch-(dns|crawl|param)'
+systemctl list-timers --all | grep -E 'watch-(dns|crawl|param|health|digest|maintenance)'

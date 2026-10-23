@@ -1,0 +1,13 @@
+[Unit]
+Description=Watch health watchdog (services, MongoDB, optional URLs)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/watch
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+# Alerts only on transitions (DOWN once, RECOVERED once). Set WATCH_HEALTH_URLS to
+# probe public endpoints, e.g. WATCH_HEALTH_URLS=https://dashboard.example/login
+Environment="WATCH_HEALTH_UNITS=watch-heavy.service,watch-ct-stream.service,watch.timer"
+ExecStart=/opt/watch/venv/bin/python3 /opt/watch/scripts/watch_health.py

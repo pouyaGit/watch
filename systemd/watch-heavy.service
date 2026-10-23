@@ -26,6 +26,19 @@ Environment=WATCH_STATIC_MAX_CANDIDATES=4000000
 Environment=WATCH_BRUTE_VERBOSE=1
 # Tunables: WATCH_HEAVY_LANE_MINUTES, WATCH_HEAVY_IDLE_SLEEP, WATCH_HEAVY_LANES,
 # and the per-lane knobs (WATCH_BRUTE_*, WATCH_STATIC_MAX_CANDIDATES, X8_WORDLIST).
+# Default lanes: brute,crawl,param,nuclei. secret and ffuf are opt-in: add them to
+# WATCH_HEAVY_LANES to enable them.
+# Crawl lane (gau is merged into it, no separate lane): GAU_ENABLED, GAU_MAX_SEEDS,
+# GAU_TIMEOUT (seconds, clamped to the lane budget).
+# Nuclei lane: NUCLEI_* (batch size, rate, timeouts, tag set).
+# Secret lane: SECRET_BATCH, SECRET_MAX_BYTES, SECRET_DELAY_MS, SECRET_RESCAN_DAYS,
+# SECRET_TIMEOUT. Stores redacted matches only.
+# ffuf lane: FFUF_BATCH_HOSTS, FFUF_HOST_TIMEOUT, FFUF_RATE, FFUF_THREADS,
+# FFUF_RESCAN_DAYS, FFUF_WORDLIST.
+# Health and digest (separate timers): WATCH_HEALTH_UNITS, WATCH_HEALTH_URLS,
+# WATCH_HEALTH_TIMEOUT, WATCH_HEALTH_STATE, WATCH_DIGEST_WINDOW_HOURS, WATCH_DIGEST_STATE.
+# Retention (watch-maintenance.timer): URLS_RETENTION_MONTHS, CHANGE_EVENTS_MAX,
+# MAINTENANCE_BATCH.
 ExecStart=/opt/watch/venv/bin/python3 /opt/watch/watch_heavy_worker.py
 Restart=always
 RestartSec=30

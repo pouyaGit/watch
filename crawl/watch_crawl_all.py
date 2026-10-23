@@ -36,7 +36,9 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import config
-from database.db import Http, Urls, bulk_store_crawl_results
+from database.db import Http, Urls, bulk_store_crawl_results, bulk_upsert_urls
+from utils.common import find_tool
+from utils.recon import env_flag, env_int, in_scope, run_tool, scope_index
 
 OUT_DIR = Path("/opt/watch/crawl/output")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -44,11 +46,19 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 DATE = datetime.now().strftime("%Y%m%d_%H%M%S")
 API = "http://127.0.0.1:5000/api/http/all?raw=1"
 
-BAD_EXT = re.compile(
-    r'\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|map|'
-    r'mp4|webm|pdf|zip|rar|gz|xml|txt)(\?|$)',
-    re.I
+NOISE_EXT_LIST = (
+    r'css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|map|'
+    r'mp4|webm|pdf|zip|rar|gz|xml|txt'
 )
+NOISE_EXT = re.compile(rf'\.({NOISE_EXT_LIST})(\?|$)', re.I)
+BAD_EXT = re.compile(rf'\.(js|{NOISE_EXT_LIST})(\?|$)', re.I)
+
+# gau pulls archived URLs (Wayback, CommonCrawl, OTX, URLScan). It never contacts
+# the target, but its results are scope-filtered and capped before they feed katana.
+GAU_ENABLED = env_flag("GAU_ENABLED", True)
+GAU_MAX_SEEDS = env_int("GAU_MAX_SEEDS", 20000)
+GAU_TIMEOUT = env_int("GAU_TIMEOUT", 300)
+GAU_PROVIDERS = os.getenv("GAU_PROVIDERS", "wayback,commoncrawl,otx,urlscan")
 
 # ---------------- server-load tuning ----------------
 KATANA_DEPTH        = 3
@@ -148,9 +158,61 @@ def order_by_least_recently_crawled(by_domain):
     return [(domain, urls) for _, domain, urls in scored]
 
 
-def resolve_program(host):
-    doc = Http.objects(subdomain=host).first()
-    return doc.program_name if doc else "Unknown"
+def make_program_lookup(scope_idx):
+    cache = {}
+
+    def lookup(host):
+        if not host:
+            return None
+        if host not in cache:
+            cache[host] = next(
+                (name for name, (scopes, ooscopes) in scope_idx.items()
+                 if in_scope(host, scopes, ooscopes)),
+                None,
+            )
+        return cache[host]
+
+    return lookup
+
+
+def gau_budget_s(max_minutes):
+    if not max_minutes:
+        return GAU_TIMEOUT
+    return min(GAU_TIMEOUT, max(0, max_minutes * 60 - elapsed_minutes() * 60))
+
+
+def gau_seeds(domain, lookup, timeout_s):
+    argv = [
+        "gau", "--subs", "--threads", "5", "--timeout", "20",
+        "--providers", GAU_PROVIDERS, "--fp",
+        "--blacklist", NOISE_EXT_LIST.replace("|", ","),
+        domain,
+    ]
+    # run_tool wraps gau in `timeout`, so partial output survives a hard stop.
+    rc, out = run_tool(argv, timeout_s, capture=True)
+    kept = set()
+    for line in out.splitlines():
+        url = line.strip()
+        if not url.startswith("http") or NOISE_EXT.search(url):
+            continue
+        if lookup(get_host(url)) is None:
+            continue
+        kept.add(url)
+    log(f"{domain}: gau rc={rc}, {len(kept)} in-scope archived URLs")
+    return set(sorted(kept)[:GAU_MAX_SEEDS])
+
+
+def url_entry(url, program_name, source):
+    clean = html.unescape(url)
+    parsed = urlparse(clean)
+    return {
+        "program_name": program_name,
+        "subdomain": get_host(clean),
+        "url": clean,
+        "path": parsed.path or "/",
+        "params": sorted(set(parse_qs(parsed.query).keys())),
+        "source": source,
+    }
 
 
 def run_katana(targets_file, out_file):
@@ -211,14 +273,21 @@ def send_telegram_message(text):
         log(f"Telegram exception: {e}")
 
 
-def crawl_domain(domain, urls):
+def crawl_domain(domain, urls, scope_idx, gau_timeout_s):
+    lookup = make_program_lookup(scope_idx)
+    urls = [u for u in urls if lookup(get_host(u))]
+    if not urls:
+        log(f"{domain}: no in-scope seeds, skipping")
+        return 0, 0
+
     log(f"\n--- Crawling {domain} ({len(urls)} seeds) ---")
     send_telegram_message(f"Now crawling {domain} [crawlAll]\nSeeds: {len(urls)}")
     domain_dir = OUT_DIR / f"all_{domain}_{DATE}"
     domain_dir.mkdir(parents=True, exist_ok=True)
 
+    gau_set = gau_seeds(domain, lookup, gau_timeout_s) if gau_timeout_s >= 30 else set()
     seeds_file = domain_dir / "seeds.txt"
-    seeds_file.write_text("\n".join(urls) + "\n")
+    seeds_file.write_text("\n".join(sorted(set(urls) | gau_set)) + "\n")
 
     katana_out = domain_dir / "katana.txt"
     crawled = set(run_katana(seeds_file, katana_out))
@@ -243,11 +312,8 @@ def crawl_domain(domain, urls):
     entries = []
     skipped_out_of_scope = 0
     for u in all_urls:
-        host = get_host(u)
-        if not host:
-            continue
-        program_name = resolve_program(host)
-        if program_name == "Unknown":
+        program_name = lookup(get_host(u))
+        if program_name is None:
             skipped_out_of_scope += 1
             continue
         if u in crawled:
@@ -256,29 +322,25 @@ def crawl_domain(domain, urls):
             source = "wayback-robots"
         else:
             source = "http-seed"
-
-        clean_url = html.unescape(u)
-        parsed = urlparse(clean_url)
-        entries.append({
-            "program_name": program_name,
-            "subdomain": host,
-            "url": clean_url,
-            "path": parsed.path or "/",
-            "params": sorted(set(parse_qs(parsed.query).keys())),
-            "source": source,
-        })
+        entries.append(url_entry(u, program_name, source))
 
     if skipped_out_of_scope:
         log(f"{domain}: skipped {skipped_out_of_scope} out-of-scope/third-party URLs")
 
+    # gau-only URLs (not live, not confirmed by katana or robots) go to Urls only.
+    # Routing them through bulk_store_crawl_results would turn archive noise into Endpoints.
+    gau_only = gau_set - set(urls) - crawled - robots_urls
+    gau_new = bulk_upsert_urls([url_entry(u, lookup(get_host(u)), "gau") for u in sorted(gau_only)])
     saved_new = bulk_store_crawl_results(entries)
 
-    log(f"{domain}: total {len(all_urls)} URLs | {saved_new} new in DB")
+    log(f"{domain}: total {len(all_urls)} URLs | {saved_new} new in DB | "
+        f"gau {len(gau_set)} in-scope, {len(gau_only)} gau-only, {gau_new} new Urls")
     send_telegram_message(
         f"Result -- {domain} [crawlAll]\n"
-        f"Seeds: {len(urls)} | Final: {len(all_urls)} | New in DB: {saved_new}"
+        f"Seeds: {len(urls)} | gau: {len(gau_set)} | Final: {len(all_urls)} | "
+        f"New in DB: {saved_new + gau_new}"
     )
-    return len(all_urls), saved_new
+    return len(all_urls) + len(gau_only), saved_new + gau_new
 
 
 def main():
@@ -301,6 +363,11 @@ def main():
     ordered = order_by_least_recently_crawled(by_domain)
     log(f"{len(ordered)} root domains, ordered oldest-crawled-first")
 
+    scope_idx = scope_index()
+    gau_ready = GAU_ENABLED and find_tool("gau") is not None
+    if GAU_ENABLED and not gau_ready:
+        log("gau not on PATH (setup-weekly-jobs.sh installs it); gau step skipped")
+
     domain_list = "\n".join(f"  - {d} ({len(by_domain[d])} seeds)" for d in [x[0] for x in ordered])
     send_telegram_message(
         f"Starting crawlAll run\nTime budget: {args.max_minutes or 'unlimited'} min\n"
@@ -317,8 +384,9 @@ def main():
             skipped_domains.append(domain)
             continue
 
+        gau_timeout = gau_budget_s(args.max_minutes) if gau_ready else 0
         try:
-            u_count, n_count = crawl_domain(domain, urls)
+            u_count, n_count = crawl_domain(domain, urls, scope_idx, gau_timeout)
         except Exception as e:
             log(f"ERROR crawling {domain}, skipping to next domain: {e}")
             send_telegram_message(f"crawlAll: {domain} FAILED ({e}) -- continuing with next domain")

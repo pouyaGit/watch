@@ -13,6 +13,12 @@
   <div class="kpi"><div class="v">{{ kpis.endpoints }}</div><div class="l">Endpoints</div></div>
 </div>
 
+<div class="kpis">
+  {% for sev in ["critical", "high", "medium", "low"] %}
+  <div class="kpi"><div class="v">{{ findings.get(sev, 0) }}</div><div class="l"><a href="/ui/findings?severity={{ sev }}">Open {{ sev }}</a></div></div>
+  {% endfor %}
+</div>
+
 <div class="flash ok" style="display:flex;gap:18px;flex-wrap:wrap;">
   <span>Fresh (24h): {{ fresh.subdomains }} subdomains</span>
   <a href="/ui/http/fresh">{{ fresh.http }} new HTTP services &rarr;</a>

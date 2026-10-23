@@ -1,0 +1,14 @@
+[Unit]
+Description=Watch data retention (prune old Urls, trim ChangeEvent)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/watch
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="URLS_RETENTION_MONTHS=12"
+Environment="CHANGE_EVENTS_MAX=200000"
+ExecStart=/opt/watch/venv/bin/python3 /opt/watch/scripts/watch_maintenance.py --apply --ensure-indexes
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,9 @@
+[Unit]
+Description=Run Watch data retention weekly, Sunday 04:00 Asia/Tehran
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00 Asia/Tehran
+Persistent=true
+
+[Install]
+WantedBy=timers.target

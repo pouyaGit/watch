@@ -1,5 +1,7 @@
 """HTML pages. Console pages render Jinja templates; legacy list pages keep their paths."""
+import html
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 from bson import ObjectId
 from bson.errors import InvalidId
@@ -17,10 +19,25 @@ from backend.tasks_registry import TASKS_REGISTRY, TOOL_TO_TASK
 from backend.templating import templates
 from database.change_events import event_label, recent_events
 from database.db import (
-    DnsBruteStatus, Endpoints, Http, LiveSubdomains, Programs, Subdomains, Urls,
+    DnsBruteStatus, Endpoints, Finding, Http, LiveSubdomains, Programs, Subdomains, Urls,
 )
 
 router = APIRouter()
+
+FINDING_SEVERITIES = ("critical", "high", "medium", "low", "info", "unknown")
+FINDING_COLORS = {
+    "critical": "#ff4d4f", "high": "#f85149", "medium": "#d29922",
+    "low": "#58a6ff", "info": "#8b949e", "unknown": "#8b949e",
+}
+
+
+def _esc(value):
+    return html.escape(str(value or ""))
+
+
+def _severity_badge(severity):
+    color = FINDING_COLORS.get(severity, FINDING_COLORS["unknown"])
+    return f'<span class="badge" style="border-color:{color};color:{color};">{_esc(severity)}</span>'
 
 
 def _page(request, template, active, **ctx):
@@ -111,9 +128,14 @@ def dashboard(request: Request):
             "providers": _providers(name),
             "running": _running_runs(target=name),
         })
+    findings = {r["_id"]: r["n"] for r in Finding._get_collection().aggregate([
+        {"$match": {"status": "open"}},
+        {"$group": {"_id": "$severity", "n": {"$sum": 1}}},
+    ])}
     return _page(request, "dashboard.html", "dashboard", kpis=kpis, fresh=fresh, cards=cards,
                  tasks=_task_menu(), global_running=_running_runs(target=None),
-                 events=_event_rows(recent_events(limit=8)), bf_providers=BF_PROVIDERS)
+                 events=_event_rows(recent_events(limit=8)), bf_providers=BF_PROVIDERS,
+                 findings=findings)
 
 
 @router.get("/ui/program/{name}", response_class=HTMLResponse)
@@ -459,3 +481,82 @@ def ui_x8_status():
     </table></div>
     """
     return HTMLResponse(render_page("x8 Parameter Discovery", body))
+
+
+def _options(values, current, any_label):
+    out = [f'<option value="">{any_label}</option>']
+    for value in values:
+        selected = " selected" if value == current else ""
+        out.append(f'<option value="{_esc(value)}"{selected}>{_esc(value)}</option>')
+    return "".join(out)
+
+
+@router.get("/ui/findings", response_class=HTMLResponse)
+def ui_findings(program: str = None, severity: str = None, source: str = None,
+                status: str = "open", page: int = 1, limit: int = 100):
+    filters = {}
+    if program:
+        filters["program_name"] = program
+    if severity in FINDING_SEVERITIES:
+        filters["severity"] = severity
+    if source:
+        filters["source"] = source
+    if status:
+        filters["status"] = status
+    page = max(page, 1)
+    qs = Finding.objects(**filters).order_by("-first_seen")
+    total = qs.count()
+
+    rows = ""
+    for f in paginate(qs, page, limit):
+        matched = f.matched or f.target or ""
+        target = (f'<a href="{_esc(matched)}" target="_blank" rel="noopener noreferrer">{_esc(matched)}</a>'
+                  if matched.startswith(("http://", "https://")) else _esc(matched))
+        first = f.first_seen.strftime("%b %d, %H:%M") if f.first_seen else ""
+        rows += (
+            f'<tr><td data-label="Severity">{_severity_badge(f.severity)}</td>'
+            f'<td data-label="Source">{_esc(f.source)}</td>'
+            f'<td data-label="Program">{_esc(f.program_name)}</td>'
+            f'<td class="name" data-label="Name">{_esc(f.name)}</td>'
+            f'<td data-label="Target">{target}</td>'
+            f'<td class="ts" data-label="First seen">{_esc(first)}</td>'
+            f'<td data-label="Status">{_esc(f.status)}</td></tr>'
+        )
+    if not rows:
+        rows = '<tr><td colspan="7" class="note">No findings match these filters.</td></tr>'
+
+    base = {"program": program, "severity": severity, "source": source, "status": status, "limit": limit}
+
+    def link(p):
+        return "/ui/findings?" + urlencode({**{k: v for k, v in base.items() if v}, "page": p})
+
+    total_pages = max(1, (total + limit - 1) // limit)
+    nav = f'Page {page}/{total_pages} — total {total:,}'
+    if page > 1:
+        nav += f' | <a href="{_esc(link(page - 1))}">« Prev</a>'
+    if page < total_pages:
+        nav += f' | <a href="{_esc(link(page + 1))}">Next »</a>'
+
+    programs = [p.program_name for p in Programs.objects().order_by("program_name")]
+    home = build_url("/")
+    body = f"""
+    <a href="{home}">← Back to Dashboard</a>
+    <h2>Findings</h2>
+    <form method="get" action="/ui/findings" class="note">
+      <select name="program">{_options(programs, program, "All programs")}</select>
+      <select name="severity">{_options(FINDING_SEVERITIES, severity, "Any severity")}</select>
+      <select name="source">{_options(("nuclei", "takeover", "secret"), source, "Any source")}</select>
+      <select name="status">{_options(("open", "triaged", "false_positive", "fixed"), status, "Any status")}</select>
+      <button type="submit">Filter</button>
+    </form>
+    <p class="note">Deduplicated on target + check name. Only medium+ findings alert on Telegram.</p>
+    <div class="table-wrap"><table class="status">
+      <thead><tr>
+        <th>Severity</th><th>Source</th><th>Program</th><th>Name</th>
+        <th>Target</th><th>First seen</th><th>Status</th>
+      </tr></thead>
+      <tbody>{rows}</tbody>
+    </table></div>
+    <div class="pagenav">{nav}</div>
+    """
+    return HTMLResponse(render_page("Findings", body))
