@@ -32,6 +32,9 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background:#0d1117; color
 .side .brand { color:var(--blue); font-weight:700; font-size:18px; margin-bottom:18px; font-family:ui-monospace,Consolas,monospace; }
 .side a { display:block; padding:8px 10px; border-radius:6px; color:var(--muted); margin:2px 0; }
 .side a.active, .side a:hover { background:#21262d; color:var(--text); text-decoration:none; }
+.navhead { display:flex; align-items:center; justify-content:space-between; }
+.hamburger { display:none; }
+.signout { margin-top:20px; }
 .main { padding:20px 28px; min-width:0; }
 .topbar { display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom:18px; }
 .topbar form { flex:1; max-width:520px; }
@@ -117,9 +120,15 @@ pre.log { background:#010409; border:1px solid var(--line); border-radius:6px; p
 .pager a { margin:0 6px; }
 @media (max-width: 760px) {
   .shell { grid-template-columns:1fr; }
-  .side { border-right:0; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:4px; padding:10px; }
-  .side .brand { width:100%; margin-bottom:6px; }
-  .side a { padding:6px 8px; }
+  .side { border-right:0; border-bottom:1px solid var(--line); padding:10px 14px; }
+  .side .brand { margin-bottom:0; }
+  /* Hamburger menu: brand + ☰ on one row; links collapse until toggled. */
+  .hamburger { display:inline-block; cursor:pointer; font-size:22px; line-height:1;
+               color:var(--text); padding:4px 12px; border:1px solid var(--line);
+               border-radius:8px; user-select:none; }
+  .navlinks { display:none; margin-top:8px; }
+  .navtoggle:checked ~ .navlinks { display:block; }
+  .navlinks a { padding:12px; margin:2px 0; font-size:16px; }
   .main { padding:14px 16px; }
   .topbar { flex-direction:column; align-items:stretch; }
   .topbar form { max-width:none; }
@@ -135,7 +144,7 @@ table.status th { color:var(--muted); font-weight:600; white-space:nowrap; }
 table.status td.ts { white-space:nowrap; font-variant-numeric:tabular-nums; }
 table.status td.num { text-align:right; font-variant-numeric:tabular-nums; }
 table.status tr:hover td { background:#11161d; }
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   table.status, table.status tbody, table.status tr, table.status td { display:block; width:100%; }
   table.status thead { display:none; }
   table.status tr { border:1px solid var(--line); border-radius:8px; margin:0 0 10px; padding:8px 12px; background:#0d1117; }

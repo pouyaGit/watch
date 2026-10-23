@@ -4,21 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title or "Watch" }} · Watch</title>
-<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/app.css?v=3">
 </head>
 <body>
 <div class="shell">
   <nav class="side" aria-label="Main">
-    <div class="brand">watch_</div>
-    <a href="/" class="{{ 'active' if active == 'dashboard' }}">Dashboard</a>
-    <a href="/ui/targets" class="{{ 'active' if active == 'targets' }}">Targets</a>
-    <a href="/ui/search" class="{{ 'active' if active == 'search' }}">Search</a>
-    <a href="/ui/runs" class="{{ 'active' if active == 'runs' }}">Runs</a>
-    <a href="/ui/dns-bruteforce/status" class="{{ 'active' if active == 'dns' }}">DNS Bruteforce</a>
-    <a href="/ui/crawl/status" class="{{ 'active' if active == 'crawl' }}">Crawl</a>
-    <a href="/ui/x8/status" class="{{ 'active' if active == 'x8' }}">x8 Params</a>
-    <a href="/ui/changes" class="{{ 'active' if active == 'changes' }}">Recent Changes</a>
-    <a href="/logout" style="margin-top:20px;">Sign out</a>
+    <div class="navhead">
+      <div class="brand">watch_</div>
+      <label for="navtoggle" class="hamburger" aria-label="Toggle menu">☰</label>
+    </div>
+    <input type="checkbox" id="navtoggle" class="navtoggle" hidden>
+    <div class="navlinks">
+      <a href="/" class="{{ 'active' if active == 'dashboard' }}">Dashboard</a>
+      <a href="/ui/targets" class="{{ 'active' if active == 'targets' }}">Targets</a>
+      <a href="/ui/search" class="{{ 'active' if active == 'search' }}">Search</a>
+      <a href="/ui/runs" class="{{ 'active' if active == 'runs' }}">Runs</a>
+      <a href="/ui/dns-bruteforce/status" class="{{ 'active' if active == 'dns' }}">DNS Bruteforce</a>
+      <a href="/ui/crawl/status" class="{{ 'active' if active == 'crawl' }}">Crawl</a>
+      <a href="/ui/x8/status" class="{{ 'active' if active == 'x8' }}">x8 Params</a>
+      <a href="/ui/changes" class="{{ 'active' if active == 'changes' }}">Recent Changes</a>
+      <a href="/logout" class="signout">Sign out</a>
+    </div>
   </nav>
   <div class="main">
     <header class="topbar">
