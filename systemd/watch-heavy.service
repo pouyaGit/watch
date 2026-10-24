@@ -29,6 +29,9 @@ Environment=WATCH_STATIC_MAX_CANDIDATES=4000000
 # ... Candidates/ETA" + results), so the operator sees brute activity alongside
 # crawl/param -- not just the quiet new-findings + heartbeat. Set to 0 to mute.
 Environment=WATCH_BRUTE_VERBOSE=1
+# Active lanes. secret is ON (JS secret-regex scan); ffuf stays OFF (aggressive
+# dir-brute). To enable ffuf add it here: brute,crawl,param,nuclei,secret,ffuf.
+Environment=WATCH_HEAVY_LANES=brute,crawl,param,nuclei,secret
 # Tunables: WATCH_HEAVY_LANE_MINUTES, WATCH_HEAVY_IDLE_SLEEP, WATCH_HEAVY_LANES,
 # and the per-lane knobs (WATCH_BRUTE_*, WATCH_STATIC_MAX_CANDIDATES, X8_WORDLIST).
 # Default lanes: brute,crawl,param,nuclei. secret and ffuf are opt-in: add them to

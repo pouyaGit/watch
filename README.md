@@ -128,7 +128,7 @@ Put the project files here (clone or copy). Expected layout:
 ├── config.py
 ├── run-pipeline.sh              # core 12h pipeline (sync/enum/dns/http/crawl-fresh)
 ├── watch_heavy_worker.py        # 24/7 heavy worker: serializes brute→crawl→param lanes
-├── setup-weekly-jobs.sh         # installs watch-heavy.slice + the precheck timer
+├── systemd/                     # all unit files (slice/service/timer); see §11c to install
 ├── resolvers.txt                # resolver list for puredns/dnsx
 ├── database/
 │   └── db.py                    # all Mongo models + upsert/bulk-write helpers
@@ -450,24 +450,26 @@ sudo systemctl enable --now watch-api
 ## 11. Weekly jobs (`watch-dns-precheck` only)
 
 The only remaining weekly timer is the DNS-bruteforce feasibility precheck. The
-heavy work (bruteforce, crawl, param discovery) now runs continuously in one
-serialized worker — see section 11b.
+heavy work (bruteforce, crawl, param discovery, nuclei) now runs continuously in
+one serialized worker — see section 11b.
 
 | Day | Job | Purpose |
 |---|---|---|
 | Friday | `watch-dns-precheck` | Refresh wildcard feasibility per domain (cheap, 60 min budget) — marks which domains the brute lane is *eligible* to run on. |
 
-Install it with the provided script:
+There is no setup script. Every unit ships as a file under `systemd/`; install
+and enable the ones you need (see **section 11c** for the full fresh-install
+list). The precheck timer specifically:
 ```bash
-bash setup-weekly-jobs.sh
+sudo cp /opt/watch/systemd/watch-dns-precheck.service /opt/watch/systemd/watch-dns-precheck.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now watch-dns-precheck.timer
 systemctl list-timers --all | grep watch
 ```
 
-> **Crawl, param discovery and DNS bruteforce are no longer weekly timers.** They
-> are the three lanes of the continuous `watch-heavy.service` (section 11b). If
-> `setup-weekly-jobs.sh` still installs `watch-crawl-all.timer` / `watch-crawl.timer`
-> / `watch-param-discovery.timer`, disable them so work is not done twice:
-> `sudo systemctl disable --now watch-crawl-all.timer watch-crawl.timer watch-param-discovery.timer`.
+> **Crawl, param discovery and DNS bruteforce are no longer separate timers** —
+> they are lanes of the continuous `watch-heavy.service` (section 11b). The old
+> per-lane units (`watch-crawl-all`, `watch-param-discovery`, `watch-dns-static`,
+> `watch-dns-dynamic`, `watch-brute`) are retired; do not install or enable them.
 
 ---
 
@@ -538,23 +540,52 @@ Set these in the `[Service]` block of `/etc/systemd/system/watch-heavy.service`
 | `FFUF_RESCAN_DAYS` | `14` | Days before a host is fuzzed again. |
 | `FFUF_WORDLIST` | `wordlists/watch_content_small.txt` | Content-discovery wordlist. |
 
-Resource limits come from **`watch-heavy.slice`** (installed by
-`setup-weekly-jobs.sh`): `CPUQuota=60%`, `MemoryMax=3G`, `MemoryHigh=2500M`,
-`IOWeight=20`.
+Resource limits come from **`watch-heavy.slice`** (`systemd/watch-heavy.slice`):
+`CPUQuota=60%`, `MemoryMax=3G`, `MemoryHigh=2500M`, `IOWeight=20`. Install the
+slice before the service.
 
 ### Start / stop / status
 
 ```bash
-# prerequisite: slice must exist (bash setup-weekly-jobs.sh installs it)
-sudo cp /opt/watch/systemd/watch-heavy.service /etc/systemd/system/
+# the slice must exist first (resource caps):
+sudo cp /opt/watch/systemd/watch-heavy.slice /opt/watch/systemd/watch-heavy.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now watch-heavy.service
 
 systemctl status watch-heavy.service
-journalctl -u watch-heavy.service -f      # watch it rotate brute → crawl → param
+journalctl -u watch-heavy.service -f      # watch it rotate brute → crawl → param → nuclei
 
-sudo systemctl restart watch-heavy.service   # after editing settings
+sudo systemctl restart watch-heavy.service   # after editing settings (e.g. WATCH_HEAVY_LANES)
 ```
+
+### 11c. Fresh install — all systemd units
+
+There is no setup script; every unit is a file under `systemd/`. On a new box:
+
+```bash
+sudo cp /opt/watch/systemd/watch-heavy.slice \
+        /opt/watch/systemd/watch-heavy.service \
+        /opt/watch/systemd/watch-ct-stream.service \
+        /opt/watch/systemd/watch.service \
+        /opt/watch/systemd/watch-dns-precheck.service /opt/watch/systemd/watch-dns-precheck.timer \
+        /opt/watch/systemd/watch-health.service      /opt/watch/systemd/watch-health.timer \
+        /opt/watch/systemd/watch-digest.service      /opt/watch/systemd/watch-digest.timer \
+        /opt/watch/systemd/watch-maintenance.service /opt/watch/systemd/watch-maintenance.timer \
+        /etc/systemd/system/
+sudo systemctl daemon-reload
+# always-on services:
+sudo systemctl enable --now watch-heavy.service watch-ct-stream.service watch-api.service
+# timers:
+sudo systemctl enable --now watch.timer watch-dns-precheck.timer \
+        watch-health.timer watch-digest.timer watch-maintenance.timer
+# gau (crawl lane): 
+go install github.com/lc/gau/v2/cmd/gau@latest
+```
+
+(`watch.timer` and `watch-api.service` are documented in sections 10 and 13.
+The retired per-lane units — `watch-brute`, `watch-crawl-all`, `watch-crawl`,
+`watch-param-discovery`, `watch-dns-static`, `watch-dns-dynamic` — must NOT be
+installed.)
 
 Quick manual test (one bounded cycle, no 24/7):
 ```bash
@@ -737,19 +768,23 @@ sudo journalctl -u watch-api -n 50 --no-pager
 | `watch-digest.timer` | daily 09:00 Asia/Tehran | `watch-digest.service` | One summary message; skipped if one was sent in the last 20 h |
 | `watch-maintenance.timer` | Sunday 04:00 Asia/Tehran | `watch-maintenance.service` | Prunes old `Urls`, trims `ChangeEvent`, ensures indexes |
 
-Install (the script also installs gau and copies these units into `/etc/systemd/system`):
+Install:
 ```bash
-bash setup-weekly-jobs.sh
+sudo cp /opt/watch/systemd/watch-health.service      /opt/watch/systemd/watch-health.timer \
+        /opt/watch/systemd/watch-digest.service      /opt/watch/systemd/watch-digest.timer \
+        /opt/watch/systemd/watch-maintenance.service /opt/watch/systemd/watch-maintenance.timer \
+        /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now watch-health.timer watch-digest.timer watch-maintenance.timer
 systemctl list-timers --all | grep -E 'watch-(health|digest|maintenance)'
 ```
 
-> Re-running `setup-weekly-jobs.sh` also re-applies the heavy-job timer setup from
-> section 11, so only run it when you want that reset.
+**Lane selection**
 
-**Enabling the opt-in lanes**
-
-Add `secret` and/or `ffuf` to `WATCH_HEAVY_LANES` in `/etc/systemd/system/watch-heavy.service`,
-then `sudo systemctl daemon-reload && sudo systemctl restart watch-heavy.service`.
+Default `WATCH_HEAVY_LANES=brute,crawl,param,nuclei,secret` (the `secret` JS-scan
+lane is enabled). `ffuf` (aggressive content discovery) is left OFF; add it to
+`WATCH_HEAVY_LANES` in `/etc/systemd/system/watch-heavy.service` only if you want
+it, then `sudo systemctl daemon-reload && sudo systemctl restart watch-heavy.service`.
 
 **Health settings**
 
