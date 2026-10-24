@@ -1,0 +1,18 @@
+[Unit]
+Description=Resource Limits for Watch Heavy Jobs
+
+[Slice]
+# VPS: 2 CPU cores
+# Heavy workload may use at most ~60% of total CPU.
+CPUQuota=60%
+
+# VPS: 4 GB RAM
+MemoryHigh=2500M
+MemoryMax=3G
+
+# Keep disk I/O low priority.
+IOWeight=20
+
+# Make these processes more likely to be selected by OOM
+# than essential system services.
+OOMScoreAdjust=500

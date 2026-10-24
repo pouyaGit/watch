@@ -1,0 +1,21 @@
+[Unit]
+Description=Watch DNS Bruteforce Feasibility Precheck
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/watch
+Slice=watch-heavy.slice
+
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/home/pouya_behnia/go/bin:/usr/local/bin:/usr/bin:/bin"
+
+ExecStart=/opt/watch/run-heavy-guarded.sh \
+    /opt/watch/venv/bin/python3 \
+    /opt/watch/ns/watch_dns_precheck.py \
+    --max-minutes 60
+
+RuntimeMaxSec=90min
+KillMode=control-group
+TimeoutStopSec=30s

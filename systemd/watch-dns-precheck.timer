@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Watch DNS Precheck every Friday at 06:00 Asia/Tehran
+
+[Timer]
+Unit=watch-dns-precheck.service
+OnCalendar=Fri *-*-* 06:00:00 Asia/Tehran
+Persistent=false
+
+[Install]
+WantedBy=timers.target
