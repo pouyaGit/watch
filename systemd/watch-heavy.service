@@ -15,6 +15,11 @@ WorkingDirectory=/opt/watch
 Slice=watch-heavy.slice
 Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
 Environment=PYTHONUNBUFFERED=1
+# Per-lane time slice (applies to ALL lanes: brute, crawl, param, nuclei). 45 min
+# gives the brute lane room so a big domain's static+dynamic finishes instead of
+# being hard-killed at the old 20m; crawl/param/nuclei just get longer, resumable
+# slices. Full cycle ~3h when every lane has work.
+Environment=WATCH_HEAVY_LANE_MINUTES=45
 # Cap static-brute candidates per domain so one domain's static+dynamic fits a
 # lane slice (dell's full ~13M static was ~26 min, overshooting the 20m lane and
 # getting hard-killed every visit). shuf-sampling (not head) keeps coverage
