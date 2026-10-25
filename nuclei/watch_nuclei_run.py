@@ -29,7 +29,7 @@ Env knobs:
   NUCLEI_TEMPLATES       comma list of template paths (default nuclei/private_templates)
   NUCLEI_PUBLIC_TAGS     public store tags scanned on every host alongside the
                          private templates (default exposure,config,backup,debug,
-                         disclosure,default-login,ssrf); set "" to disable
+                         disclosure,default-login,ssrf,rce,lfi,xxe); set "" to disable
   NUCLEI_NO_INTERACTSH   1 = restore -ni (disable OOB/blind detection)
   WATCH_NUCLEI_VERBOSE   1 = post a per-batch summary to Telegram
 """
@@ -122,7 +122,7 @@ def _group_key(http):
 # of private templates and never touched the public store. public-config.yaml's
 # exclude-tags/exclude-templates denylist still filters the noise. Set
 # NUCLEI_PUBLIC_TAGS="" to disable, or override with your own comma list.
-DEFAULT_PUBLIC_TAGS = "exposure,config,backup,debug,disclosure,default-login,ssrf"
+DEFAULT_PUBLIC_TAGS = "exposure,config,backup,debug,disclosure,default-login,ssrf,rce,lfi,xxe"
 
 
 def _selectors_for(key):
