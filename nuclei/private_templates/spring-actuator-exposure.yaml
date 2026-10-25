@@ -1,0 +1,44 @@
+id: spring-actuator-exposure-custom
+info:
+  name: Spring Boot Actuator Exposure (Custom)
+  author: watch-recon
+  severity: high
+  description: >
+    Unauthenticated Spring Boot actuator endpoints. /actuator/env and friends
+    leak environment variables (often DB creds, tokens); /actuator/heapdump is a
+    full memory dump. Matches on actuator-specific JSON keys plus a JSON
+    content-type to avoid HTML false positives.
+  reference:
+    - https://docs.spring.io/spring-boot/docs/current/reference/html/actuator.html
+  tags: exposure,config,springboot,actuator
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/actuator/env"
+      - "{{BaseURL}}/actuator/configprops"
+      - "{{BaseURL}}/env"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: header
+        words:
+          - "application/json"
+          - "application/vnd.spring-boot.actuator"
+        condition: or
+      - type: word
+        part: body
+        words:
+          - "propertySources"
+          - "activeProfiles"
+          - "\"contexts\""
+        condition: or
+    extractors:
+      - type: regex
+        part: body
+        regex:
+          - "\"name\"\\s*:\\s*\"([^\"]*(password|secret|key|token)[^\"]*)\""

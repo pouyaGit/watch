@@ -1,0 +1,45 @@
+id: env-file-exposure-custom
+info:
+  name: Exposed .env File (Custom)
+  author: watch-recon
+  severity: high
+  description: >
+    A publicly readable .env leaks app secrets (DB creds, APP_KEY, API tokens).
+    High signal via a KEY=VALUE line shape plus a known secret key name, with the
+    HTML soft-404 case excluded.
+  reference:
+    - https://owasp.org/www-project-web-security-testing-guide/
+  tags: exposure,config,env
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.env"
+      - "{{BaseURL}}/.env.local"
+      - "{{BaseURL}}/.env.production"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      # At least one well-known secret key assignment.
+      - type: regex
+        part: body
+        regex:
+          - "(?m)^\\s*(APP_KEY|APP_SECRET|DB_PASSWORD|DB_USERNAME|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|SECRET_KEY|JWT_SECRET|STRIPE_SECRET|MAIL_PASSWORD)\\s*="
+      # Exclude SPA/soft-404 HTML served with status 200.
+      - type: word
+        part: body
+        words:
+          - "<html"
+          - "<!doctype"
+          - "<head"
+        condition: or
+        negative: true
+    extractors:
+      - type: regex
+        part: body
+        regex:
+          - "(?m)^\\s*([A-Z0-9_]+)\\s*="
+        group: 1

@@ -8,15 +8,22 @@ info:
 
 http:
   - method: GET
+    # Do not auto-follow the redirect; we need to inspect the 30x itself.
+    redirects: false
     path:
       - "{{BaseURL}}/login.action?os_destination=https://evil.example/"
+      - "{{BaseURL}}/login.action?os_destination=https:%2f%2fevil.example%2f"
+      - "{{BaseURL}}/login.action?os_destination=//evil.example/"
 
     matchers-condition: and
     matchers:
       - type: status
         status:
-          - 302
           - 301
+          - 302
+      # The redirect target lives in the Location response header, not the body,
+      # so the matcher must look at the header part or it never fires.
       - type: regex
+        part: header
         regex:
-          - "location.*evil\\.example"
+          - "(?i)^location:\\s*(https?:)?/+evil\\.example"

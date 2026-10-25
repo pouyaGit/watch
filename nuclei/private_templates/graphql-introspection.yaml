@@ -1,0 +1,48 @@
+id: graphql-introspection-custom
+info:
+  name: GraphQL Introspection Enabled (Custom)
+  author: watch-recon
+  severity: medium
+  description: >
+    Introspection enabled on a production GraphQL endpoint exposes the full
+    schema (types, queries, mutations) -- the map for finding authz/IDOR and
+    hidden-mutation bugs. Confirms with a real introspection query, not just a
+    path probe.
+  reference:
+    - https://graphql.org/learn/introspection/
+  tags: exposure,graphql,introspection
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/graphql"
+      - "{{BaseURL}}/api/graphql"
+      - "{{BaseURL}}/v1/graphql"
+      - "{{BaseURL}}/query"
+    headers:
+      Content-Type: application/json
+    body: '{"query":"query{__schema{queryType{name} types{name kind}}}"}'
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: header
+        words:
+          - "application/json"
+      - type: word
+        part: body
+        words:
+          - "__schema"
+          - "queryType"
+        condition: and
+      - type: word
+        part: body
+        words:
+          - "errors"
+          - "introspection is disabled"
+          - "not allowed"
+        condition: or
+        negative: true

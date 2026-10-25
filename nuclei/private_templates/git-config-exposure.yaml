@@ -1,0 +1,41 @@
+id: git-config-exposure-custom
+info:
+  name: Exposed .git/config (Custom)
+  author: watch-recon
+  severity: high
+  description: >
+    A publicly readable .git/config means the whole repository is likely
+    downloadable (git-dumper), leaking source and often secrets. High signal:
+    the body is an INI file whose markers do not appear in normal pages.
+  reference:
+    - https://owasp.org/www-community/attacks/Source_code_disclosure
+  tags: exposure,git,config
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/config"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "[core]"
+          - "repositoryformatversion"
+        condition: and
+      # A soft-404 SPA often returns 200 index.html; drop those.
+      - type: word
+        part: body
+        words:
+          - "<html"
+          - "<!doctype"
+        condition: or
+        negative: true
+    extractors:
+      - type: regex
+        part: body
+        regex:
+          - "url = (.+)"
