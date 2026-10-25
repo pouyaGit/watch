@@ -40,6 +40,12 @@ Environment=WATCH_HEAVY_LANES=brute,crawl,nuclei,secret
 # Crawl lane (gau is merged into it, no separate lane): GAU_ENABLED, GAU_MAX_SEEDS,
 # GAU_TIMEOUT (seconds, clamped to the lane budget).
 # Nuclei lane: NUCLEI_* (batch size, rate, timeouts, tag set).
+# Hosts per nuclei invocation. -rl is a GLOBAL cap spread across the batch, so a
+# bigger batch spreads the same 50 req/s thinner per host = gentler on targets,
+# not harder. Do NOT raise NUCLEI_RATE_LIMIT to "go faster" -- that is the knob
+# that actually hammers a target. Coverage per slice stays rate-bounded; widen it
+# with a longer lane or shorter NUCLEI_RESCAN_DAYS, never with more rate.
+Environment=NUCLEI_BATCH_SIZE=500
 # Secret lane: SECRET_BATCH, SECRET_MAX_BYTES, SECRET_DELAY_MS, SECRET_RESCAN_DAYS,
 # SECRET_TIMEOUT. Stores redacted matches only.
 # ffuf lane: FFUF_BATCH_HOSTS, FFUF_HOST_TIMEOUT, FFUF_RATE, FFUF_THREADS,
