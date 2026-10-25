@@ -1,5 +1,5 @@
 [Unit]
-Description=Watch heavy worker (serialized brute -> crawl -> param, 24/7)
+Description=Watch heavy worker (serialized brute -> crawl -> nuclei -> secret, 24/7)
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -10,14 +10,14 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=/opt/watch
-# Resource caps live in watch-heavy.slice (CPUQuota=60%, MemoryMax=3G,
+# Resource caps live in watch-heavy.slice (CPUQuota=300%, MemoryMax=5G,
 # IOWeight=20) so the heavy work never starves the 12h pipeline or the API.
 Slice=watch-heavy.slice
 Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
 Environment=PYTHONUNBUFFERED=1
-# Per-lane time slice (applies to ALL lanes: brute, crawl, param, nuclei). 45 min
+# Per-lane time slice (applies to ALL lanes: brute, crawl, nuclei, secret). 45 min
 # gives the brute lane room so a big domain's static+dynamic finishes instead of
-# being hard-killed at the old 20m; crawl/param/nuclei just get longer, resumable
+# being hard-killed at the old 20m; the other lanes just get longer, resumable
 # slices. Full cycle ~3h when every lane has work.
 Environment=WATCH_HEAVY_LANE_MINUTES=45
 # Cap static-brute candidates per domain so one domain's static+dynamic fits a
@@ -30,11 +30,12 @@ Environment=WATCH_STATIC_MAX_CANDIDATES=4000000
 # crawl/param -- not just the quiet new-findings + heartbeat. Set to 0 to mute.
 Environment=WATCH_BRUTE_VERBOSE=1
 # Active lanes. secret is ON (JS secret-regex scan); ffuf stays OFF (aggressive
-# dir-brute). To enable ffuf add it here: brute,crawl,param,nuclei,secret,ffuf.
-Environment=WATCH_HEAVY_LANES=brute,crawl,param,nuclei,secret
+# dir-brute). param runs in its own watch-param.service. To enable ffuf add it here:
+# brute,crawl,nuclei,secret,ffuf.
+Environment=WATCH_HEAVY_LANES=brute,crawl,nuclei,secret
 # Tunables: WATCH_HEAVY_LANE_MINUTES, WATCH_HEAVY_IDLE_SLEEP, WATCH_HEAVY_LANES,
 # and the per-lane knobs (WATCH_BRUTE_*, WATCH_STATIC_MAX_CANDIDATES, X8_WORDLIST).
-# Default lanes: brute,crawl,param,nuclei. secret and ffuf are opt-in: add them to
+# Default lanes: brute,crawl,nuclei. secret and ffuf are opt-in: add them to
 # WATCH_HEAVY_LANES to enable them.
 # Crawl lane (gau is merged into it, no separate lane): GAU_ENABLED, GAU_MAX_SEEDS,
 # GAU_TIMEOUT (seconds, clamped to the lane budget).
@@ -50,6 +51,7 @@ Environment=WATCH_HEAVY_LANES=brute,crawl,param,nuclei,secret
 ExecStart=/opt/watch/venv/bin/python3 /opt/watch/watch_heavy_worker.py
 Restart=always
 RestartSec=30
+OOMScoreAdjust=500
 KillMode=control-group
 TimeoutStopSec=120s
 

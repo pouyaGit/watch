@@ -8,8 +8,11 @@ GLOBALS
 GRANTOPTION
 Group
 Last4Digits
+SkipNav
+Toggle
 UA
 UTM_medium
+WebPage
 ZipName
 \
 \\\\u0026__cf_chl_f_tk
@@ -167,6 +170,7 @@ jobTitle
 jsContinue
 jsEnabledLogType
 jstm
+keepHTML
 keyword
 kid
 kod
@@ -211,6 +215,7 @@ parent
 parentLogId
 passgen
 passportAccountURL
+passportUrl
 password
 path
 period
@@ -263,6 +268,7 @@ serialspeed
 service
 serviceRequestLogUID
 session_hint
+setUserAgent
 sf_paged
 sfid
 shell
@@ -274,6 +280,7 @@ showwysiwyg
 sid
 side
 sitemap
+skipNavLinkModel
 snowplowCollectorUrl
 source
 sqconf
@@ -311,6 +318,7 @@ transfer
 transport
 trapenable
 tz
+uk
 url
 useDefaultJobId
 userType

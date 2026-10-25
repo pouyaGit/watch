@@ -149,6 +149,7 @@ class Endpoints(Document):
     params_from_x8     = ListField(StringField())
     x8_checked         = BooleanField(default=False)
     x8_last_checked    = DateTimeField()
+    x8_failed_attempts = IntField(default=0)
     hit_count          = IntField(default=1)       # چندبار این path تو کرال دیده شده
     created_date       = DateTimeField(default=datetime.now())
     last_update        = DateTimeField(default=datetime.now())

@@ -1,0 +1,27 @@
+[Unit]
+Description=Watch param discovery (x8, parallel, independent of heavy lanes)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/watch
+# Own cgroup so param's CPU/memory cap is separate from watch-heavy.slice.
+Slice=watch-param.slice
+Environment="PATH=/opt/watch/venv/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+Environment=PYTHONUNBUFFERED=1
+# Parallel x8 jobs, at most one in flight per host. Kept low to avoid hammering targets.
+Environment=PARAM_WORKERS=3
+ExecStart=/opt/watch/venv/bin/python3 /opt/watch/crawl/watch_param_discovery.py --max-minutes 240
+# Each run stops submitting new endpoints after 240 min and exits; systemd restarts it
+# after RestartSec. With nothing pending the run exits right away, so the long
+# RestartSec prevents a tight restart loop.
+Restart=always
+RestartSec=600
+OOMScoreAdjust=500
+KillMode=control-group
+TimeoutStopSec=120s
+
+[Install]
+WantedBy=multi-user.target

@@ -513,7 +513,7 @@ Set these in the `[Service]` block of `/etc/systemd/system/watch-heavy.service`
 |---|---|---|
 | `WATCH_HEAVY_LANE_MINUTES` | `20` | Per-lane time slice before rotating to the next lane. |
 | `WATCH_HEAVY_IDLE_SLEEP` | `900` | Seconds to sleep when a whole cycle found nothing to do anywhere. |
-| `WATCH_HEAVY_LANES` | `brute,crawl,param,nuclei` | Restrict/reorder lanes, e.g. `brute,param`. Add `secret,ffuf` to enable the opt-in lanes. |
+| `WATCH_HEAVY_LANES` | `brute,crawl,nuclei` | Restrict/reorder lanes, e.g. `brute,crawl`. Add `secret,ffuf` to enable the opt-in lanes. Param runs in `watch-param.service`. |
 | `WATCH_BRUTE_COOLDOWN_HOURS` | `12` | Min hours before the same domain is bruteforced again (brute lane). |
 | `WATCH_STATIC_MAX_CANDIDATES` | `0` (unlimited) | Cap static candidates per domain (`0` = full wordlist; e.g. `200000` for a fast test). |
 | `WATCH_BRUTE_VERBOSE` | `0` | `1` restores chatty per-domain "Now bruteforcing…" Telegram banners. Off = only findings, errors, per-cycle heartbeat. |
@@ -781,8 +781,8 @@ systemctl list-timers --all | grep -E 'watch-(health|digest|maintenance)'
 
 **Lane selection**
 
-Default `WATCH_HEAVY_LANES=brute,crawl,param,nuclei,secret` (the `secret` JS-scan
-lane is enabled). `ffuf` (aggressive content discovery) is left OFF; add it to
+Default `WATCH_HEAVY_LANES=brute,crawl,nuclei,secret` (the `secret` JS-scan
+lane is enabled). `param` runs in its own `watch-param.service`, not in the heavy rotation. `ffuf` (aggressive content discovery) is left OFF; add it to
 `WATCH_HEAVY_LANES` in `/etc/systemd/system/watch-heavy.service` only if you want
 it, then `sudo systemctl daemon-reload && sudo systemctl restart watch-heavy.service`.
 

@@ -2,17 +2,14 @@
 Description=Resource Limits for Watch Heavy Jobs
 
 [Slice]
-# VPS: 2 CPU cores
-# Heavy workload may use at most ~60% of total CPU.
-CPUQuota=60%
+# CPUQuota is a ceiling in units of one core (300% = 3 of the 6 vCPUs), not a reservation.
+CPUQuota=300%
+# Lower weight than the API and watch.service (default 100), so they win under contention.
+CPUWeight=50
 
-# VPS: 4 GB RAM
-MemoryHigh=2500M
-MemoryMax=3G
+# Measured peak ~1.2 GB; leave headroom for nuclei/brute subprocesses.
+MemoryHigh=4G
+MemoryMax=5G
 
 # Keep disk I/O low priority.
 IOWeight=20
-
-# Make these processes more likely to be selected by OOM
-# than essential system services.
-OOMScoreAdjust=500

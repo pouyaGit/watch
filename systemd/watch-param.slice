@@ -1,0 +1,10 @@
+[Unit]
+Description=Resource limits for Watch param discovery (x8)
+
+[Slice]
+# CPUQuota is a ceiling (2 cores on the 6-vCPU box), not a reservation.
+CPUQuota=200%
+# The pending endpoint list is loaded into memory at start; adjust after the first run.
+MemoryHigh=2G
+MemoryMax=3G
+IOWeight=20

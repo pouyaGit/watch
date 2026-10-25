@@ -14,12 +14,16 @@ Usage:
 """
 
 import os
+import re
 import sys
 import json
 import time
 import argparse
+import shutil
 import subprocess
 import tempfile
+from collections import deque
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -41,10 +45,17 @@ WORDLIST_DIR = Path("/opt/watch/wordlists")
 WORDLIST_DIR.mkdir(parents=True, exist_ok=True)
 
 X8_TIMEOUT = 60            # seconds, per endpoint
-X8_RATE_LIMIT_DELAY = 0.5  # delay between x8 targets, gentle on the server
+X8_RATE_LIMIT_DELAY = 2.0  # delay between x8 targets, gentle on the server
 CHECKPOINT_EVERY = 200     # send one Telegram progress ping every N endpoints,
                            # not per-endpoint -- avoids the notification spam
                            # you already ran into with upsert_lives
+PARAM_WORKERS = int(os.getenv("PARAM_WORKERS", "3"))
+MAX_X8_FAILED_ATTEMPTS = 2
+STATIC_URL_RE = re.compile(
+    r"\.(js|mjs|css|map|png|jpe?g|gif|svg|ico|webp|woff2?|ttf|eot|mp4)(\?|$)"
+    r"|_Incapsula_Resource",
+    re.IGNORECASE,
+)
 
 # Canonical param_records vocabulary:
 #   method   -> {"GET", "POST", "PUT", "PATCH"}
@@ -288,17 +299,19 @@ def normalize_param_record(name, method, location, source):
 
 
 def get_pending_endpoints(filter_arg=None, limit=None):
-    # Only rows with a usable x8 target. An endpoint without an
-    # example_url can never be discovered and used to be re-fetched
-    # (then skipped) on every run -- stuck in the pending queue
-    # forever. It stays x8_checked=False (truthfully never-run) but is
-    # excluded here; once a later crawl fills example_url it becomes
-    # eligible again.
-    query = Endpoints.objects(
-        x8_checked=False,
-        example_url__exists=True,
-        example_url__nin=["", None],
-    )
+    # Skips static assets and endpoints that already failed MAX_X8_FAILED_ATTEMPTS times.
+    query = Endpoints.objects(__raw__={
+        "x8_checked": False,
+        "example_url": {
+            "$exists": True,
+            "$nin": ["", None],
+            "$not": STATIC_URL_RE,
+        },
+        "$or": [
+            {"x8_failed_attempts": {"$exists": False}},
+            {"x8_failed_attempts": {"$lt": MAX_X8_FAILED_ATTEMPTS}},
+        ],
+    })
     if filter_arg:
         f = filter_arg.lower()
         query = query.filter(subdomain__icontains=f)
@@ -389,6 +402,115 @@ def requeue_legacy_x8(dry_run=False, filter_arg=None):
     return count
 
 
+def run_x8_job(ep):
+    x8_target = build_x8_target_url(ep.example_url)
+    log(
+        f"[x8] program={ep.program_name} "
+        f"endpoint={ep.example_url} "
+        f"target={x8_target}"
+    )
+    raw_records = run_x8(x8_target, get_wordlist_for_program(ep.program_name))
+    time.sleep(X8_RATE_LIMIT_DELAY)
+    return ep, raw_records
+
+
+def apply_x8_result(ep, raw_records):
+    if raw_records is None:
+        ep.x8_failed_attempts = (ep.x8_failed_attempts or 0) + 1
+        ep.save()
+        log(f"x8 did not complete for {ep.example_url} (failed attempts: {ep.x8_failed_attempts})")
+        return 0
+
+    new_x8_names = []
+    if raw_records:
+        new_records = []
+        seen = {
+            (
+                rec.get("name"),
+                rec.get("method"),
+                rec.get("location"),
+                rec.get("source"),
+            )
+            for rec in (ep.param_records or [])
+            if isinstance(rec, dict)
+        }
+        for rec in raw_records:
+            location = map_x8_location(rec.get("injection_place"), rec.get("method"))
+            if location is None:
+                continue
+            normalized = normalize_param_record(rec.get("name"), rec.get("method"), location, "x8")
+            if normalized is None:
+                continue
+            key = (
+                normalized["name"],
+                normalized["method"],
+                normalized["location"],
+                normalized["source"],
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            new_records.append(normalized)
+
+        if new_records:
+            ep.param_records = list((ep.param_records or [])) + new_records
+            new_x8_names = sorted({r["name"] for r in new_records})
+            ep.params_from_x8 = sorted(set(ep.params_from_x8 or []) | set(new_x8_names))
+            ep.params = sorted(set(ep.params or []) | set(new_x8_names))
+            log(
+                f"[+] {ep.example_url} -> "
+                f"new={new_x8_names} "
+                f"total_x8={len(ep.params_from_x8)}"
+            )
+
+    ep.x8_checked = True
+    ep.x8_last_checked = datetime.now()
+    ep.last_update = datetime.now()
+    ep.save()
+    return len(new_x8_names)
+
+
+def schedule_x8(endpoints, max_minutes, total):
+    """Run x8 on up to PARAM_WORKERS endpoints at once, never two on the same host."""
+    queues = {}
+    hosts = []
+    for ep in endpoints:
+        host = urlsplit(ep.example_url).netloc
+        if host not in queues:
+            queues[host] = deque()
+            hosts.append(host)
+        queues[host].append(ep)
+
+    checked = 0
+    found_total = 0
+    busy = {}
+    active_hosts = set()
+    with ThreadPoolExecutor(max_workers=PARAM_WORKERS) as pool:
+        while True:
+            if not max_minutes or elapsed_minutes() < max_minutes:
+                for host in hosts:
+                    if len(busy) >= PARAM_WORKERS:
+                        break
+                    if host in active_hosts or not queues[host]:
+                        continue
+                    active_hosts.add(host)
+                    busy[pool.submit(run_x8_job, queues[host].popleft())] = host
+            if not busy:
+                break
+            done, _ = wait(busy, return_when=FIRST_COMPLETED)
+            for fut in done:
+                active_hosts.discard(busy.pop(fut))
+                ep, raw_records = fut.result()
+                found_total += apply_x8_result(ep, raw_records)
+                checked += 1
+                if checked % CHECKPOINT_EVERY == 0:
+                    send_telegram(
+                        f"paramDiscovery progress: {checked}/{total} checked, "
+                        f"{found_total} new params found so far"
+                    )
+    return checked, found_total
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--filter", default=None, help="only this subdomain/keyword")
@@ -432,7 +554,14 @@ def main():
     log(f"=== Param Discovery Started | filter={args.filter or 'NONE'} | "
         f"max_minutes={args.max_minutes or 'unlimited'} ===")
 
+    if shutil.which("x8") is None:
+        log("x8 not found in PATH")
+        return
+
     endpoints = get_pending_endpoints(args.filter, args.limit)
+    if not endpoints:
+        log("No pending endpoints")
+        return
     log(f"Pending endpoints: {len(endpoints)}")
 
     send_telegram(
@@ -441,109 +570,7 @@ def main():
         f"Pending endpoints: {len(endpoints)}"
     )
 
-    checked = 0
-    found_total = 0
-
-    for ep in endpoints:
-        if args.max_minutes and elapsed_minutes() >= args.max_minutes:
-            log(f"Time budget hit after {checked} endpoints -- rest next run")
-            break
-
-        if not ep.example_url:
-            continue
-
-        x8_target = build_x8_target_url(ep.example_url)
-        log(
-            f"[x8] program={ep.program_name} "
-            f"endpoint={ep.example_url} "
-            f"target={x8_target}"
-        )
-        raw_records = run_x8(
-            x8_target,
-            get_wordlist_for_program(ep.program_name)
-        )
-
-        if raw_records is None:
-            # x8 did NOT complete (not found/timeout/error/parse):
-            # do not mark this endpoint checked -- it stays pending
-            # and will be retried on the next run.
-            log(f"x8 did not complete for {ep.example_url} -- leaving unchecked")
-            time.sleep(X8_RATE_LIMIT_DELAY)
-            continue
-
-        # From here on x8 executed successfully (possibly [] findings).
-        if raw_records:
-            # Map x8 injection places to our internal vocabulary.
-            # Unsupported places (Headers/HeaderValue/non-GET Path/...)
-            # are dropped here and never become cases.
-            new_records = []
-            seen = {
-                (
-                    rec.get("name"),
-                    rec.get("method"),
-                    rec.get("location"),
-                    rec.get("source"),
-                )
-                for rec in (ep.param_records or [])
-                if isinstance(rec, dict)
-            }
-            for rec in raw_records:
-                location = map_x8_location(
-                    rec.get("injection_place"), rec.get("method")
-                )
-                if location is None:
-                    continue
-                normalized = normalize_param_record(
-                    rec.get("name"), rec.get("method"), location, "x8"
-                )
-                if normalized is None:
-                    continue
-                key = (
-                    normalized["name"],
-                    normalized["method"],
-                    normalized["location"],
-                    normalized["source"],
-                )
-                if key in seen:
-                    continue
-                seen.add(key)
-                new_records.append(normalized)
-
-            if new_records:
-                ep.param_records = list((ep.param_records or [])) + new_records
-                new_x8_names = sorted({
-                    r["name"]
-                    for r in new_records
-                })
-
-                ep.params_from_x8 = sorted(
-                    set(ep.params_from_x8 or []) | set(new_x8_names)
-                )
-
-                ep.params = sorted(
-                    set(ep.params or []) | set(new_x8_names)
-                )
-
-                found_total += len(new_x8_names)
-
-                log(
-                    f"[+] {ep.example_url} -> "
-                    f"new={new_x8_names} "
-                    f"total_x8={len(ep.params_from_x8)}"
-                )
-
-        ep.x8_checked = True
-        ep.x8_last_checked = datetime.now()
-        ep.last_update = datetime.now()
-        ep.save()
-
-        checked += 1
-        if checked % CHECKPOINT_EVERY == 0:
-            send_telegram(
-                f"paramDiscovery progress: {checked}/{len(endpoints)} checked, "
-                f"{found_total} new params found so far"
-            )
-        time.sleep(X8_RATE_LIMIT_DELAY)
+    checked, found_total = schedule_x8(endpoints, args.max_minutes, len(endpoints))
 
     log(f"=== Done | Endpoints checked: {checked} | New params found: {found_total} ===")
 

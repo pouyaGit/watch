@@ -36,7 +36,7 @@ Live status and control (shared with the dashboard, see backend/task_runner.py):
 Env knobs:
   WATCH_HEAVY_LANE_MINUTES  per-lane time slice   (default 20)
   WATCH_HEAVY_IDLE_SLEEP    sleep when a whole cycle found nothing to do (default 900)
-  WATCH_HEAVY_LANES         comma list to restrict/reorder lanes (default brute,crawl,param,nuclei).
+  WATCH_HEAVY_LANES         comma list to restrict/reorder lanes (default brute,crawl,nuclei).
                             secret and ffuf are opt-in: add them here to enable them.
 
 Usage:
@@ -360,9 +360,9 @@ def main():
     args = parser.parse_args()
 
     lanes = [l.strip() for l in os.environ.get(
-        "WATCH_HEAVY_LANES", "brute,crawl,param,nuclei").split(",") if l.strip() in LANE_CMDS]
+        "WATCH_HEAVY_LANES", "brute,crawl,nuclei").split(",") if l.strip() in LANE_CMDS]
     if not lanes:
-        lanes = ["brute", "crawl", "param", "nuclei"]
+        lanes = ["brute", "crawl", "nuclei"]
 
     log(f"=== Heavy worker starting | lanes={lanes} | lane_minutes={args.lane_minutes} "
         f"| mode={'once' if args.once else 'continuous'} ===")
