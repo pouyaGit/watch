@@ -46,6 +46,9 @@ Environment=WATCH_HEAVY_LANES=brute,crawl,nuclei,secret
 # that actually hammers a target. Coverage per slice stays rate-bounded; widen it
 # with a longer lane or shorter NUCLEI_RESCAN_DAYS, never with more rate.
 Environment=NUCLEI_BATCH_SIZE=500
+# Post a per-batch nuclei summary to Telegram ("N scanned, M raw, K new findings")
+# so the operator sees nuclei activity, not just silent new-finding alerts.
+Environment=WATCH_NUCLEI_VERBOSE=1
 # Secret lane: SECRET_BATCH, SECRET_MAX_BYTES, SECRET_DELAY_MS, SECRET_RESCAN_DAYS,
 # SECRET_TIMEOUT. Stores redacted matches only.
 # ffuf lane: FFUF_BATCH_HOSTS, FFUF_HOST_TIMEOUT, FFUF_RATE, FFUF_THREADS,
