@@ -27,6 +27,10 @@ Env knobs:
   NUCLEI_GROUP_TIMEOUT   hard cap seconds per nuclei invocation (default 900)
   NUCLEI_TAKEOVER_BATCH  subdomains per takeover pass (default 500)
   NUCLEI_TEMPLATES       comma list of template paths (default nuclei/private_templates)
+  NUCLEI_PUBLIC_TAGS     public store tags scanned on every host alongside the
+                         private templates (default exposure,config,backup,debug,
+                         disclosure,default-login,ssrf); set "" to disable
+  NUCLEI_NO_INTERACTSH   1 = restore -ni (disable OOB/blind detection)
   WATCH_NUCLEI_VERBOSE   1 = post a per-batch summary to Telegram
 """
 import argparse
@@ -95,8 +99,14 @@ def _nuclei_argv(targets_file, out_file, selector, *, severity):
         "-severity", severity,
         "-rl", str(env_int("NUCLEI_RATE_LIMIT", 50)),
         "-c", str(env_int("NUCLEI_CONCURRENCY", 10)),
-        "-timeout", "8", "-retries", "1", "-silent", "-ni",
+        "-timeout", "8", "-retries", "1", "-silent",
     ]
+    # OOB/blind detection (SSRF, RCE, XXE...) needs interactsh. It is ON by
+    # default now that the box can reach the oast servers; an interaction is
+    # strong, low-FP proof. Set NUCLEI_NO_INTERACTSH=1 to restore the old -ni
+    # behaviour (e.g. if egress to oast is ever blocked).
+    if env_flag("NUCLEI_NO_INTERACTSH"):
+        argv.append("-ni")
     if os.path.exists(PUBLIC_CONFIG):
         argv += ["-config", PUBLIC_CONFIG]
     return argv + selector
@@ -105,6 +115,29 @@ def _nuclei_argv(targets_file, out_file, selector, *, severity):
 def _group_key(http):
     tags = {TECH_TAGS[t.strip().lower()] for t in (http.tech or []) if t.strip().lower() in TECH_TAGS}
     return tuple(sorted(tags))
+
+
+# High-signal public tags scanned on every in-scope host regardless of detected
+# tech. Without this the no-tech-tag majority of hosts only ever saw the handful
+# of private templates and never touched the public store. public-config.yaml's
+# exclude-tags/exclude-templates denylist still filters the noise. Set
+# NUCLEI_PUBLIC_TAGS="" to disable, or override with your own comma list.
+DEFAULT_PUBLIC_TAGS = "exposure,config,backup,debug,disclosure,default-login,ssrf"
+
+
+def _selectors_for(key):
+    """List of (selector_argv, fs_safe_label) to run for a group key.
+
+    The no-tech group runs the private templates AND a curated public tag set;
+    a tech group runs just its tech-narrowed public templates.
+    """
+    if key == ():
+        sels = [(["-t", os.environ.get("NUCLEI_TEMPLATES", DEFAULT_TEMPLATES)], "private")]
+        public_tags = os.environ.get("NUCLEI_PUBLIC_TAGS", DEFAULT_PUBLIC_TAGS).strip()
+        if public_tags:
+            sels.append((["-tags", public_tags], "public"))
+        return sels
+    return [(["-tags", ",".join(key)], "+".join(key))]
 
 
 def takeover_pass(deadline, index, tmp):
@@ -245,23 +278,26 @@ def http_pass(deadline, index, tmp, cutoff):
         by_host = {h.subdomain: h for h in inscope}
         done = []
         results = []
+        bsz = env_int("NUCLEI_BATCH_SIZE", 200)
         for key, members in groups.items():
             if deadline.expired():
                 break
-            if key == ():
-                templates = os.environ.get("NUCLEI_TEMPLATES", DEFAULT_TEMPLATES)
-                selector = ["-t", templates]
-                label = "default"
-            else:
-                selector = ["-tags", ",".join(key)]
-                label = "+".join(key)
-            for start in range(0, len(members), env_int("NUCLEI_BATCH_SIZE", 200)):
-                chunk = members[start:start + env_int("NUCLEI_BATCH_SIZE", 200)]
-                res = _scan_group(chunk, selector, tmp, deadline, label)
-                if res is None:
+            selectors = _selectors_for(key)
+            for start in range(0, len(members), bsz):
+                if deadline.expired():
                     break
-                results.extend(res)
-                done.extend(chunk)
+                chunk = members[start:start + bsz]
+                chunk_scanned = False
+                for selector, label in selectors:
+                    if deadline.expired():
+                        break
+                    res = _scan_group(chunk, selector, tmp, deadline, label)
+                    if res is None:   # ran out of time budget for this scan
+                        continue
+                    results.extend(res)
+                    chunk_scanned = True
+                if chunk_scanned:
+                    done.extend(chunk)
 
         findings_total += _persist(results, by_host)
         scanned_total += len(done)
