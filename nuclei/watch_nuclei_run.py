@@ -29,6 +29,9 @@ Env knobs:
   NUCLEI_TAKEOVER_BATCH  subdomains per takeover pass (default 500)
   NUCLEI_REDIRECT          0 = skip the redirect pass entirely (default on)
   NUCLEI_REDIRECT_CONFIRM  0 = discover candidates only, send no requests (default on)
+  NUCLEI_REDIRECT_WRITE_CANDIDATES  1 = also persist the noisy info worklist to
+                           findings (default off; only confirmed redirects are
+                           stored, unless confirm is disabled)
   NUCLEI_REDIRECT_BATCH    max in-scope redirect endpoints per run (default 300)
   NUCLEI_TEMPLATES       comma list of template paths (default nuclei/private_templates)
   NUCLEI_PUBLIC_TAGS     public store tags scanned on every host alongside the
@@ -370,25 +373,34 @@ def redirect_pass(deadline, index, tmp):
     candidates = _redirect_candidates(index, limit)
     if not candidates:
         return 0
-
-    # 1. persist candidates (info) so they surface in findings for review.
-    for program, url, matched in candidates:
-        sp = urlsplit(url)
-        target = f"{sp.scheme}://{sp.netloc}{sp.path}" if sp.netloc else url
-        upsert_finding({
-            "program_name": program,
-            "target": target,
-            "source": "redirect-param",
-            "name": "redirect-param-on-auth-flow",
-            "severity": "info",
-            "matched": url,
-            "extra": {"params": matched, "note": "candidate; confirm before reporting"},
-        })
     log(f"--- Redirect pass: {len(candidates)} in-scope candidate endpoint(s)")
+
+    confirm_on = os.environ.get("NUCLEI_REDIRECT_CONFIRM", "1") != "0"
+    # Candidates (merely "has a redirect param") are a noisy worklist, not bugs:
+    # in practice almost all are validated OAuth redirect_uri / handled next=
+    # params that never actually redirect off-host. So they are NOT written to
+    # findings by default -- only genuinely confirmed redirects are. Set
+    # NUCLEI_REDIRECT_WRITE_CANDIDATES=1 to also persist the info worklist, and
+    # note that if confirmation is off the candidate list is the only output,
+    # so it is written then regardless.
+    write_candidates = os.environ.get("NUCLEI_REDIRECT_WRITE_CANDIDATES", "0") == "1"
+    if write_candidates or not confirm_on:
+        for program, url, matched in candidates:
+            sp = urlsplit(url)
+            target = f"{sp.scheme}://{sp.netloc}{sp.path}" if sp.netloc else url
+            upsert_finding({
+                "program_name": program,
+                "target": target,
+                "source": "redirect-param",
+                "name": "redirect-param-on-auth-flow",
+                "severity": "info",
+                "matched": url,
+                "extra": {"params": matched, "note": "candidate; confirm before reporting"},
+            })
 
     # 2. confirm with nuclei DAST (fuzz the redirect param -> external canary).
     #    NUCLEI_REDIRECT_CONFIRM=0 keeps the pass discover-only (sends no requests).
-    if os.environ.get("NUCLEI_REDIRECT_CONFIRM", "1") == "0":
+    if not confirm_on:
         log("redirect pass: confirm disabled (NUCLEI_REDIRECT_CONFIRM=0), candidates only")
         return 0
     if deadline.expired() or not os.path.exists(REDIRECT_TEMPLATE):

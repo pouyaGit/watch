@@ -111,11 +111,7 @@ site
 domain
 host
 host_url
-feed
 file
-val
-data
-reference
 ref
 referer
 referrer
@@ -136,8 +132,6 @@ logout_url
 logouturl
 home
 home_url
-state
-response_url
 sso_url
 ssourl
 idp_url
