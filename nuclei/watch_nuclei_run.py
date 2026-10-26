@@ -5,7 +5,8 @@ watch_nuclei_run.py -- resumable, narrow nuclei lane for the heavy worker.
 Two passes per lane slice, both bounded by --max-minutes:
 
   1. takeover  Subdomains with no recent takeover check -> nuclei `-tags takeover`
-               (DNS-level, cheap). Every new candidate is a high-priority finding.
+               (DNS-level, cheap). Each hit is then graded by actual claimability
+               (see takeover_verdict); only genuinely claimable assets alert.
   2. http      Live Http services, never-scanned first then least-recently-scanned,
                newest first within the same bucket. Scanned with the private
                templates, plus tech-tagged public templates for hosts whose
@@ -43,6 +44,8 @@ from datetime import datetime, timedelta
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+import dns.exception  # noqa: E402
+import dns.resolver  # noqa: E402
 from mongoengine import Q  # noqa: E402
 
 from database.db import Http, Subdomains, upsert_finding  # noqa: E402
@@ -140,6 +143,102 @@ def _selectors_for(key):
     return [(["-tags", ",".join(key)], "+".join(key))]
 
 
+# Azure resource suffixes whose vhost name can be re-registered once freed.
+# A dangling CNAME to one of these that no longer resolves is a real claim target;
+# a bare A-record to a shared Azure IP is not (custom-domain binding needs an
+# asuid TXT the attacker cannot create).
+_AZURE_SUFFIXES = (
+    ".azurewebsites.net", ".cloudapp.net", ".cloudapp.azure.com",
+    ".trafficmanager.net", ".azureedge.net", ".azurefd.net",
+    ".blob.core.windows.net", ".azure-api.net",
+)
+
+
+def _mk_resolver():
+    r = dns.resolver.Resolver(configure=True)
+    fallbacks = ["8.8.8.8", "1.1.1.1"]
+    try:
+        r.nameservers = list(dict.fromkeys(list(r.nameservers) + fallbacks))
+    except Exception:
+        r.nameservers = fallbacks
+    r.timeout = 4.0
+    r.lifetime = 8.0
+    return r
+
+
+def _cname_chain(resolver, host):
+    """Follow the CNAME chain, returning each target lowercased without trailing dot."""
+    chain, name = [], host
+    for _ in range(10):
+        try:
+            ans = resolver.resolve(name, "CNAME")
+        except dns.exception.DNSException:
+            break
+        target = str(ans[0].target).rstrip(".").lower()
+        if not target or target == name or target in chain:
+            break
+        chain.append(target)
+        name = target
+    return chain
+
+
+def _resolves(resolver, name):
+    """True if name resolves to anything; False only on a definitive NXDOMAIN.
+
+    Inconclusive answers (timeouts, SERVFAIL) return True so we never suppress a
+    finding on a transient DNS failure."""
+    for rtype in ("A", "AAAA", "CNAME"):
+        try:
+            resolver.resolve(name, rtype)
+            return True
+        except dns.resolver.NoAnswer:
+            continue
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoNameservers):
+            return False
+        except dns.exception.DNSException:
+            return True
+    return False
+
+
+def _has_txt(resolver, name):
+    try:
+        return len(resolver.resolve(name, "TXT")) > 0
+    except dns.exception.DNSException:
+        return False
+
+
+def takeover_verdict(host, template_id):
+    """Grade a nuclei takeover hit by actual claimability.
+
+    Returns (severity, reason). Conservative by design: it only downgrades on
+    positive evidence that the asset cannot be claimed, and leaves anything it
+    cannot disprove at "high" so real takeovers (e.g. S3/GitHub fingerprints
+    whose endpoint still resolves) are never silently dropped."""
+    tid = (template_id or "").lower()
+    try:
+        resolver = _mk_resolver()
+        chain = _cname_chain(resolver, host)
+    except Exception as exc:  # tooling failure -> do not suppress
+        return "high", f"dns-check-failed:{exc}"
+
+    if "azure" in tid:
+        azure = [c for c in chain if c.endswith(_AZURE_SUFFIXES)]
+        if azure:
+            target = azure[-1]
+            if not _resolves(resolver, target):
+                return "high", f"dangling CNAME -> unresolved {target} (claimable)"
+            return "info", f"CNAME -> {target} still resolves (registered, not claimable)"
+        # No claimable CNAME: bare A/AAAA record to a shared Azure IP.
+        if _has_txt(resolver, "asuid." + host):
+            return "info", "A-record to Azure + asuid TXT present (domain bound to an existing subscription)"
+        return "low", "A-record to Azure, no CNAME to claim (custom-domain binding needs an asuid TXT the attacker cannot set)"
+
+    # Generic takeover templates: a fully dangling CNAME is a strong signal.
+    if chain and not _resolves(resolver, chain[-1]):
+        return "high", f"dangling CNAME -> unresolved {chain[-1]}"
+    return "high", "unverified (left as high)"
+
+
 def takeover_pass(deadline, index, tmp):
     size = env_int("NUCLEI_TAKEOVER_BATCH", 500)
     docs = list(Subdomains.objects.order_by("last_takeover_check").limit(size))
@@ -172,19 +271,23 @@ def takeover_pass(deadline, index, tmp):
                 continue
             template = obj.get("template-id") or "takeover"
             matched = obj.get("matched-at") or sub.subdomain
+            severity, reason = takeover_verdict(sub.subdomain, template)
             is_new = upsert_finding({
                 "program_name": sub.program_name,
                 "scope": sub.scope,
                 "target": sub.subdomain,
                 "source": "takeover",
                 "name": template,
-                "severity": "high",
+                "severity": severity,
                 "matched": matched,
-                "extra": {"template": template, "type": obj.get("type")},
+                "extra": {"template": template, "type": obj.get("type"), "verdict": reason},
             })
             if is_new:
                 found += 1
-                alert(f"[takeover] HIGH · {template} · {matched}")
+                if meets_floor(severity):
+                    alert(f"[takeover] {severity.upper()} · {template} · {matched} · {reason}")
+                else:
+                    log(f"[takeover:suppressed] {severity} · {template} · {matched} · {reason}")
 
     Subdomains.objects(id__in=[d.id for d in docs]).update(set__last_takeover_check=now)
     return found

@@ -31,14 +31,18 @@ http:
       - type: status
         status:
           - 200
-      # Metadata-only tokens -- these do not appear in a normal app response.
-      - type: word
-        part: body
-        words:
-          - "ami-id"
-          - "instance-id"
-          - "iam/security-credentials"
-          - "AccessKeyId"
-          - "SecretAccessKey"
-          - "computeMetadata"
-        condition: or
+      # Metadata-RESPONSE-only tokens. Deliberately excludes "computeMetadata"
+      # and "iam/security-credentials": those strings are part of the injected
+      # payload path, so any app that reflects the query string back in its body
+      # would match them -- the source of every false positive this template
+      # produced. The tokens below only appear in an actual IMDS/metadata
+      # *response*, never in the request, so reflection cannot trigger them.
+      # GCP is detected via its response header (Metadata-Flavor: Google).
+      - type: dsl
+        dsl:
+          - >-
+            contains(body, 'ami-id') ||
+            contains(body, 'instance-id') ||
+            contains(body, 'AccessKeyId') ||
+            contains(body, 'SecretAccessKey') ||
+            contains(tolower(header), 'metadata-flavor')

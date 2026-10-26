@@ -16,8 +16,20 @@ http:
       - type: status
         status:
           - 200
+      # Require the whole payload reflected as one unencoded block. The old
+      # matcher ANDed "alert(1)" and "<script>" as separate words, so it fired
+      # on any HTML page that has a <script> tag anywhere and the string
+      # "alert(1)" anywhere -- not on an actual reflection. Matching the exact
+      # injected string means the param really is reflected without encoding.
       - type: word
+        part: body
         words:
-          - "alert(1)"
-          - "<script>"
-        condition: and
+          - "\"><script>alert(1)</script>"
+      # And make sure it was NOT HTML-entity-encoded (a safe reflection).
+      - type: word
+        part: body
+        words:
+          - "&lt;script&gt;alert(1)"
+          - "&quot;&gt;&lt;script&gt;"
+        condition: or
+        negative: true

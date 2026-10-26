@@ -8,21 +8,30 @@ info:
 
 http:
   - method: GET
+    # Dashboard.jspa dropped: it is the HTML login page, always 200, and is not
+    # an unauthenticated-disclosure signal -- it only fed false positives.
     path:
       - "{{BaseURL}}/rest/api/2/serverInfo"
       - "{{BaseURL}}/rest/api/2/project"
       - "{{BaseURL}}/rest/api/2/user/picker?query=admin"
-      - "{{BaseURL}}/secure/Dashboard.jspa"
 
     matchers-condition: and
     matchers:
       - type: status
         status:
           - 200
+      # The REST API answers JSON. Requiring it stops the generic words below
+      # from matching an HTML SPA/login page that returns 200 for any path
+      # (the cause of the false positives on these findings).
       - type: word
+        part: header
         words:
-          - "version"
-          - "baseUrl"
-          - "projects"
-          - "users"
+          - "application/json"
+      - type: word
+        part: body
+        words:
+          - "\"version\""
+          - "\"baseUrl\""
+          - "\"projectTypeKey\""
+          - "\"accountId\""
         condition: or

@@ -20,14 +20,25 @@ http:
       - type: status
         status:
           - 200
+      # Must be the actual JSON API response. Without this, the generic words
+      # below ("password", "key") match any HTML login page that happens to
+      # contain a password field -- which is what produced every false positive
+      # (hosts returning a 200 SPA/login page for these paths, not Airflow).
       - type: word
+        part: header
         words:
-          - "variables"
-          - "connections"
-          - "pools"
-          - "secret"
-          - "password"
-          - "key"
+          - "application/json"
+      # Airflow's REST collection endpoints always return a "total_entries"
+      # counter; /config returns "sections". These keys do not appear in a
+      # normal app's JSON, so they confirm the endpoint is really Airflow and
+      # really answered unauthenticated.
+      - type: word
+        part: body
+        words:
+          - "total_entries"
+          - "\"sections\""
+          - "\"connections\""
+          - "\"variables\""
         condition: or
 
     extractors:
