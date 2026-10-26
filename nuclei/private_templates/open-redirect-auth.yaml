@@ -1,0 +1,49 @@
+id: open-redirect-auth-custom
+info:
+  name: Open Redirect via auth-flow redirect parameter (fuzzing)
+  author: watch-recon
+  severity: medium
+  description: >
+    DAST fuzzing template. For a given URL it replaces each redirect-style query
+    parameter (redirect, redirect_uri, returnUrl, next, dest, goto, callback,
+    RelayState, service, ...) with an external canary and confirms the server
+    actually issues a redirect OFF the origin host. Matching is on the Location
+    response header pointing at the canary, so a reflected param that is NOT
+    acted on does not match -- this confirms a real open redirect, not just the
+    presence of the parameter.
+    Run with:  nuclei -dast -t open-redirect-auth.yaml -l endpoints.txt
+  reference:
+    - https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html
+  tags: redirect,open-redirect,fuzz,dast,auth
+
+http:
+  - pre-condition:
+      - type: dsl
+        dsl:
+          - "method == 'GET'"
+
+    payloads:
+      canary:
+        - "https://canary-openredirect.example.com/"
+        - "//canary-openredirect.example.com/"
+        - "https:/canary-openredirect.example.com/"
+        - "https://canary-openredirect.example.com%2f%2e%2e"
+
+    fuzzing:
+      - part: query
+        type: replace
+        mode: single
+        keys-regex:
+          - "(?i)^(redirect|redirect_url|redirect_uri|redirect_to|redir|redirurl|rurl|url|uri|u|next|next_url|nexturl|return|returnurl|return_url|return_to|returnto|ret|rtn|destination|dest|continue|continue_url|goto|go_to|go|target|target_url|forward|forward_url|callback|callback_url|cb|cburl|success|success_url|failure_url|cancel|cancel_url|back|back_url|backto|origin|from|from_url|to|link|out|image_url|path|page|site|service|serviceurl|relaystate|wreply|checkout_url|login_url|logout_url|home|landing|landing_url|after_login|after_logout|relay|deeplink|jump|jumpto|location|loc|nav|navto|proceed|confirm_url|verify_url|activate_url|r)$"
+        fuzz:
+          - "{{canary}}"
+
+    stop-at-first-match: true
+    matchers-condition: or
+    matchers:
+      - type: regex
+        part: header
+        regex:
+          - "(?i)^Location:\\s*https?://canary-openredirect\\.example\\.com"
+          - "(?i)^Location:\\s*https?:/+canary-openredirect\\.example\\.com"
+          - "(?i)^Location:\\s*//canary-openredirect\\.example\\.com"

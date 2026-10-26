@@ -25,21 +25,21 @@ from urllib.parse import urlsplit
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from database.db import Urls, Endpoints  # noqa: E402
+from database.db import Urls, Endpoints, upsert_finding  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 WORDLIST = os.path.join(ROOT, "wordlists", "redirect-params.txt")
 
 # Auth / navigation-flow path signatures. A redirect param here is interesting;
 # the same param on a generic page usually is not.
+# Word-boundary anchored so a keyword does not match inside an unrelated slug
+# (e.g. "auth" inside "authority").
 AUTH_PATH = re.compile(
-    r"(login|log-in|signin|sign-in|logon|auth|authorize|authentication|oauth|"
-    r"oauth2|openid|connect|sso|saml|cas|idp|adfs|wsfed|ws-fed|session|"
-    r"register|signup|sign-up|join|create-account|"
-    r"logout|log-out|signout|sign-out|"
-    r"password|passwd|pwd|reset|forgot|recover|recovery|"
-    r"verify|confirm|activate|validate|"
-    r"callback|return|redirect|continue|sso/|/acs|relaystate)",
+    r"\b(login|log-?in|signin|sign-?in|logon|auth|authorize|authentication|"
+    r"oauth|oauth2|openid|connect|sso|saml|cas|idp|adfs|wsfed|session|"
+    r"register|signup|sign-?up|join|logout|log-?out|signout|sign-?out|"
+    r"password|passwd|pwd|reset|forgot|recover|recovery|verify|confirm|"
+    r"activate|validate|callback|return|continue|redirect|relaystate|acs)\b",
     re.I,
 )
 
@@ -54,6 +54,8 @@ def main():
     ap.add_argument("--program")
     ap.add_argument("--any-path", action="store_true",
                     help="do not restrict to auth-flow paths")
+    ap.add_argument("--write", action="store_true",
+                    help="persist each hit to the Finding collection (source=redirect-param, severity info)")
     args = ap.parse_args()
 
     redirect_names = load_param_set()
@@ -96,9 +98,27 @@ def main():
         consider(e.program_name, e.example_url or e.path, e.path, e.params)
 
     hits.sort(key=lambda h: (h[0], h[1]))
+    written = 0
     for program, where, matched in hits:
         print(f"[{program}] {where}  <=  {', '.join(matched)}")
-    print(f"\n{len(hits)} auth-flow endpoint(s) with a redirect-style parameter",
+        if args.write:
+            # Candidate, not a confirmed bug: info severity so it shows in
+            # findings for review/confirmation without alerting. Keyed per
+            # host+path so re-runs refresh instead of duplicating.
+            sp = urlsplit(where)
+            target = f"{sp.scheme}://{sp.netloc}{sp.path}" if sp.netloc else where
+            if upsert_finding({
+                "program_name": program,
+                "target": target,
+                "source": "redirect-param",
+                "name": "redirect-param-on-auth-flow",
+                "severity": "info",
+                "matched": where,
+                "extra": {"params": matched, "note": "candidate; confirm open-redirect/OAuth-hijack before reporting"},
+            }):
+                written += 1
+    suffix = f" | {written} new written to findings" if args.write else ""
+    print(f"\n{len(hits)} auth-flow endpoint(s) with a redirect-style parameter{suffix}",
           file=sys.stderr)
 
 
