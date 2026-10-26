@@ -27,6 +27,8 @@ Env knobs:
   NUCLEI_BATCH_SIZE      targets per nuclei invocation (default 200)
   NUCLEI_GROUP_TIMEOUT   hard cap seconds per nuclei invocation (default 900)
   NUCLEI_TAKEOVER_BATCH  subdomains per takeover pass (default 500)
+  NUCLEI_REDIRECT        0 = skip the redirect pass (default on)
+  NUCLEI_REDIRECT_BATCH  max in-scope redirect endpoints per run (default 300)
   NUCLEI_TEMPLATES       comma list of template paths (default nuclei/private_templates)
   NUCLEI_PUBLIC_TAGS     public store tags scanned on every host alongside the
                          private templates (default exposure,config,backup,debug,
@@ -37,10 +39,12 @@ Env knobs:
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -48,7 +52,7 @@ import dns.exception  # noqa: E402
 import dns.resolver  # noqa: E402
 from mongoengine import Q  # noqa: E402
 
-from database.db import Http, Subdomains, upsert_finding  # noqa: E402
+from database.db import Http, Subdomains, Urls, Endpoints, upsert_finding  # noqa: E402
 from utils.common import require_tools  # noqa: E402
 from utils.recon import (  # noqa: E402
     Deadline, alert, env_flag, env_int, host_of, in_scope, log,
@@ -58,6 +62,19 @@ from utils.recon import (  # noqa: E402
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 PUBLIC_CONFIG = os.path.join(ROOT, "nuclei", "public-config.yaml")
 DEFAULT_TEMPLATES = os.path.join(ROOT, "nuclei", "private_templates")
+REDIRECT_TEMPLATE = os.path.join(ROOT, "nuclei", "private_templates", "open-redirect-auth.yaml")
+REDIRECT_WORDLIST = os.path.join(ROOT, "wordlists", "redirect-params.txt")
+
+# Auth/navigation-flow path signatures, word-boundary anchored so a keyword does
+# not match inside an unrelated slug (e.g. "auth" in "authority").
+REDIRECT_AUTH_PATH = re.compile(
+    r"\b(login|log-?in|signin|sign-?in|logon|auth|authorize|authentication|"
+    r"oauth|oauth2|openid|connect|sso|saml|cas|idp|adfs|wsfed|session|"
+    r"register|signup|sign-?up|join|logout|log-?out|signout|sign-?out|"
+    r"password|passwd|pwd|reset|forgot|recover|recovery|verify|confirm|"
+    r"activate|validate|callback|return|continue|redirect|relaystate|acs)\b",
+    re.I,
+)
 
 # Detected Http.tech value (lowercased) -> nuclei tag that narrows the public set.
 TECH_TAGS = {
@@ -293,6 +310,124 @@ def takeover_pass(deadline, index, tmp):
     return found
 
 
+def _redirect_candidates(index, limit):
+    """Mine auth-flow endpoints carrying a redirect-style param from already
+    crawled Urls/Endpoints. Returns [(program, full_url, [params])], deduped per
+    in-scope host+path. No network -- pure DB read with a server-side filter."""
+    try:
+        with open(REDIRECT_WORDLIST) as fh:
+            name_variants = sorted({ln.strip() for ln in fh if ln.strip()})
+    except OSError:
+        return []
+    name_set = {n.lower() for n in name_variants}
+
+    seen, hits = set(), []
+
+    def consider(program, url, path, params):
+        if not params or len(hits) >= limit:
+            return
+        key_path = (path or url or "").lower()
+        if not REDIRECT_AUTH_PATH.search(key_path):
+            return
+        scopes, ooscopes = index.get(program, ([], []))
+        host = host_of(url or "") or (url or "")
+        if not in_scope(host, scopes, ooscopes):
+            return
+        matched = sorted({p for p in params if p and p.lower() in name_set})
+        if not matched:
+            return
+        full = url or path or ""
+        sp = urlsplit(full)
+        norm = (sp.netloc + sp.path).lower() if sp.netloc else key_path
+        dedup = (program, norm, tuple(matched))
+        if dedup in seen:
+            return
+        seen.add(dedup)
+        hits.append((program, full, matched))
+
+    q = {"params__in": name_variants}
+    for u in Urls.objects(**q).only("program_name", "url", "path", "params"):
+        consider(u.program_name, u.url, u.path, u.params)
+        if len(hits) >= limit:
+            return hits
+    for e in Endpoints.objects(**q).only("program_name", "example_url", "path", "params"):
+        consider(e.program_name, e.example_url or e.path, e.path, e.params)
+        if len(hits) >= limit:
+            break
+    return hits
+
+
+def redirect_pass(deadline, index, tmp):
+    """Discover auth-flow redirect params (candidate findings) and confirm them
+    with the nuclei DAST template (confirmed open-redirects). Part of the same
+    scheduled lane as takeover/http -- no separate cron needed.
+
+    Disable with NUCLEI_REDIRECT=0. Confirmation only touches in-scope hosts."""
+    if os.environ.get("NUCLEI_REDIRECT", "1") == "0":
+        return 0
+    limit = env_int("NUCLEI_REDIRECT_BATCH", 300)
+    candidates = _redirect_candidates(index, limit)
+    if not candidates:
+        return 0
+
+    # 1. persist candidates (info) so they surface in findings for review.
+    for program, url, matched in candidates:
+        sp = urlsplit(url)
+        target = f"{sp.scheme}://{sp.netloc}{sp.path}" if sp.netloc else url
+        upsert_finding({
+            "program_name": program,
+            "target": target,
+            "source": "redirect-param",
+            "name": "redirect-param-on-auth-flow",
+            "severity": "info",
+            "matched": url,
+            "extra": {"params": matched, "note": "candidate; confirm before reporting"},
+        })
+    log(f"--- Redirect pass: {len(candidates)} in-scope candidate endpoint(s)")
+
+    # 2. confirm with nuclei DAST (fuzz the redirect param -> external canary).
+    if deadline.expired() or not os.path.exists(REDIRECT_TEMPLATE):
+        return 0
+    targets_file = os.path.join(tmp, "redirect_targets.txt")
+    out_file = os.path.join(tmp, "redirect.jsonl")
+    prog_of = {}
+    with open(targets_file, "w") as fh:
+        for program, url, _ in candidates:
+            fh.write(url + "\n")
+            prog_of[url] = program
+    timeout_s = deadline.remaining(env_int("NUCLEI_GROUP_TIMEOUT", 900))
+    argv = [
+        "nuclei", "-dast", "-l", targets_file, "-t", REDIRECT_TEMPLATE,
+        "-jsonl", "-o", out_file, "-silent", "-disable-update-check",
+        "-rl", str(env_int("NUCLEI_RATE_LIMIT", 50)), "-timeout", "8",
+    ]
+    rc, _ = run_tool(argv, timeout_s, quiet=True)
+    log(f"redirect confirm pass rc={rc}")
+
+    found = 0
+    for obj in _read_jsonl(out_file):
+        matched = obj.get("matched-at") or obj.get("host") or ""
+        host = host_of(matched) or matched
+        program = prog_of.get(matched) or next(
+            (p for u, p in ((u, prog_of[u]) for u in prog_of) if host_of(u) == host),
+            "unknown")
+        is_new = upsert_finding({
+            "program_name": program,
+            "target": matched,
+            "source": "redirect",
+            "name": "open-redirect-auth-confirmed",
+            "severity": "medium",
+            "matched": matched,
+            "extra": {"template": "open-redirect-auth-custom",
+                      "confirmed": "Location -> external canary"},
+        })
+        if is_new:
+            found += 1
+            if meets_floor("medium"):
+                alert(f"[redirect] MEDIUM confirmed open-redirect · {matched}")
+    return found
+
+
 def _scan_group(targets, selector, tmp, deadline, label):
     targets_file = os.path.join(tmp, f"targets_{label}.txt")
     out_file = os.path.join(tmp, f"out_{label}.jsonl")
@@ -429,6 +564,7 @@ def main():
     tmp = tempfile.mkdtemp(prefix="watch-nuclei-")
     try:
         takeover_pass(deadline, index, tmp)
+        redirect_pass(deadline, index, tmp)
         http_pass(deadline, index, tmp, cutoff)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
