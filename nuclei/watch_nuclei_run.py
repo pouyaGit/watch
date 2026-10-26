@@ -27,8 +27,9 @@ Env knobs:
   NUCLEI_BATCH_SIZE      targets per nuclei invocation (default 200)
   NUCLEI_GROUP_TIMEOUT   hard cap seconds per nuclei invocation (default 900)
   NUCLEI_TAKEOVER_BATCH  subdomains per takeover pass (default 500)
-  NUCLEI_REDIRECT        0 = skip the redirect pass (default on)
-  NUCLEI_REDIRECT_BATCH  max in-scope redirect endpoints per run (default 300)
+  NUCLEI_REDIRECT          0 = skip the redirect pass entirely (default on)
+  NUCLEI_REDIRECT_CONFIRM  0 = discover candidates only, send no requests (default on)
+  NUCLEI_REDIRECT_BATCH    max in-scope redirect endpoints per run (default 300)
   NUCLEI_TEMPLATES       comma list of template paths (default nuclei/private_templates)
   NUCLEI_PUBLIC_TAGS     public store tags scanned on every host alongside the
                          private templates (default exposure,config,backup,debug,
@@ -386,6 +387,10 @@ def redirect_pass(deadline, index, tmp):
     log(f"--- Redirect pass: {len(candidates)} in-scope candidate endpoint(s)")
 
     # 2. confirm with nuclei DAST (fuzz the redirect param -> external canary).
+    #    NUCLEI_REDIRECT_CONFIRM=0 keeps the pass discover-only (sends no requests).
+    if os.environ.get("NUCLEI_REDIRECT_CONFIRM", "1") == "0":
+        log("redirect pass: confirm disabled (NUCLEI_REDIRECT_CONFIRM=0), candidates only")
+        return 0
     if deadline.expired() or not os.path.exists(REDIRECT_TEMPLATE):
         return 0
     targets_file = os.path.join(tmp, "redirect_targets.txt")
