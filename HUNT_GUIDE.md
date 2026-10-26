@@ -143,6 +143,7 @@ confirm step. All 57 `hunt-*` skills live in `/root/skills-src/murrtada/skills/`
 | CSRF (state-changing, no token) | `hunt-csrf` |
 | clickjacking (framable) | `hunt-clickjacking` |
 | open redirect | `hunt-open-redirect` |
+| redirect param on auth flow (login/reset/SSO) | `hunt-redirect-params` (ready sweep: `scripts/find_redirect_params.py`) |
 | CORS misconfig | `hunt-cors` |
 | cache poisoning / deception | `hunt-cache-poison` |
 | websocket | `hunt-websocket` |
