@@ -359,11 +359,27 @@ def main():
         log("No targets. Exit.")
         return
 
+    # Scope-filter the targets BEFORE building the queue. The Http collection can
+    # hold third-party hosts (e.g. fbcdn.net, other CDNs) that katana discovered
+    # as assets on in-scope pages but that belong to no program. crawl_domain
+    # already drops out-of-scope seeds per-URL, but without this the stray hosts
+    # still get grouped into a root domain, queued, announced on Telegram, ordered,
+    # and handed a gau budget -- wasted work plus misleading "crawling fbcdn.net"
+    # noise. Filter here so only in-scope domains ever reach the queue.
+    scope_idx = scope_index()
+    lookup = make_program_lookup(scope_idx)
+    in_scope_targets = [u for u in targets if lookup(get_host(u))]
+    dropped = len(targets) - len(in_scope_targets)
+    if dropped:
+        log(f"Dropped {dropped} out-of-scope/third-party target URLs before queueing")
+    targets = in_scope_targets
+    if not targets:
+        log("No in-scope targets. Exit.")
+        return
+
     by_domain = group_by_root_domain(targets)
     ordered = order_by_least_recently_crawled(by_domain)
     log(f"{len(ordered)} root domains, ordered oldest-crawled-first")
-
-    scope_idx = scope_index()
     gau_ready = GAU_ENABLED and find_tool("gau") is not None
     if GAU_ENABLED and not gau_ready:
         log("gau not on PATH (setup-weekly-jobs.sh installs it); gau step skipped")
