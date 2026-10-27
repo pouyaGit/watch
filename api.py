@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from backend.helpers import PAGE_CSS
-from backend.routers import data_api, pages, targets, tasks
+from backend.routers import data_api, pages, targets, tasks, vault
 from backend.tasks_registry import PROJECT_ROOT
 from web_auth import AuthMiddleware, SECRET, SESSION_TTL, register_auth_routes
 
@@ -23,6 +23,7 @@ app.include_router(pages.router)
 app.include_router(targets.router)
 app.include_router(tasks.router)
 app.include_router(data_api.router)
+app.include_router(vault.router)
 
 
 if __name__ == "__main__":
