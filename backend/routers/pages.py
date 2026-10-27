@@ -501,6 +501,11 @@ def ui_findings(program: str = None, severity: str = None, source: str = None,
         filters["severity"] = severity
     if source:
         filters["source"] = source
+    else:
+        # redirect-param candidates are a noisy manual-review worklist with their
+        # own page (/ui/findings/redirect); keep them out of the main list unless
+        # explicitly asked for by source.
+        filters["source__ne"] = "redirect-param"
     if status:
         filters["status"] = status
     page = max(page, 1)
@@ -539,9 +544,12 @@ def ui_findings(program: str = None, severity: str = None, source: str = None,
 
     programs = [p.program_name for p in Programs.objects().order_by("program_name")]
     home = build_url("/")
+    redirect_url = build_url("/ui/findings/redirect")
+    redirect_count = Finding.objects(source="redirect-param", status="open").count()
     body = f"""
     <a href="{home}">← Back to Dashboard</a>
     <h2>Findings</h2>
+    <p class="note">Manual-review worklist: <a href="{redirect_url}">Redirect-param candidates ({redirect_count:,})</a> — auth-flow endpoints with a redirect-style param, not auto-confirmed.</p>
     <form method="get" action="/ui/findings" class="note">
       <select name="program">{_options(programs, program, "All programs")}</select>
       <select name="severity">{_options(FINDING_SEVERITIES, severity, "Any severity")}</select>
@@ -560,3 +568,70 @@ def ui_findings(program: str = None, severity: str = None, source: str = None,
     <div class="pagenav">{nav}</div>
     """
     return HTMLResponse(render_page("Findings", body))
+
+
+@router.get("/ui/findings/redirect", response_class=HTMLResponse)
+def ui_redirect_candidates(program: str = None, status: str = "open",
+                           page: int = 1, limit: int = 100):
+    """Auth-flow endpoints carrying a redirect-style param (source
+    'redirect-param'). These are a manual-review worklist -- discovered, not
+    auto-confirmed -- kept separate from the main findings list."""
+    filters = {"source": "redirect-param"}
+    if program:
+        filters["program_name"] = program
+    if status:
+        filters["status"] = status
+    page = max(page, 1)
+    qs = Finding.objects(**filters).order_by("-first_seen")
+    total = qs.count()
+
+    rows = ""
+    for f in paginate(qs, page, limit):
+        matched = f.matched or f.target or ""
+        target = (f'<a href="{_esc(matched)}" target="_blank" rel="noopener noreferrer">{_esc(matched)}</a>'
+                  if matched.startswith(("http://", "https://")) else _esc(matched))
+        params = ", ".join((f.extra or {}).get("params", [])) or "—"
+        first = f.first_seen.strftime("%b %d, %H:%M") if f.first_seen else ""
+        rows += (
+            f'<tr><td data-label="Program">{_esc(f.program_name)}</td>'
+            f'<td data-label="Params"><code>{_esc(params)}</code></td>'
+            f'<td data-label="Target">{target}</td>'
+            f'<td class="ts" data-label="First seen">{_esc(first)}</td>'
+            f'<td data-label="Status">{_esc(f.status)}</td></tr>'
+        )
+    if not rows:
+        rows = '<tr><td colspan="5" class="note">No redirect-param candidates yet.</td></tr>'
+
+    base = {"program": program, "status": status, "limit": limit}
+
+    def link(p):
+        return "/ui/findings/redirect?" + urlencode({**{k: v for k, v in base.items() if v}, "page": p})
+
+    total_pages = max(1, (total + limit - 1) // limit)
+    nav = f'Page {page}/{total_pages} — total {total:,}'
+    if page > 1:
+        nav += f' | <a href="{_esc(link(page - 1))}">« Prev</a>'
+    if page < total_pages:
+        nav += f' | <a href="{_esc(link(page + 1))}">Next »</a>'
+
+    programs = [p.program_name for p in Programs.objects().order_by("program_name")]
+    findings_url = build_url("/ui/findings")
+    body = f"""
+    <a href="{findings_url}">← Back to Findings</a>
+    <h2>Redirect-param candidates</h2>
+    <p class="note">Auth-flow endpoints (login / oauth / sso / signin …) carrying a redirect-style
+    param. Discovered from crawled URLs — <strong>not</strong> auto-confirmed, so check each by hand.</p>
+    <form method="get" action="/ui/findings/redirect" class="note">
+      <select name="program">{_options(programs, program, "All programs")}</select>
+      <select name="status">{_options(("open", "triaged", "false_positive", "fixed"), status, "Any status")}</select>
+      <button type="submit">Filter</button>
+    </form>
+    <div class="table-wrap"><table class="status">
+      <thead><tr>
+        <th>Program</th><th>Params</th><th>Target</th><th>First seen</th><th>Status</th>
+      </tr></thead>
+      <tbody>{rows}</tbody>
+    </table></div>
+    <div class="pagenav">{nav}</div>
+    """
+    return HTMLResponse(render_page("Redirect candidates", body))

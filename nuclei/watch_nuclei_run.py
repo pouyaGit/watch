@@ -28,10 +28,12 @@ Env knobs:
   NUCLEI_GROUP_TIMEOUT   hard cap seconds per nuclei invocation (default 900)
   NUCLEI_TAKEOVER_BATCH  subdomains per takeover pass (default 500)
   NUCLEI_REDIRECT          0 = skip the redirect pass entirely (default on)
-  NUCLEI_REDIRECT_CONFIRM  0 = discover candidates only, send no requests (default on)
-  NUCLEI_REDIRECT_WRITE_CANDIDATES  1 = also persist the noisy info worklist to
-                           findings (default off; only confirmed redirects are
-                           stored, unless confirm is disabled)
+  NUCLEI_REDIRECT_CONFIRM  1 = also actively confirm candidates (default off:
+                           discover-only, send no requests). Candidates are
+                           persisted for manual review either way and shown on
+                           the dedicated /ui/findings/redirect page.
+  NUCLEI_REDIRECT_WRITE_CANDIDATES  0 = don't persist the candidate worklist
+                           (default on: candidates are kept for manual review)
   NUCLEI_REDIRECT_BATCH    max in-scope redirect endpoints per run (default 300)
   NUCLEI_TEMPLATES       comma list of template paths (default nuclei/private_templates)
   NUCLEI_PUBLIC_TAGS     public store tags scanned on every host alongside the
@@ -375,15 +377,17 @@ def redirect_pass(deadline, index, tmp):
         return 0
     log(f"--- Redirect pass: {len(candidates)} in-scope candidate endpoint(s)")
 
-    confirm_on = os.environ.get("NUCLEI_REDIRECT_CONFIRM", "1") != "0"
-    # Candidates (merely "has a redirect param") are a noisy worklist, not bugs:
-    # in practice almost all are validated OAuth redirect_uri / handled next=
-    # params that never actually redirect off-host. So they are NOT written to
-    # findings by default -- only genuinely confirmed redirects are. Set
-    # NUCLEI_REDIRECT_WRITE_CANDIDATES=1 to also persist the info worklist, and
-    # note that if confirmation is off the candidate list is the only output,
-    # so it is written then regardless.
-    write_candidates = os.environ.get("NUCLEI_REDIRECT_WRITE_CANDIDATES", "0") == "1"
+    confirm_on = os.environ.get("NUCLEI_REDIRECT_CONFIRM", "0") != "0"
+    # Candidates (auth-flow endpoints carrying a redirect-style param) are worth
+    # reviewing by hand -- most are validated OAuth redirect_uri / handled next=
+    # params, but the interesting ones hide here. They are persisted by default
+    # (severity "info", source "redirect-param") and surfaced on their own
+    # /ui/findings/redirect page, kept out of the main findings list so they
+    # don't drown the confirmed bugs. Active confirmation is OFF by default
+    # (discover-only, no requests); set NUCLEI_REDIRECT_CONFIRM=1 to also fuzz
+    # them with the DAST template. Set NUCLEI_REDIRECT_WRITE_CANDIDATES=0 to stop
+    # persisting the candidate worklist.
+    write_candidates = os.environ.get("NUCLEI_REDIRECT_WRITE_CANDIDATES", "1") == "1"
     if write_candidates or not confirm_on:
         for program, url, matched in candidates:
             sp = urlsplit(url)
