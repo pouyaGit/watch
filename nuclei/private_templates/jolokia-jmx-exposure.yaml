@@ -1,0 +1,77 @@
+id: jolokia-jmx-exposure-custom
+info:
+  name: Jolokia JMX-over-HTTP endpoint exposed
+  author: watch-recon
+  severity: high
+  description: >
+    An unauthenticated Jolokia endpoint exposes the JVM's JMX layer over HTTP.
+    Reachable Jolokia is high-impact on its own -- MBeans leak system
+    properties, environment, datasource/connection strings and credentials --
+    and it is a well-known pivot to RCE (JNDI/MLet MBean deployment, log4j-style
+    lookups, Spring reload). On Spring Boot it is typically mounted at
+    /actuator/jolokia; standalone agents live at /jolokia.
+
+    Proof by construction: the matcher queries the read-only /version operation
+    and fires only when the body is the Jolokia JSON envelope -- it must contain
+    "agent" AND "protocol" AND the "request"/"value" wrapper AND status 200.
+    No ordinary page produces that exact shape, so false positives are near
+    zero. The probe only READS the agent version; it performs no MBean
+    invocation or write.
+  reference:
+    - https://jolokia.org/reference/html/protocol.html
+    - https://docs.spring.io/spring-boot/docs/current/reference/html/actuator.html#actuator.jmx.jolokia
+    - https://github.com/laluka/jolokia-exploitation-toolkit
+  classification:
+    cvss-metrics: CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N
+    cvss-score: 8.2
+  tags: exposure,jolokia,jmx,springboot,actuator,rce
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/actuator/jolokia/version"
+      - "{{BaseURL}}/jolokia/version"
+      - "{{BaseURL}}/actuator/jolokia"
+      - "{{BaseURL}}/jolokia"
+    # /version is tiny; cap anyway so a misrouted /jolokia/list can't flood us.
+    max-size: 8192
+    stop-at-first-match: true
+    redirects: false
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      # Jolokia version envelope: agent + protocol are always present together.
+      - type: word
+        part: body
+        case-insensitive: true
+        words:
+          - '"agent"'
+          - '"protocol"'
+        condition: and
+      # And the response is a Jolokia request/response envelope, not a page that
+      # merely happens to mention those words.
+      - type: word
+        part: body
+        words:
+          - '"request"'
+          - '"value"'
+        condition: or
+      # Defensive HTML exclusion (the structural match already rules this out).
+      - type: word
+        part: body
+        words:
+          - "<html"
+          - "<!DOCTYPE"
+        condition: or
+        negative: true
+
+    extractors:
+      # Surface the agent version as proof (e.g. 1.7.1).
+      - type: regex
+        part: body
+        group: 1
+        regex:
+          - '"agent"\s*:\s*"([0-9][0-9A-Za-z.\-]*)"'
