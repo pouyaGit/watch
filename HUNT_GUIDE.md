@@ -431,8 +431,9 @@ them in this order (highest expected value first). For each, load the named `hun
 
 This is the anti-laziness list. When the candidate queue is exhausted (all CORS
 done/parked), you are NOT blocked — you run this on **fresh** hosts/params.
-Minimum bar for a session: **item 1, plus any 3 of items 2–10**, on surface you
-have not tested before. Each item names what proves it real and the skill to load.
+Minimum bar for a session: **item 1, plus any 3 of items 2–12**, on surface you
+have not tested before — and XSS (items 11–12) is a prime pre-auth target, so
+work it most sessions. Each item names what proves it real and the skill to load.
 
 WAF note: many hosts (Dell/Akamai) 403 tool UAs. Always set a real browser UA:
 ```bash
@@ -520,6 +521,39 @@ nuclei -l /tmp/live.txt -tags exposure,config,cve,default-login,debug,disclosure
   -severity medium,high,critical -H "User-Agent: $UA" -rl 40 -nc
 ```
 Every hit is a CANDIDATE — run the §5 playbook before believing it.
+
+**11. Reflected XSS** → `hunt-xss` (confirm rules in §5e)
+Pull URLs that carry query params, fuzz with `dalfox`:
+```bash
+./.venv/bin/python - <<'PY'
+from database.db import Urls
+seen=set()
+for u in Urls.objects(program_name="dell").only("url","params"):
+    if u.params and u.url not in seen:
+        seen.add(u.url); print(u.url)
+PY
+# -> /tmp/xss_urls.txt, then:
+dalfox file /tmp/xss_urls.txt --header "User-Agent: $UA" --rate-limit 40 \
+  --skip-bav --waf-evasion --format plain -o /tmp/xss_hits.txt
+```
+Real only when the FULL payload comes back **unencoded as one block**
+(`"><script>alert(1)</script>`) and executes in context. Entity-encoded, or only
+the `alert(1)` substring reflected = FP. Let `dalfox` verify, then reproduce by hand.
+Also try the auth/error/search params and non-GET reflections dalfox misses.
+
+**12. DOM XSS** → `hunt-dom` (drive it with the `hermes-domxss-verifier` skill)
+Crawl for client-side sinks, then confirm execution in a REAL browser — a static
+grep is only a lead, DOM XSS counts only when it fires in the DOM.
+```bash
+katana -u https://HOST -jc -d 3 -silent -H "User-Agent: $UA" -o /tmp/crawl.txt
+# fetch the JS and grep for source->sink:
+#   sources: location.hash / .search / document.URL / referrer / postMessage / window.name
+#   sinks:   innerHTML, outerHTML, document.write, eval, setTimeout, insertAdjacentHTML,
+#            .src=, jQuery $(), element.setAttribute, dangerouslySetInnerHTML
+```
+Trace an attacker-controlled source into a sink with no sanitisation, then PROVE it
+by loading the crafted URL in the built-in browser / Playwright and seeing the script
+run. Hash-based payloads (`#`) never hit the server — browser-confirm only.
 
 **Record:** new candidates you confirm → `status="triaged"` + evidence in `extra`;
 things you disprove → `status="false_positive"` + why. Then `triage-validation` → report.

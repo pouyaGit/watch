@@ -31,13 +31,14 @@ DEFINITION OF DONE — a session is not complete until ALL of these are met:
         then test authz on each endpoint), authenticated SSRF/CSRF/GraphQL-authz.
     The Dell session is for DELL targets ONLY — never point it at indeed/wien.
 
-[B] PROACTIVE PRE-AUTH WORK (needs NO account) — at least 10 real probes across
-    ≥3 distinct classes from §11a, on FRESH surface (not findings you already
-    looked at). Examples: OAuth/redirect_uri deep tests, password-reset/host-header
-    poisoning, open-redirect, SSRF-via-params, source-leak in crawled JS,
-    shadow/undocumented API from SPA JS, subdomain-takeover re-checks, and run the
-    spring-actuator-heapdump-custom + jolokia-jmx-exposure-custom templates against
-    any Spring/Java hosts.
+[B] PROACTIVE PRE-AUTH WORK (needs NO account) — work the §12 checklist: at least
+    item 1 plus any 3 of items 2–12, on FRESH surface (not findings you already
+    looked at). XSS (reflected via dalfox + DOM via browser-confirm, §12 items
+    11–12) is a prime target — work it most sessions. Other classes: OAuth/
+    redirect_uri, password-reset/host-header poisoning, open-redirect, SSRF-via-
+    params (OOB), source/secret leak in crawled JS, shadow/undocumented API, and
+    the spring-actuator-heapdump-custom + jolokia-jmx-exposure-custom templates on
+    Spring/Java hosts.
 
 [C] AT LEAST ONE NEW SURFACE mapped that you had not tested before — pull fresh
     hosts/endpoints (Urls/Endpoints collections, new crawl output), don't just
