@@ -450,6 +450,35 @@ print(len(hosts), "hosts -> /tmp/live.txt")
 PY
 ```
 
+**Surface expansion first — `ffuf` (paths) + `x8` (params).** Run these to GENERATE
+fresh surface, then feed it to the bug-class items below. All five tools are
+installed and on PATH: `ffuf x8 nuclei katana dalfox` (+ `httpx subfinder gau
+interactsh-client`). Do not reinstall them.
+
+- **`ffuf` — content / endpoint discovery** (finds hidden paths, admin panels,
+  backups, `.git`/`.env`, old APIs → feeds items 3 and 10):
+  ```bash
+  ffuf -u https://HOST/FUZZ -w /opt/watch/wordlists/watch_content_small.txt \
+    -H "User-Agent: $UA" -mc 200,204,301,302,401,403 -ac -rate 40 -t 25 -o /tmp/ffuf.json
+  ```
+  `-ac` auto-calibrates out soft-404s. Point `-w` at a bigger list when a host looks
+  interesting. New paths → curl them (item 3) and sweep with nuclei (item 10).
+
+- **`x8` — hidden parameter discovery** (finds params the crawl missed → feeds XSS
+  item 11, SSRF item 6, redirect item 5):
+  ```bash
+  x8 -u "https://HOST/path" -w /opt/watch/wordlists/dell_params.txt -O url -o /tmp/x8.txt
+  ```
+  But x8 already runs in the watch-param lane — check the DB FIRST before re-running:
+  ```bash
+  ./.venv/bin/python - <<'PY'
+  from database.db import Endpoints
+  for e in Endpoints.objects(program_name="dell", x8_checked=True).only("example_url","params_from_x8"):
+      if e.params_from_x8: print(e.example_url, e.params_from_x8)
+  PY
+  ```
+  Discovered params are the input to dalfox (item 11) and the SSRF/redirect probes.
+
 **1. Spring/Java exposure — heapdump + jolokia + actuator (highest EV, zero-FP)**
 ```bash
 nuclei -l /tmp/live.txt \
