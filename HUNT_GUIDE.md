@@ -424,3 +424,102 @@ them in this order (highest expected value first). For each, load the named `hun
 | redirect-param candidates | `Finding(source="redirect-param")` → `/ui/findings/redirect` | `hunt-oauth` / `hunt-redirect-params` |
 | Spring 401 API hosts | CORS-finding hosts returning 401 | `hunt-springboot` + heapdump/jolokia templates |
 | GraphQL introspection hits | `Finding(name="graphql-introspection-custom")` | `hunt-graphql` (authz, not just introspection) |
+
+---
+
+## 12. Pre-auth proactive checklist — the [B] work (NO account needed)
+
+This is the anti-laziness list. When the candidate queue is exhausted (all CORS
+done/parked), you are NOT blocked — you run this on **fresh** hosts/params.
+Minimum bar for a session: **item 1, plus any 3 of items 2–10**, on surface you
+have not tested before. Each item names what proves it real and the skill to load.
+
+WAF note: many hosts (Dell/Akamai) 403 tool UAs. Always set a real browser UA:
+```bash
+UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+```
+
+Build a fresh live-host list for a program (reused by several items):
+```bash
+cd /opt/watch && ./.venv/bin/python - <<'PY'
+from database.db import Urls
+hosts = sorted({u.subdomain for u in Urls.objects(program_name="dell").only("subdomain") if u.subdomain})
+open("/tmp/live.txt","w").write("\n".join(f"https://{h}" for h in hosts)+"\n")
+print(len(hosts), "hosts -> /tmp/live.txt")
+PY
+```
+
+**1. Spring/Java exposure — heapdump + jolokia + actuator (highest EV, zero-FP)**
+```bash
+nuclei -l /tmp/live.txt \
+  -t nuclei/private_templates/spring-actuator-heapdump.yaml \
+  -t nuclei/private_templates/jolokia-jmx-exposure.yaml \
+  -t nuclei/private_templates/spring-actuator-exposure.yaml \
+  -H "User-Agent: $UA" -rl 40 -nc
+```
+Matchers self-confirm. Any hit → load `hunt-springboot`, pull the dump/MBeans, report.
+
+**2. Secret / source leak in crawled JS** → `hunt-source-leak`
+```bash
+./.venv/bin/python - <<'PY'
+from database.db import Urls
+for u in Urls.objects(program_name="dell").only("url"):
+    if u.url.endswith(".js"): print(u.url)
+PY
+```
+Fetch each with the browser UA, grep for live creds / internal hosts / endpoints:
+`AKIA[0-9A-Z]{16}`, `AIza[0-9A-Za-z_\-]{35}`, `sk_live_`, `xox[baprs]-`, `ghp_`,
+`-----BEGIN`, `s3://`, internal `*.corp`/`*.internal` hosts, `/api/…` paths.
+Real only if the key is **live/unrestricted** (a referrer-locked `AIza` key = info).
+
+**3. Shadow / undocumented API from JS** → `hunt-shadow-api` / `hunt-spa-api`
+Grep the JS from item 2 for endpoint paths (`/api/`, `/v1/`, `/internal/`, `/admin/`),
+`curl -A "$UA"` them unauthenticated. A 200 returning real data (not a login
+redirect / SPA shell) = undocumented surface → test authz on it.
+
+**4. OAuth / redirect_uri** → `hunt-oauth` / `hunt-redirect-params`
+```bash
+python3 scripts/indeed_oauth_bypass.py      # existing bypass harness
+./.venv/bin/python - <<'PY'
+from database.db import Finding
+for f in Finding.objects(source="redirect-param", status="open"):
+    print(f.program_name, f.target, (f.extra or {}).get("params"))
+PY
+```
+Prove an actual off-host / cross-account redirect, not just a reflected param.
+
+**5. Open redirect (canary)** → `hunt-open-redirect`
+Reuse `scripts/watch_redirect_confirm.py` / `scripts/bb4_confirm.py`: set the param to
+`https://google.com`, GET without following; HIT only if `Location` host == `google.com`
+while the baseline does not.
+
+**6. SSRF via params (OOB-confirmed)** → `hunt-ssrf`
+```bash
+interactsh-client -o /tmp/oob.txt &        # prints a canary domain to use as the payload
+```
+For params named `url,uri,dest,redirect,next,callback,webhook,image,feed,proxy,target`
+inject the interactsh URL; a DNS/HTTP hit in `/tmp/oob.txt` = confirmed. No OOB hit =
+not confirmed (reflection of your own URL is NOT SSRF — see §5b).
+
+**7. Host-header / password-reset poisoning** → `hunt-host-header` / `hunt-forgot-password`
+On login/reset/SSO endpoints: `curl -A "$UA" -H "Host: evil.example"` and
+`-H "X-Forwarded-Host: evil.example"`. If an absolute URL / reset link / cache key
+reflects `evil.example`, it is a candidate.
+
+**8. Subdomain takeover re-check** → `hunt-subdomain` (full method in §5a)
+Dangling CNAME to a dead service + NXDOMAIN + no binding TXT. Prove claimability, never
+report a bare 404.
+
+**9. GraphQL authz (beyond introspection)** → `hunt-graphql`
+On `graphql-*` hits: re-send introspection to confirm `__schema`, then run a sensitive
+query **unauthenticated** — data returned without auth is the bug, not introspection alone.
+
+**10. Misconfig sweep on FRESH hosts (public templates)** → verify each per §5
+```bash
+nuclei -l /tmp/live.txt -tags exposure,config,cve,default-login,debug,disclosure \
+  -severity medium,high,critical -H "User-Agent: $UA" -rl 40 -nc
+```
+Every hit is a CANDIDATE — run the §5 playbook before believing it.
+
+**Record:** new candidates you confirm → `status="triaged"` + evidence in `extra`;
+things you disprove → `status="false_positive"` + why. Then `triage-validation` → report.
