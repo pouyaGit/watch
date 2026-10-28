@@ -562,9 +562,13 @@ for u in Urls.objects(program_name="dell").only("url","params"):
         seen.add(u.url); print(u.url)
 PY
 # -> /tmp/xss_urls.txt, then:
-dalfox file /tmp/xss_urls.txt --header "User-Agent: $UA" --rate-limit 40 \
+dalfox file /tmp/xss_urls.txt --header "User-Agent: $UA" --delay 150 \
   --skip-bav --waf-evasion --format plain -o /tmp/xss_hits.txt
 ```
+(Correct flag is `--delay <ms>`, NOT `--rate-limit`. `--waf-evasion` forces
+worker=1 + 3s/request — safe but slow, so use it only on WAF'd hosts and small
+URL lists; drop it (keep `--delay`) for speed. Feed param-rich URLs, not bare SPA
+hosts — a SPA that 200s every path has nothing for dalfox to reflect.)
 Real only when the FULL payload comes back **unencoded as one block**
 (`"><script>alert(1)</script>`) and executes in context. Entity-encoded, or only
 the `alert(1)` substring reflected = FP. Let `dalfox` verify, then reproduce by hand.
