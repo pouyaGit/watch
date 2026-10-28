@@ -440,14 +440,22 @@ WAF note: many hosts (Dell/Akamai) 403 tool UAs. Always set a real browser UA:
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 ```
 
-Build a fresh live-host list for a program (reused by several items):
+Build a fresh live-host list for a program (reused by several items). CRITICAL:
+the DB holds historical crawl data with MANY dead hosts (NXDOMAIN) and WAF-403
+hosts — always liveness-filter through httpx first, or every tool returns 0 and
+you waste the run:
 ```bash
 cd /opt/watch && ./.venv/bin/python - <<'PY'
 from database.db import Urls
 hosts = sorted({u.subdomain for u in Urls.objects(program_name="dell").only("subdomain") if u.subdomain})
-open("/tmp/live.txt","w").write("\n".join(f"https://{h}" for h in hosts)+"\n")
-print(len(hosts), "hosts -> /tmp/live.txt")
+open("/tmp/hosts_all.txt","w").write("\n".join(hosts)+"\n")
+print(len(hosts), "hosts (unfiltered)")
 PY
+UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+# keep only hosts that resolve AND answer (drop dead + hard-403); -mc to taste
+httpx -l /tmp/hosts_all.txt -silent -H "User-Agent: $UA" -timeout 10 -rl 40 \
+  -mc 200,201,202,204,301,302,307,401 -o /tmp/live.txt
+wc -l /tmp/live.txt   # these are the ones actually worth testing
 ```
 
 **Surface expansion first — `ffuf` (paths) + `x8` (params).** Run these to GENERATE
@@ -590,3 +598,71 @@ run. Hash-based payloads (`#`) never hit the server — browser-confirm only.
 
 **Record:** new candidates you confirm → `status="triaged"` + evidence in `extra`;
 things you disprove → `status="false_positive"` + why. Then `triage-validation` → report.
+
+---
+
+## 13. Tool operating notes (learned gotchas — read before running)
+
+Exact, verified behaviour of the installed tools on THIS box. These were learned
+the hard way; follow them so you don't waste a run or misread a result.
+
+**dalfox**
+- The rate knob is `--delay <ms>` (delay to the same host). There is NO
+  `--rate-limit` flag — it errors out.
+- `--waf-evasion` forces worker=1 + 3s/request: safe but very slow. Use it ONLY on
+  WAF'd hosts and SMALL lists. For normal runs use `--delay 100 --worker 30`.
+- `--skip-bav` skips the non-XSS "basic another vuln" checks; `--only-poc 'r,v'`
+  prints only reflected/verified POCs (cuts noise).
+- Feed **param-rich URLs** (from `Urls` where `params` is set), not bare hosts. A
+  SPA with no reflecting params gives dalfox nothing.
+- It is THOROUGH and slow (many payloads/param). Run **small batches (≤10 URLs)**
+  or per-host; a `timeout`/exit 124 is NOT "no XSS" — it just didn't finish. Its
+  `[I] Reflected <x> param` lines are LEADS (value echoed back); confirm each by
+  hand per §5e (full payload, unencoded, executes) before believing it.
+
+**ffuf**
+- Always use `-ac` (auto-calibrate) — it filters soft-404s.
+- **0 hits on a SPA that returns 200 for every path is the CORRECT result, not a
+  block.** Many Dell app hosts are SPAs; path fuzzing finds nothing there — that is
+  information, not failure. Do not retry endlessly or call it "blocked".
+- Raise the wordlist (`/usr/share/seclists/...`) only when a host looks worth it;
+  `/opt/watch/wordlists/watch_content_small.txt` is the quick default.
+
+**x8**
+- x8 ALREADY runs in the `watch-param` lane → check `Endpoints.params_from_x8`
+  FIRST; only run live on a specific endpoint it hasn't covered.
+- Flags: `-u <url>` `-w <wordlist>` `-O url -o <file>`. Run against an endpoint that
+  actually takes params; a bare `/` with no params yields nothing.
+
+**Akamai / WAF reality (Dell especially)**
+- A real browser UA gets you the HTTP layer (200/302), but a tool's TLS/JA3 can
+  still 403 — most on `www.dell.com`. App/sandbox hosts (`*sbx*`, `*-poc*`,
+  internal portals) are usually reachable. Prefer those for active testing.
+- Cookies from a Playwright login are fingerprint-bound: curl with them → 403.
+  Do authenticated requests from inside the same Playwright context (§10b).
+
+**nuclei**
+- Slow to start in this env (~15-40s); that's normal, don't kill it early.
+- Private templates already run in the http lane; re-run manually only to target a
+  fresh host set. Pass the browser UA with `-H` on WAF'd targets.
+
+**interactsh-client**
+- Start it, use the canary domain it prints as the SSRF/OOB payload. A hit in its
+  output = confirmed OOB; no hit = NOT confirmed (reflection of your URL ≠ SSRF).
+
+**The DB is stale — liveness-filter FIRST**
+- `Urls`/`Endpoints` are historical crawl data. Many hosts are now DEAD (NXDOMAIN —
+  e.g. `educationsbx.dell.com` no longer resolves) or hard-WAF-403 (`www.dell.com`,
+  `*-poc`, `*sbx*`). If you feed the raw DB list to ffuf/x8/dalfox you get 0 and
+  blame the tool. ALWAYS pass hosts through `httpx` first (see the live-host helper)
+  and test only what actually answers.
+- A `status_code` of `None` in `Urls` just means it was never re-probed — it does
+  NOT mean live. Re-check with httpx/curl.
+
+**Target selection (the meta-lesson)**
+- Pick param-rich / app hosts, not bare SPA roots. Query `Urls` for in-scope hosts
+  with `params`, and prefer reflective pages (search, error, content with
+  tab/query params) for reflected XSS.
+- On Dell specifically, most param-rich hosts are either Akamai-403 to tools or
+  dead; the few that answer (e.g. `investors.delltechnologies.com` 202) are the
+  real surface. Don't burn the session on hosts that don't respond.
