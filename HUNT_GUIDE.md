@@ -17,6 +17,14 @@ submitted false positive costs reputation and program trust. When unsure, discar
 
 Golden loop: **Pull candidate → classify → load the matching skill → verify live → decide (prove / discard) → only then report.**
 
+**Second rule — do not only wait for Watch.** Watch emits a narrow slice (nuclei
+misconfig/exposure, `secret`, `takeover`, `content`). The highest-paying classes —
+IDOR/BOLA, broken access control, business logic, OAuth/`redirect_uri` & account-takeover
+chains, authenticated CORS impact, CSRF, race conditions — **Watch can never surface.**
+They need you to drive a browser and reason. Spend real time in §11 (proactive hunting),
+not just §5 (verifying candidates). See §10 for the logins that unlock the authenticated
+surface.
+
 ---
 
 ## 1. Environment (what is on this box)
@@ -303,13 +311,116 @@ metadata-SSRF with creds = P1/P2. **When the real bug after honest caveats is sm
 - Pace requests. Respect rate limits.
 - Never exfiltrate real user data; mask PII in evidence.
 
+**Authenticated testing (when logged in via §10):**
+- Test only with **accounts you control** (the vault test accounts). Never act as, or on the
+  data of, a real user.
+- IDOR/BOLA: the clean proof is **two of your own accounts** (A can read B's object). With a
+  single account you may only probe own-data scoping and auth posture; if a guessed/other
+  object reference returns data that is clearly **not yours**, that already proves the bug —
+  **stop at that minimal proof, do not page through real records, mask everything.**
+- No destructive authenticated actions: no deleting, no placing real orders, no changing
+  another user's state. State-changing PoCs use your own account only.
+- Back up `storage_state` before any logout/session test — it kills the server session and
+  the saved cookies go dead.
+
 ---
 
 ## 9. Quick start (per session)
 
 1. `bb-methodology` → orient.
 2. Load program scope from `/opt/watch/programs/`.
-3. Pull `status="open"` candidates from the DB (§3a), highest severity first.
-4. For each: classify → load the `hunt-*` skill (§4b) → run the §5 playbook.
-5. Disprove → `status="false_positive"`. Confirm → `status="triaged"`.
-6. `triage-validation` → if it passes, write the report (§7). Else discard.
+3. **Two parallel tracks — do both, not just the first:**
+   - **Verify track (reactive):** pull `status="open"` candidates from the DB (§3a),
+     highest severity first → classify → load the `hunt-*` skill (§4b) → run the §5 playbook.
+   - **Hunt track (proactive, higher EV):** pick a target → if it has a vault login (§10),
+     authenticate → work the §11 priority list (auth-flow logic, then IDOR/authz/business-logic,
+     then API surface) with the browser.
+4. Disprove → `status="false_positive"`. Confirm → `status="triaged"`.
+5. `triage-validation` → if it passes, write the report (§7). Else discard.
+
+---
+
+## 10. Authenticated hunting (vault-backed logins)
+
+Some targets can now be tested **logged in**. Credentials live in the Hermes vault, not in
+this repo. The model never sees the password: it is injected server-side.
+
+### 10a. Which targets have a login (keep this current)
+
+| Program | Vault creds | Accounts | Login skill |
+|---|---|---|---|
+| `dell` | ✅ yes | **1** (single account) | `dell-login-playwright` |
+| `digicert` | ⏳ planned | — | (none yet) |
+| `wien` | ⏳ planned | — | (none yet) |
+| `indeed` | ❌ none | — | — |
+
+When you add accounts, update this table (and note handles, never passwords).
+
+### 10b. How to log in
+
+1. Load the target's login skill (e.g. `dell-login-playwright`) and follow it literally — it
+   encodes the Akamai/CAPTCHA/MFA flow that plain `browser_exec` fails.
+2. Resolve the password from the vault **without printing it**:
+   `VaultStore().resolve_secret(handle).get("password","")`. Never log, echo, or put it in a
+   tool argument that gets recorded.
+3. Cookies are **fingerprint-bound**: authenticated requests must run from **inside the same
+   Playwright context** that logged in. The same cookies in `curl` get an Akamai 403 — do not
+   try to port the session out.
+4. Each Dell login burns one email-2FA code; the account locks after 6 bad MFA attempts.
+   **Never guess codes.** One account = be economical with logins.
+
+### 10c. What ONE account unlocks (Dell today)
+
+A single account is already enough for several real bugs — you do not need two for these:
+
+- **Authenticated CORS impact** — the single biggest payoff right now. The 116
+  `cors-credentialed-reflection` findings are only a *shape* until you prove a cross-origin
+  read of **authenticated** data. Logged in, replay the endpoint with the evil `Origin` + your
+  session and show your own private response is readable cross-origin. One account proves it.
+- **Own-data access-control posture** (`bb-authz`, `hunt-auth-bypass`) — map which objects/APIs
+  your account can reach; a 200 where a 401/403 is expected is a lead.
+- **Business logic** (`hunt-business-logic`) within your own account — pricing, workflow, state.
+- **Authenticated GraphQL / API authz** (`hunt-graphql`, `hunt-spa-api`) on your own token.
+
+**Blocked until a second account exists:** clean IDOR/BOLA proof (A reads B). See the §8
+authenticated guardrails for the single-account exception and its limits.
+
+---
+
+## 11. Proactive hunting — the bugs Watch can never emit
+
+Watch is a scanner; these classes need a human-style, browser-driven, reasoning pass. Work
+them in this order (highest expected value first). For each, load the named `hunt-*` skill.
+
+### 11a. Pre-auth (works with NO login)
+
+1. **OAuth / `redirect_uri` bypass** → `hunt-oauth`. Seed: `scripts/indeed_oauth_bypass.py`
+   and the `redirect-param` candidates on auth flows (login/sso/reset).
+2. **Password-reset / forgot flow** → `hunt-forgot-password` (host-header poisoning, token leak).
+3. **Registration / pre-account-takeover** → `hunt-ato`.
+4. **Open redirect, SSRF-via-params, host-header, cache poisoning, smuggling** → their skills.
+
+### 11b. Authenticated (needs §10 login)
+
+5. **IDOR / BOLA** → `hunt-idor` (two accounts for clean proof; see §8/§10c).
+6. **Broken access control / privilege escalation** → `hunt-auth-bypass`, `bb-authz`.
+7. **Business logic** → `hunt-business-logic`.
+8. **Authenticated CORS proof** → `hunt-cors` (turns the 116 findings into real bugs, §10c).
+9. **CSRF on state-changing actions, authenticated SSRF, session/JWT** → their skills.
+
+### 11c. Surface mapping (feeds both)
+
+10. **SPA → backend API** (`hunt-spa-api`) and **shadow/undocumented API** (`hunt-shadow-api`)
+    from crawled JS → new endpoints → test authz on each.
+11. **Framework-specific** on fingerprinted hosts: Spring 401 hosts → `hunt-springboot` +
+    the `spring-actuator-heapdump-custom` / `jolokia-jmx-exposure-custom` templates;
+    Next.js → `hunt-nextjs`; etc.
+
+### 11d. Seeded leads already on this box
+
+| Lead | Where | Route to |
+|---|---|---|
+| 116 CORS reflections | `Finding(name="cors-credentialed-reflection-custom")` | §10c authenticated proof + `hunt-cors` |
+| redirect-param candidates | `Finding(source="redirect-param")` → `/ui/findings/redirect` | `hunt-oauth` / `hunt-redirect-params` |
+| Spring 401 API hosts | CORS-finding hosts returning 401 | `hunt-springboot` + heapdump/jolokia templates |
+| GraphQL introspection hits | `Finding(name="graphql-introspection-custom")` | `hunt-graphql` (authz, not just introspection) |
