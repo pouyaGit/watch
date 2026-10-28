@@ -1,0 +1,34 @@
+DAILY HUNT — all in-scope programs.
+
+Read /opt/watch/HUNT_GUIDE.md and follow it literally. Load first:
+bb-methodology, recon-scope-triage, triage-validation, evidence-hygiene.
+
+DATA ACCESS: read Watch findings from MongoDB via the `Finding` model
+(`from database.db import Finding`, connects on import). Do NOT use the :5000
+dashboard/API — it is auth-gated and you have no credentials for it (HUNT_GUIDE §3b).
+
+Work BOTH tracks this session:
+
+1) VERIFY track — pull open candidates, highest severity first:
+   cd /opt/watch && ./.venv/bin/python - <<'PY'
+   from database.db import Finding
+   for f in Finding.objects(status="open").order_by("-severity","-first_seen").limit(40):
+       print(f.severity, f.program_name, f.source, f.name, "|", f.target)
+   PY
+   For each: scope-gate (programs/*.json) → load the hunt-* skill (§4b) →
+   run the §5 playbook → false_positive or triaged. Never delete rows.
+
+2) HUNT track (higher EV) — proactive, per §11:
+   - Pick a program. If it has a vault login (§10a table), authenticate with its
+     login skill; resolve creds via VaultStore().resolve_secret() — never print them.
+   - Pre-auth everywhere: OAuth/redirect_uri, reset/forgot, open-redirect, SSRF.
+   - Authenticated (where logged in): IDOR/authz, business logic, authenticated
+     CORS proof (the cors-credentialed-reflection findings).
+   - Use the §11d seeded-leads table.
+
+GUARDRAILS: in-scope only (never ooscopes), read-only, your test accounts only,
+mask PII, pace requests, minimal proof.
+
+OUTPUT: update finding statuses as you go. Report ONLY proven findings, and only
+after triage-validation passes all 7 questions. End with a 5-line summary:
+what you verified, what you disproved, what you proved, what's queued, blockers.
