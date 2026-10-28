@@ -1,0 +1,72 @@
+id: spring-actuator-heapdump-custom
+info:
+  name: Spring Boot Actuator heapdump exposed (downloadable JVM memory)
+  author: watch-recon
+  severity: critical
+  description: >
+    An unauthenticated Spring Boot actuator /heapdump endpoint returns a full
+    JVM heap dump -- a snapshot of process memory. These routinely contain
+    plaintext credentials, API tokens, session cookies, DB connection strings
+    and PII, so the download alone is typically a high/critical bug-bounty
+    payout (leads to account takeover / lateral movement).
+
+    Proof by construction, not fingerprinting: the matcher fires only when the
+    body begins with the binary HPROF magic string "JAVA PROFILE 1.0", which is
+    the on-disk heap-dump format header and cannot be produced by an HTML or
+    JSON page. A Range request + max-size cap fetch only the first bytes, so a
+    multi-GB dump is never actually pulled during the scan.
+
+    Complements spring-actuator-exposure-custom (which matches /actuator/env &
+    friends); this one targets the far higher-impact heapdump route specifically.
+  reference:
+    - https://docs.spring.io/spring-boot/docs/current/reference/html/actuator.html#actuator.endpoints
+    - https://github.com/wyzxxz/heapdump_tool
+  classification:
+    cvss-metrics: CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N
+    cvss-score: 7.5
+  tags: exposure,springboot,actuator,heapdump,disclosure,config
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/actuator/heapdump"
+      - "{{BaseURL}}/heapdump"
+      - "{{BaseURL}}/actuator/heapdump.json"
+    headers:
+      # Ask for only the first KB; if the server honours Range we get a 206 with
+      # just the header bytes, never the whole multi-GB dump.
+      Range: "bytes=0-1023"
+    # Second guard: even if Range is ignored, stop reading the body after 4 KB.
+    max-size: 4096
+    stop-at-first-match: true
+    redirects: false
+
+    matchers-condition: and
+    matchers:
+      # Full read (200) or partial content from an honoured Range (206).
+      - type: status
+        status:
+          - 200
+          - 206
+      # The HPROF heap-dump magic header. Binary, exact, zero false positives --
+      # no normal web response starts with this.
+      - type: word
+        part: body
+        words:
+          - "JAVA PROFILE 1.0"
+      # Exclude the common "looks like a dump but is actually an HTML error page"
+      # case defensively (belt-and-braces; the magic match already excludes it).
+      - type: word
+        part: body
+        words:
+          - "<html"
+          - "<!DOCTYPE"
+        condition: or
+        negative: true
+
+    extractors:
+      # Surface the exact HPROF version string (e.g. JAVA PROFILE 1.0.2) as proof.
+      - type: regex
+        part: body
+        regex:
+          - "JAVA PROFILE 1\\.0\\.[0-9]"
