@@ -1,4 +1,8 @@
-AUTHENTICATED HUNT — pick a program. START WITH wien (easiest login). Rotate: wien → digicert → dell.
+AUTHENTICATED HUNT. PRIORITY: digicert (2 working accounts; a Cert Authority = BOLA goldmine).
+- digicert: BOTH accounts work now → do full TWO-ACCOUNT BOLA. This is the main target.
+- wien: KNOWN LOW-VALUE — the accounts hold only name/address, no user-scoped records, so there
+  is no IDOR surface. Do a quick confirm at most; do NOT spend the session digging here again.
+- dell: do when the human is available (CAPTCHA + email 2FA) — not before.
 
 Scope-gate against /opt/watch/programs/<PROG>.json (in scopes[], not ooscopes[]).
 Load: hunt-idor, bb-authz, hunt-business-logic, hunt-spa-api, evidence-hygiene, triage-validation.
@@ -32,8 +36,12 @@ user CREATES RECORDS. Enumerate and follow the SSO into them, carrying the sessi
   "Formulare" (submitted forms, with a submission/Antrag id), appointment/booking ("Termin"),
   document/download services, "Meine Anträge"/"Meine Daten" areas. Submit/open a record as account
   A, note its id, then try it as B. THAT is where wien IDOR lives — not GetAccounts.
-- digicert: the account's certificate/order/request objects (certId, orderId, requestId, domain
-  validation records) — these are the BOLA goldmine for a cert authority.
+- digicert: the certificate/order/request objects are the BOLA goldmine. Note: the account
+  endpoint `/app/account/ui-api/v1/account/{id}` already enforces ownership (403 on a foreign id).
+  So hit the OTHER object endpoints — cert/{id}, order/{id}, request/{id}, audit-logs entries,
+  certificate DOWNLOAD/detail, API tokens, domain-validation records — with account A's ids FROM
+  account B (two-account BOLA) AND with guessed/sequential ids. Download/detail/audit endpoints
+  are where CAs commonly miss the ownership check. One foreign cert/order = confirmed BOLA.
 Find the services by: links/redirects after login, the portal's JS, and the Http collection
 (status 200/302 app hosts). Spend the session HERE, deep on 2–3 services, not wide on the portal.
 
