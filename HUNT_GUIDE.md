@@ -616,12 +616,15 @@ Reuse `scripts/watch_redirect_confirm.py` / `scripts/bb4_confirm.py`: set the pa
 while the baseline does not.
 
 **6. SSRF via params (OOB-confirmed)** → `hunt-ssrf`
-```bash
-interactsh-client -o /tmp/oob.txt &        # prints a canary domain to use as the payload
-```
-For params named `url,uri,dest,redirect,next,callback,webhook,image,feed,proxy,target`
-inject the interactsh URL; a DNS/HTTP hit in `/tmp/oob.txt` = confirmed. No OOB hit =
-not confirmed (reflection of your own URL is NOT SSRF — see §5b).
+⚠️ interactsh does NOT work from this box — egress to interact.sh is blocked, so
+`interactsh-client` hangs with no canary domain. Do NOT run it here (it will loop). Blind
+SSRF is therefore NOT confirmable from this box unless you have your OWN reachable OOB
+endpoint (a domain/server you control that this box CAN reach). Options: (a) confirm only
+NON-blind SSRF — the response contains metadata **content** never in your request
+(`AccessKeyId`, `ami-id`, `Metadata-Flavor: Google`, see §5b); (b) collect SSRF candidates
+(params `url,uri,dest,redirect,next,callback,webhook,image,feed,proxy,target`) as leads for
+later OOB testing from a box that can reach a collaborator. Pick another class instead of
+fighting interactsh.
 
 **7. Host-header / password-reset poisoning** → `hunt-host-header` / `hunt-forgot-password`
 On login/reset/SSO endpoints: `curl -A "$UA" -H "Host: evil.example"` and
@@ -810,9 +813,13 @@ the hard way; follow them so you don't waste a run or misread a result.
 - Private templates already run in the http lane; re-run manually only to target a
   fresh host set. Pass the browser UA with `-H` on WAF'd targets.
 
-**interactsh-client**
-- Start it, use the canary domain it prints as the SSRF/OOB payload. A hit in its
-  output = confirmed OOB; no hit = NOT confirmed (reflection of your URL ≠ SSRF).
+**interactsh-client — DOES NOT WORK FROM THIS BOX**
+- Egress to interact.sh / `*.oast.*` is blocked, so it hangs with NO canary domain
+  (verified: `timeout 12 interactsh-client` → killed, empty output). Do NOT run it, and
+  NEVER retry it — it just loops and trips the repeated-command guardrail (observed).
+- Consequence: blind SSRF/OOB is not confirmable here (§12 item 6). Confirm only non-blind
+  SSRF (metadata content in the response), or collect candidates for later OOB from a box
+  that can reach a collaborator you control.
 
 **Liveness — read the `Http` collection, don't re-probe**
 - `Urls`/`Endpoints` are historical crawl data full of DEAD hosts (`educationsbx.dell.com`

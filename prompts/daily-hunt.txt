@@ -4,6 +4,13 @@ Read /opt/watch/HUNT_GUIDE.md and follow it literally. Load first:
 bb-methodology, recon-scope-triage, triage-validation, evidence-hygiene.
 DATA ACCESS: findings via the `Finding` model (connects on import). NOT the :5000 API (§3b).
 
+#1 RULE — NEVER RE-RUN A COMMAND THAT HUNG OR FAILED. If a command times out or errors
+the same way ONCE, do NOT run it again identically — that loops and trips the guardrail
+(it has halted EVERY prior session: httpx, nuclei, interactsh). Instead: diagnose, shrink
+the input, run it detached + poll, or SKIP that tool and pick another task.
+TOOLS THAT DON'T WORK FROM THIS BOX (don't fight them): interactsh / SSRF-OOB (egress to
+interact.sh is blocked — no canary), wayback/gau (IP blocked), the :5000 API (no creds).
+
 ═══════════════════════════════════════════════════════════════════════════
 THESE DO NOT END YOUR SESSION. Never use them as a reason to stop or to call the
 day "pointless / blocked everywhere / nothing new":
@@ -26,8 +33,8 @@ Run these — each its OWN command, every scan SMALL and on hosts that are live 
 - (b) x8 hidden params — check `Endpoints.params_from_x8` FIRST; run live only if stale.
 - (c) dalfox reflected-XSS on a SMALL (≤10) batch of live param-rich URLs; verify EACH
       reflected lead by hand per §5e, and assess CSP/bypass per §11b (skill: hunt-csp-bypass).
-- (d) ≥2 more §12 classes: OAuth/redirect_uri, host-header/reset, SSRF-OOB (interactsh),
-      source/secret-leak in live JS, shadow-API from live JS.
+- (d) ≥2 more §12 classes (NOT SSRF-OOB — interactsh is unreachable here): OAuth/redirect_uri,
+      host-header/reset, source/secret-leak in live JS, shadow-API from live JS, open-redirect.
 
 MINIMUM to count the session as done: ffuf + dalfox + ≥2 more classes, on hosts live in
 `Http`. XSS every day. A session with ZERO fresh ffuf/x8/dalfox/other tool runs is a FAILED
