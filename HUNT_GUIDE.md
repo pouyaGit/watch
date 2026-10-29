@@ -582,6 +582,45 @@ Real only when the FULL payload comes back **unencoded as one block**
 the `alert(1)` substring reflected = FP. Let `dalfox` verify, then reproduce by hand.
 Also try the auth/error/search params and non-GET reflections dalfox misses.
 
+**11b. Reflected + CSP — the decision tree (don't give up at the CSP, don't lie about it either).**
+A reflected param with a strict CSP is a MAYBE, not an automatic FP. Work it in order:
+
+1. **Confirm injection context FIRST** (a dead end makes CSP moot). Reflect a unique
+   marker, then see what survives UNENCODED at the sink:
+   - `<` `>` survive in HTML body → you can inject a tag → go to step 2.
+   - only inside an attribute (`"` encoded) → try attribute breakout / event handler;
+     if `"` and `'` are encoded, usually dead.
+   - inside a `<script>` JS string → try string breakout (`';`), template-literal, etc.
+   - fully entity-encoded everywhere → **FP, stop.**
+2. **Read the response's own CSP** (not a different page's). Classify `script-src`:
+   - **absent / `'unsafe-inline'`** → plain reflected XSS, done. Report.
+   - **`'strict-dynamic'` present** → host allow-list is IGNORED; you need a trusted
+     script-gadget already loaded on the page (hard). Usually park as a lead.
+   - **nonce/hash + host allow-list, NO `'unsafe-inline'`, NO `'strict-dynamic'`**
+     → the allow-list is live → check it for a bypass primitive in step 3.
+3. **Bypass primitives in an active allow-list** (you still need step-1 tag injection):
+   - **Wildcard CDNs you can publish to**: `*.cloudfront.net`, `*.s3.amazonaws.com`,
+     `*.storage.googleapis.com`, `*.azureedge.net`, `*.web.core.windows.net` → stand up
+     your OWN bucket/distribution and load `src=`'d JS from it.
+   - **JSONP / callback endpoints on an allow-listed host** (`?callback=`, `?jsonp=`):
+     `<script src="https://allowed.host/api?callback=alert(document.domain)">`.
+   - **Known gadget libs on allow-listed hosts** (AngularJS <1.8, etc.) → template-injection gadget.
+   - none of these → it's genuinely CSP-mitigated → §5e **disprove**, note the CSP.
+4. **Observed example (investors.delltechnologies.com):** `action`/`filenum`/`v` reflect,
+   CSP `script-src` has a nonce + a host allow-list that INCLUDES `*.cloudfront.net` and
+   `qmod.quotemedia.com` — so IF step 1 yields HTML-tag injection, that allow-list is the
+   bypass path. Confirm step 1 by hand before claiming anything.
+
+**Making it pay (report framing, see §7).** A confirmed reflected XSS is typically
+Bugcrowd VRT **P3** on its own; it climbs to **P2** when you chain it to real impact
+on an authenticated/sensitive origin — session/cookie theft, CSRF-token exfil, or an
+account-takeover action performed as the victim. So once execution is proven: (a) show
+`document.domain` is the in-scope host, (b) demonstrate reading something the victim's
+session can see (mask PII per `evidence-hygiene`), (c) state the concrete impact, no
+inflation. A precise P3 with a clean PoC pays; a hand-wavy "possible XSS" gets closed.
+A CSP bypass that makes a "mitigated" reflection fire is itself worth writing up clearly —
+it is the difference between N/A and a paid P3/P2.
+
 **12. DOM XSS** → `hunt-dom` (drive it with the `hermes-domxss-verifier` skill)
 Crawl for client-side sinks, then confirm execution in a REAL browser — a static
 grep is only a lead, DOM XSS counts only when it fires in the DOM.
