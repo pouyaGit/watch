@@ -553,8 +553,11 @@ interactsh-client`). Do not reinstall them.
   Discovered params are the input to dalfox (item 11) and the SSRF/redirect probes.
 
 **1. Spring/Java exposure — heapdump + jolokia + actuator (highest EV, zero-FP)**
-Target ONLY the Java/Spring hosts (from `Http.tech`), not all 1460 — heapdump/jolokia
-mean nothing on a non-JVM host, and a big list makes nuclei overrun the shell timeout:
+NOTE: the `watch-heavy` lane already runs these templates on every host and writes hits to
+`Finding` — read those first (Part 3), don't re-run by default. Run manually ONLY to cover a
+Spring host whose `Http.last_nuclei_run` is stale, and then target ONLY the Java/Spring hosts
+(from `Http.tech`), not all 1460 — heapdump/jolokia mean nothing on a non-JVM host, a big list
+overruns the shell timeout, and a couple of slow hosts can hang nuclei ~0-CPU, so run DETACHED:
 ```bash
 cd /opt/watch && ./.venv/bin/python - <<'PY'
 from datetime import datetime, timedelta
