@@ -227,7 +227,36 @@ confirm step. All 57 `hunt-*` skills live in `/root/skills-src/murrtada/skills/`
 
 ---
 
-## 5. Verification playbooks (the part that kills false positives)
+## Long-Running Scan Discipline
+
+A tool's foreground timeout (default 180s) is a harness limit, not a verdict on the
+target. A scan killed mid-flight leaves partial or empty output, and that output is
+NOT evidence of "zero hits."
+
+- **Background any scan expected to exceed ~2 minutes** (`background=true` +
+  `notify_on_complete=true`), or split the target list into chunks that fit the
+  budget. Do not re-run the identical full-list command expecting a different
+  outcome — that is the same loop with the same result.
+- **A timed-out scan with empty/partial output is an INCOMPLETE SWEEP**, not a
+  clean negative. Record it as `incomplete (timeout)` in the session notes and
+  re-run in the background; never write "no hits" or "nothing found" from a
+  truncated run. (nuclei writes results as it goes, so 0 lines after a timeout
+  means it never finished starting on that list, not that nothing matched.)
+- **Always run the bare-control request first** before interpreting a 403/empty
+  body as "no reflection / no exposure" — a WAF edge can 403 the payload while
+  200-ing the canary. A payload-only 403 with no canary control is uninterpretable.
+- **Count and report what actually ran**: #hosts probed, #completed, #hits. A
+  summary with no Part-1 tool output (or with an incomplete sweep dressed up as a
+  negative) is a failed session, not a clean one.
+
+**Lesson from an authorized engagement:** A nuclei spring-actuator sweep over 1460
+live hosts was killed at the 180s default with 0 output lines; re-running the
+identical command produced the same timeout. The honest record is "incomplete,"
+not "no actuator exposure" — and the cors template on the same list did complete
+and returned 85 reflection hits, proving the list and the tool both work.
+
+---
+"
 
 These are the exact checks for the classes Watch emits most. Run them before believing any candidate.
 
@@ -409,7 +438,36 @@ them in this order (highest expected value first). For each, load the named `hun
 8. **Authenticated CORS proof** → `hunt-cors` (turns the 116 findings into real bugs, §10c).
 9. **CSRF on state-changing actions, authenticated SSRF, session/JWT** → their skills.
 
-### 11c. Surface mapping (feeds both)
+### Long-Running Scan Discipline
+
+A tool's foreground timeout (default 180s) is a harness limit, not a verdict on the
+target. A scan killed mid-flight leaves partial or empty output, and that output is
+NOT evidence of "zero hits."
+
+- **Background any scan expected to exceed ~2 minutes** (`background=true` +
+  `notify_on_complete=true`), or split the target list into chunks that fit the
+  budget. Do not re-run the identical full-list command expecting a different
+  outcome — that is the same loop with the same result.
+- **A timed-out scan with empty/partial output is an INCOMPLETE SWEEP**, not a
+  clean negative. Record it as `incomplete (timeout)` in the session notes and
+  re-run in the background; never write "no hits" or "nothing found" from a
+  truncated run. (nuclei writes results as it goes, so 0 lines after a timeout
+  means it never finished starting on that list, not that nothing matched.)
+- **Always run the bare-control request first** before interpreting a 403/empty
+  body as "no reflection / no exposure" — a WAF edge can 403 the payload while
+  200-ing the canary. A payload-only 403 with no canary control is uninterpretable.
+- **Count and report what actually ran**: #hosts probed, #completed, #hits. A
+  summary with no Part-1 tool output (or with an incomplete sweep dressed up as a
+  negative) is a failed session, not a clean one.
+
+**Lesson from an authorized engagement:** A nuclei spring-actuator sweep over 1460
+live hosts was killed at the 180s default with 0 output lines; re-running the
+identical command produced the same timeout. The honest record is "incomplete,"
+not "no actuator exposure" — and the cors template on the same list did complete
+and returned 85 reflection hits, proving the list and the tool both work.
+
+---
+"
 
 10. **SPA → backend API** (`hunt-spa-api`) and **shadow/undocumented API** (`hunt-shadow-api`)
     from crawled JS → new endpoints → test authz on each.
@@ -495,14 +553,30 @@ interactsh-client`). Do not reinstall them.
   Discovered params are the input to dalfox (item 11) and the SSRF/redirect probes.
 
 **1. Spring/Java exposure — heapdump + jolokia + actuator (highest EV, zero-FP)**
+Target ONLY the Java/Spring hosts (from `Http.tech`), not all 1460 — heapdump/jolokia
+mean nothing on a non-JVM host, and a big list makes nuclei overrun the shell timeout:
 ```bash
-nuclei -l /tmp/live.txt \
+cd /opt/watch && ./.venv/bin/python - <<'PY'
+from datetime import datetime, timedelta
+from database.db import Http
+fresh=datetime.now()-timedelta(days=3); kw=("spring","tomcat","java","jetty","jboss","wildfly","weblogic")
+hosts={ (h.final_url or h.url) for h in Http.objects(program_name="dell").only("url","final_url","status_code","tech","last_update")
+        if h.status_code and (not h.last_update or h.last_update>=fresh)
+        and any(any(k in (t or '').lower() for k in kw) for t in (h.tech or [])) }
+open("/tmp/spring.txt","w").write("\n".join(sorted(hosts))+"\n"); print(len(hosts),"Spring hosts")
+PY
+# nuclei is SLOW to start and WILL overrun a 2-min shell timeout -> run DETACHED, then poll:
+nohup nuclei -l /tmp/spring.txt \
   -t nuclei/private_templates/spring-actuator-heapdump.yaml \
   -t nuclei/private_templates/jolokia-jmx-exposure.yaml \
   -t nuclei/private_templates/spring-actuator-exposure.yaml \
-  -H "User-Agent: $UA" -rl 40 -nc
+  -H "User-Agent: $UA" -rl 60 -c 40 -timeout 6 -retries 0 -nc -stats=false \
+  -o /tmp/spring_hits.txt >/tmp/spring.log 2>&1 &
+echo "nuclei PID $!"   # later: `kill -0 $! && echo running || cat /tmp/spring_hits.txt`
 ```
-Matchers self-confirm. Any hit → load `hunt-springboot`, pull the dump/MBeans, report.
+Poll with `wc -l /tmp/spring_hits.txt` in a SEPARATE quick command. Any hit → load
+`hunt-springboot`, pull the dump/MBeans, report. **Never re-run an identical scan that
+timed out** — it's detached now; check the output file instead.
 
 **2. Secret / source leak in crawled JS** → `hunt-source-leak`
 ```bash
@@ -647,7 +721,36 @@ things you disprove → `status="false_positive"` + why. Then `triage-validation
 
 ---
 
-## 13. Tool operating notes (learned gotchas — read before running)
+## Long-Running Scan Discipline
+
+A tool's foreground timeout (default 180s) is a harness limit, not a verdict on the
+target. A scan killed mid-flight leaves partial or empty output, and that output is
+NOT evidence of "zero hits."
+
+- **Background any scan expected to exceed ~2 minutes** (`background=true` +
+  `notify_on_complete=true`), or split the target list into chunks that fit the
+  budget. Do not re-run the identical full-list command expecting a different
+  outcome — that is the same loop with the same result.
+- **A timed-out scan with empty/partial output is an INCOMPLETE SWEEP**, not a
+  clean negative. Record it as `incomplete (timeout)` in the session notes and
+  re-run in the background; never write "no hits" or "nothing found" from a
+  truncated run. (nuclei writes results as it goes, so 0 lines after a timeout
+  means it never finished starting on that list, not that nothing matched.)
+- **Always run the bare-control request first** before interpreting a 403/empty
+  body as "no reflection / no exposure" — a WAF edge can 403 the payload while
+  200-ing the canary. A payload-only 403 with no canary control is uninterpretable.
+- **Count and report what actually ran**: #hosts probed, #completed, #hits. A
+  summary with no Part-1 tool output (or with an incomplete sweep dressed up as a
+  negative) is a failed session, not a clean one.
+
+**Lesson from an authorized engagement:** A nuclei spring-actuator sweep over 1460
+live hosts was killed at the 180s default with 0 output lines; re-running the
+identical command produced the same timeout. The honest record is "incomplete,"
+not "no actuator exposure" — and the cors template on the same list did complete
+and returned 85 reflection hits, proving the list and the tool both work.
+
+---
+"
 
 Exact, verified behaviour of the installed tools on THIS box. These were learned
 the hard way; follow them so you don't waste a run or misread a result.
@@ -696,6 +799,11 @@ the hard way; follow them so you don't waste a run or misread a result.
 
 **nuclei**
 - Slow to start in this env (~15-40s); that's normal, don't kill it early.
+- On more than a handful of hosts it WILL overrun a ~2-min shell timeout. **Run it
+  DETACHED** (`nohup nuclei ... -o /tmp/out.txt >/tmp/n.log 2>&1 &`) and poll the
+  output file (`wc -l /tmp/out.txt`) in separate quick commands. A timed-out run is
+  NOT a failure and **must NOT be re-run identically** — that just loops and trips the
+  repeated-command guardrail (observed). Shrink the host set (target by `tech`) or wait.
 - Private templates already run in the http lane; re-run manually only to target a
   fresh host set. Pass the browser UA with `-H` on WAF'd targets.
 
