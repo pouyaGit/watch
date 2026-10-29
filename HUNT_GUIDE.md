@@ -384,7 +384,7 @@ this repo. The model never sees the password: it is injected server-side.
 | Program | Accounts (2 each → clean two-account IDOR) | Login / 2FA |
 |---|---|---|
 | `digicert` | vault_a85ea4c141cc "digicert 1", vault_1c1c68ccad4c "digicert 2" (accounts.digicert.com) | **PRIORITY** — both accounts work; CA = BOLA goldmine. #2 TOTP in vault (`otp_secret`); #1 email/OTP. account/{id} enforces ownership (403) → test cert/order/download/audit endpoints instead |
-| `wien` | vault_3f9b507faf27 "wien 1", vault_c68a1e6c03d3 "wien 2" (mein.wien.gv.at) | simple, NO MFA — but KNOWN LOW-VALUE: accounts hold only name/address, no user records → no IDOR surface. Don't re-dig |
+| `wien` | vault_3f9b507faf27 "wien 1", vault_c68a1e6c03d3 "wien 2" (mein.wien.gv.at) | simple, NO MFA. The PORTAL dashboard is thin (name/address, no portal IDOR) — but wien.gv.at/wien.at is HUGE (~1689 hosts, whole city gov): hunt the many services/apps WIDE, all bug classes, incl. wherever the SSO reaches. Don't write wien off |
 | `dell` | vault_2d7b15676045 "dell behnia", vault_509ef42e1e71 "dell totti" (www.dell.com) | `dell-login-playwright`: CAPTCHA + email 2FA, human present |
 | `indeed` | ❌ none | — |
 

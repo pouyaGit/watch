@@ -1,7 +1,11 @@
 AUTHENTICATED HUNT. PRIORITY: digicert (2 working accounts; a Cert Authority = BOLA goldmine).
 - digicert: BOTH accounts work now → do full TWO-ACCOUNT BOLA. This is the main target.
-- wien: KNOWN LOW-VALUE — the accounts hold only name/address, no user-scoped records, so there
-  is no IDOR surface. Do a quick confirm at most; do NOT spend the session digging here again.
+- wien: only the mein.wien.gv.at PORTAL DASHBOARD is thin (name/address, no records → no portal
+  IDOR). wien itself is a HUGE surface (wien.gv.at + wien.at, ~1689 live hosts — a whole city
+  government). Do NOT write wien off — just look WIDER: the many municipal services/apps (use the
+  Http collection to list live wien app hosts), any service the SSO session reaches, and ALL bug
+  classes (not just IDOR) — auth flows, access control, injection, exposure, logic. The portal is
+  just the login hub; the bugs are in the services around it.
 - dell: do when the human is available (CAPTCHA + email 2FA) — not before.
 
 Scope-gate against /opt/watch/programs/<PROG>.json (in scopes[], not ooscopes[]).
