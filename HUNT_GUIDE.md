@@ -813,10 +813,12 @@ the hard way; follow them so you don't waste a run or misread a result.
 - Private templates already run in the http lane; re-run manually only to target a
   fresh host set. Pass the browser UA with `-H` on WAF'd targets.
 
-**interactsh-client — DOES NOT WORK FROM THIS BOX**
-- Egress to interact.sh / `*.oast.*` is blocked, so it hangs with NO canary domain
-  (verified: `timeout 12 interactsh-client` → killed, empty output). Do NOT run it, and
-  NEVER retry it — it just loops and trips the repeated-command guardrail (observed).
+**interactsh-client — DISABLED (fast-fail shim) ON THIS BOX**
+- Egress to interact.sh / `*.oast.*` is blocked, so the real tool hangs with NO canary.
+  It has been replaced by a shim at `/root/go/bin/interactsh-client` that returns INSTANTLY
+  with a "disabled" message (real binary saved as `interactsh-client.real`; restore with
+  `mv .../interactsh-client.real .../interactsh-client`). So running it no longer hangs —
+  but OOB still doesn't work; just read the message and move on, do not retry.
 - Consequence: blind SSRF/OOB is not confirmable here (§12 item 6). Confirm only non-blind
   SSRF (metadata content in the response), or collect candidates for later OOB from a box
   that can reach a collaborator you control.
