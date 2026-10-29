@@ -659,7 +659,19 @@ nuclei -l /tmp/live.txt -tags exposure,config,cve,default-login,debug,disclosure
 Every hit is a CANDIDATE — run the §5 playbook before believing it.
 
 **11. Reflected XSS** → `hunt-xss` (confirm rules in §5e)
-Pull URLs that carry query params, fuzz with `dalfox`:
+TRIAGE REFLECTIONS AT SCALE FIRST — dalfox is far too slow to cover the surface
+(dell = 253k param-URLs → 26k unique signatures; dalfox does ~15). Run the fast
+reflection scanner, THEN dalfox/manual only on the HOT hits:
+```bash
+./.venv/bin/python scripts/watch_reflect_scan.py --program dell --limit 12000
+```
+It tests ONE URL per unique (host,path,param-set) on LIVE hosts, injects a canary +
+`' " < >` into every param, and buckets by what survives UNENCODED **and the response
+Content-Type**: HOT = `<`&`>` survive in `text/html` (real tag-injection XSS candidate);
+WARN = quote breakout in HTML; js-nosniff = reflected in `application/javascript`/json +
+nosniff (the Jira `batch.js?locale=` class — NOT HTML-XSS, skip). Work the HOT list:
+check context + CSP (§11b), then confirm with dalfox/manual below. Then still fuzz with
+`dalfox` for the cases it mines that a reflection probe misses:
 ```bash
 ./.venv/bin/python - <<'PY'
 from database.db import Urls
