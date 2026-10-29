@@ -615,10 +615,17 @@ the hard way; follow them so you don't waste a run or misread a result.
   prints only reflected/verified POCs (cuts noise).
 - Feed **param-rich URLs** (from `Urls` where `params` is set), not bare hosts. A
   SPA with no reflecting params gives dalfox nothing.
-- It is THOROUGH and slow (many payloads/param). Run **small batches (≤10 URLs)**
-  or per-host; a `timeout`/exit 124 is NOT "no XSS" — it just didn't finish. Its
-  `[I] Reflected <x> param` lines are LEADS (value echoed back); confirm each by
-  hand per §5e (full payload, unencoded, executes) before believing it.
+- It is THOROUGH and slow — so slow it can blow even a 10–20 min budget on <10
+  URLs. Always wrap it in `timeout` and treat the `[I] Reflected <x> param` lines
+  it prints as the real output (LEADS = value echoed back); a kill/exit 124 is NOT
+  "no XSS". Don't wait for it to "finish"; harvest the reflected-param leads.
+- **CHECK CSP before chasing a reflected param.** dalfox prints the response CSP.
+  A `script-src` with a `nonce-...` or a host allow-list and NO `'unsafe-inline'`
+  blocks reflected `<script>`/inline-handler XSS — the reflection is real but not
+  exploitable unless you find a CSP bypass via a whitelisted host (JSONP/callback,
+  open redirect on an allowed origin). Observed live on `investors.delltechnologies.com`
+  (`action`/`filenum`/`v` reflect, but strict nonce CSP) — that's a §5e disprove,
+  not a finding. Spend XSS effort on hosts with weak/absent CSP.
 
 **ffuf**
 - Always use `-ac` (auto-calibrate) — it filters soft-404s.
