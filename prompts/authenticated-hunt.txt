@@ -14,17 +14,35 @@ Every program has TWO accounts on the SAME app → do CLEAN TWO-ACCOUNT IDOR (th
 ── STEP 1: LOG IN BOTH ACCOUNTS (standalone Playwright, full Chrome UA; save each storage_state) ──
 Reuse a saved storage_state if still valid (an authenticated endpoint returns your data, not a login page).
 - wien: simple form login, no MFA. Easiest — just vault creds. Save /tmp/wien_A.json and /tmp/wien_B.json.
-- digicert: form login. "digicert 2" has a TOTP seed in the vault → mint the current 6-digit code
-  from it yourself (VaultStore / pyotp); never print the seed. "digicert 1" has no stored OTP → if it
-  prompts for a code, ask the HUMAN (email/OTP). Save /tmp/dc_A.json, /tmp/dc_B.json.
+- digicert: form login. "digicert 2" TOTP seed IS in the vault under the key `otp_secret`
+  (NOT `password`/`totp`): `seed = VaultStore().resolve_secret("vault_1c1c68ccad4c")["otp_secret"]`
+  then `pyotp.TOTP(seed).now()` → the 6-digit code. Never print the seed. "digicert 1" has no
+  stored OTP → if it prompts, ask the HUMAN. digicert.com is behind Imperva — use a full browser
+  fingerprint from inside Playwright. Save /tmp/dc_A.json, /tmp/dc_B.json.
 - dell: follow dell-login-playwright literally (cookie banner → CAPTCHA crop shown to HUMAN → email
   2FA code from HUMAN; never guess — 6 bad tries locks it). Save /tmp/dell_A.json, /tmp/dell_B.json.
 Back up each storage_state (cp to .bak) before any logout/session test.
 
+── STEP 1b: FOLLOW THE SSO INTO THE REAL SERVICES (do NOT stop at the portal shell) ──
+A login portal's own dashboard (e.g. mein.wien.gv.at) exposes almost nothing — its 4 API calls
+are NOT the surface. The IDOR surface is in the SERVICES the portal/SSO grants access to, where a
+user CREATES RECORDS. Enumerate and follow the SSO into them, carrying the session cookies:
+- wien: the portal links out to services across wien.gv.at/wien.at (1689 live hosts). Go into the
+  ones with USER-SCOPED records: petitionen.wien.gv.at (submitted petitions), the formularserver /
+  "Formulare" (submitted forms, with a submission/Antrag id), appointment/booking ("Termin"),
+  document/download services, "Meine Anträge"/"Meine Daten" areas. Submit/open a record as account
+  A, note its id, then try it as B. THAT is where wien IDOR lives — not GetAccounts.
+- digicert: the account's certificate/order/request objects (certId, orderId, requestId, domain
+  validation records) — these are the BOLA goldmine for a cert authority.
+Find the services by: links/redirects after login, the portal's JS, and the Http collection
+(status 200/302 app hosts). Spend the session HERE, deep on 2–3 services, not wide on the portal.
+
 ── STEP 2: HUNT (from INSIDE the logged-in Playwright context; cookies may be fingerprint-bound) ──
-1. MAP first (as account A): browse the account area, capture EVERY authenticated API call the SPA
-   makes — XHR/fetch URLs, params, and the object IDs they carry (orderId, documentId, certId,
-   requestId, userId, addressId, petitionId, caseId, …). Build the endpoint+id inventory.
+1. MAP first (as account A): in EACH service from 1b, browse every feature and capture EVERY
+   authenticated API call — XHR/fetch URLs, params, and the object IDs they carry (orderId,
+   documentId, certId, requestId, Antragsnummer, petitionId, caseId, userId, addressId, …).
+   Build the endpoint+id inventory PER SERVICE. A portal with "no id-shaped params" means you
+   haven't entered a service yet — go deeper.
 2. TWO-ACCOUNT IDOR / BOLA (headline): take an object id owned by account A, then FROM ACCOUNT B
    request it. B seeing A's data = IDOR, proven with no guessing. Do each object type once; STOP at
    the minimal proof (one foreign record), MASK all PII, never page through records.

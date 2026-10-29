@@ -398,7 +398,13 @@ When accounts change, update this table (handles only, never passwords).
    encodes the Akamai/CAPTCHA/MFA flow that plain `browser_exec` fails.
 2. Resolve the password from the vault **without printing it**:
    `VaultStore().resolve_secret(handle).get("password","")`. Never log, echo, or put it in a
-   tool argument that gets recorded.
+   tool argument that gets recorded. A stored TOTP seed is on the SAME dict under the key
+   `otp_secret` (not `totp`): `seed = resolve_secret(handle)["otp_secret"]; pyotp.TOTP(seed).now()`
+   → mint the 2FA code yourself (e.g. digicert 2). Never print the seed.
+2b. DEPTH on a login PORTAL/SSO: the portal's own dashboard exposes almost nothing (mein.wien.gv.at
+   = 4 CMS/account calls, no object refs). Do NOT conclude "no IDOR" there — FOLLOW the SSO into the
+   SERVICES it grants (where users create records: petitions, form/Antrag submissions, cert/orders,
+   documents, appointments). The IDOR/BOLA surface is in the services, per-service; go deep on 2-3.
 3. Cookies are **fingerprint-bound**: authenticated requests must run from **inside the same
    Playwright context** that logged in. The same cookies in `curl` get an Akamai 403 — do not
    try to port the session out.
