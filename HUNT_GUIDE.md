@@ -383,7 +383,7 @@ this repo. The model never sees the password: it is injected server-side.
 
 | Program | Vault creds | Accounts | Login skill |
 |---|---|---|---|
-| `dell` | ✅ yes | **1** (single account) | `dell-login-playwright` |
+| `dell` | ✅ yes | 2 (vault_509e main, vault_89cf dev) | `dell-login-playwright` |
 | `digicert` | ⏳ planned | — | (none yet) |
 | `wien` | ⏳ planned | — | (none yet) |
 | `indeed` | ❌ none | — | — |

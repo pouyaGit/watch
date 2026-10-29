@@ -9,8 +9,13 @@ evidence-hygiene, triage-validation.
   returns your data, not a login page). Only do a fresh login if expired.
 - Fresh login: standalone Playwright (NOT browser_exec),
   PYTHONPATH=/root/.local/lib/python3.12/site-packages; fresh context with a full Chrome UA.
-- Resolve the password from the vault — NEVER print it:
-  VaultStore().resolve_secret(<handle>).get("password","").
+- Vault has TWO Dell logins: vault_509e… ("dell totti", www.dell.com) and vault_89cf…
+  ("dell totti dev", dell.com dev env). Resolve the password from the vault by handle —
+  NEVER print it: VaultStore().resolve_secret(<handle>).get("password","").
+- If the two logins are DISTINCT accounts on the SAME app, you can do CLEAN two-account IDOR
+  (log in as A, note an object id, then as B try to read A's object — A!=B proves it with no
+  guessing). If vault_89cf is a dev-environment account, treat the two separately. Check
+  before assuming.
 - CAPTCHA: dismiss cookie banner (Tout Refuser) → screenshot → crop the captcha region →
   SHOW the crop to the human and WAIT for them to read the characters. Fill email + captcha
   + #btnContinue, then password + #btnSignIn.
@@ -28,10 +33,12 @@ address book, warranty/service tags, downloads.
 Priority order:
 1. MAP first: browse the account area, capture every authenticated API call the SPA makes
    (XHR/fetch URLs, params, IDs). Build the list of object-referencing endpoints.
-2. hunt-idor (single-account method — we have ONE account): for each endpoint that takes an
-   id (orderId, quoteId, invoiceId, serviceTag, documentId, customerId, addressId), change
-   it to a nearby / guessed / differently-formatted value. A 200 returning data that is NOT
-   yours = IDOR. STOP at the minimal proof (one foreign record), mask ALL PII, do not page.
+2. hunt-idor: for each endpoint that takes an id (orderId, quoteId, invoiceId, serviceTag,
+   documentId, customerId, addressId): TWO-ACCOUNT method if both logins are the same app —
+   log an id owned by account A, then from account B request it; B seeing A's data = clean
+   IDOR. Else single-account — change the id to a nearby/guessed value; a 200 returning data
+   that is NOT yours = IDOR. Either way STOP at the minimal proof (one foreign record), mask
+   ALL PII, do not page through records.
 3. bb-authz / hunt-auth-bypass: endpoints/actions your role shouldn't reach (admin/internal
    API paths found in the JS, privilege params, forced browsing to other users' resources).
 4. hunt-business-logic: pricing/quantity/coupon/workflow tampering within YOUR OWN account
