@@ -17,7 +17,8 @@ PART 1 — PRE-AUTH ACTIVE SWEEP (MANDATORY, NO login needed). DO THIS FIRST, ev
 Follow HUNT_GUIDE §12. Core, run it:
 ```
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-# 1) LIVE hosts only (DB is full of dead/403 hosts — httpx-filter first, §12 helper) -> /tmp/live.txt
+# 1) LIVE hosts: READ the Http collection (http lane already httpx-probes 2x/day) — do NOT
+#    re-run httpx on the raw list. §12 helper: Http where status_code set + fresh last_update -> /tmp/live.txt
 # 2) zero-FP templates on the live list:
 cd /opt/watch && nuclei -l /tmp/live.txt \
   -t nuclei/private_templates/spring-actuator-heapdump.yaml \

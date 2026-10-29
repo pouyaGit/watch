@@ -441,23 +441,29 @@ WAF note: many hosts (Dell/Akamai) 403 tool UAs. Always set a real browser UA:
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 ```
 
-Build a fresh live-host list for a program (reused by several items). CRITICAL:
-the DB holds historical crawl data with MANY dead hosts (NXDOMAIN) and WAF-403
-hosts — always liveness-filter through httpx first, or every tool returns 0 and
-you waste the run:
+Build a fresh live-host list for a program (reused by several items). DO NOT
+re-run httpx on the raw subdomain list — the Watch `http` lane already probes
+every target with httpx TWICE A DAY and stores the result (status, title, tech,
+headers) in the `Http` collection. Re-probing 1777 mostly-dead hosts wastes
+minutes for data that is already in the DB and fresh. READ IT INSTEAD:
 ```bash
 cd /opt/watch && ./.venv/bin/python - <<'PY'
-from database.db import Urls
-hosts = sorted({u.subdomain for u in Urls.objects(program_name="dell").only("subdomain") if u.subdomain})
-open("/tmp/hosts_all.txt","w").write("\n".join(hosts)+"\n")
-print(len(hosts), "hosts (unfiltered)")
+from datetime import datetime, timedelta
+from database.db import Http
+fresh = datetime.now() - timedelta(days=3)          # http lane runs ~2x/day
+rows = [h for h in Http.objects(program_name="dell").only(
+            "url","final_url","status_code","title","tech","last_update")
+        if h.status_code and (not h.last_update or h.last_update >= fresh)]
+with open("/tmp/live.txt","w") as f:
+    f.write("\n".join(sorted({(h.final_url or h.url) for h in rows}))+"\n")
+print(len(rows), "live hosts from Http (status + fresh) -> /tmp/live.txt")
 PY
-UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-# keep only hosts that resolve AND answer (drop dead + hard-403); -mc to taste
-httpx -l /tmp/hosts_all.txt -silent -H "User-Agent: $UA" -timeout 10 -rl 40 \
-  -mc 200,201,202,204,301,302,307,401 -o /tmp/live.txt
-wc -l /tmp/live.txt   # these are the ones actually worth testing
 ```
+Only re-probe a SINGLE host live (curl/httpx) at the moment you are about to test
+it, to confirm it is still up — never a full sweep. Use the stored `tech` to pick
+targets (e.g. `tech` contains "Spring"/"Tomcat"/"Java" → the heapdump/jolokia
+items), and `Http.last_nuclei_run` / `last_ffuf_run` to SKIP hosts scanned
+recently and spend the budget on stale/new ones.
 
 **Surface expansion first — `ffuf` (paths) + `x8` (params).** Run these to GENERATE
 fresh surface, then feed it to the bug-class items below. All five tools are
@@ -697,14 +703,19 @@ the hard way; follow them so you don't waste a run or misread a result.
 - Start it, use the canary domain it prints as the SSRF/OOB payload. A hit in its
   output = confirmed OOB; no hit = NOT confirmed (reflection of your URL ≠ SSRF).
 
-**The DB is stale — liveness-filter FIRST**
-- `Urls`/`Endpoints` are historical crawl data. Many hosts are now DEAD (NXDOMAIN —
-  e.g. `educationsbx.dell.com` no longer resolves) or hard-WAF-403 (`www.dell.com`,
-  `*-poc`, `*sbx*`). If you feed the raw DB list to ffuf/x8/dalfox you get 0 and
-  blame the tool. ALWAYS pass hosts through `httpx` first (see the live-host helper)
-  and test only what actually answers.
-- A `status_code` of `None` in `Urls` just means it was never re-probed — it does
-  NOT mean live. Re-check with httpx/curl.
+**Liveness — read the `Http` collection, don't re-probe**
+- `Urls`/`Endpoints` are historical crawl data full of DEAD hosts (`educationsbx.dell.com`
+  no longer resolves) and WAF-403 hosts. But you do NOT need to re-run httpx to find the
+  live ones: the Watch `http` lane probes every target with httpx **~2x/day** and stores
+  status/title/tech/headers in the **`Http`** collection (`last_update` tells you how
+  fresh). Pull live hosts from `Http` (status set + recent `last_update`) — instant, vs
+  minutes of re-probing. See the live-host helper in §12.
+- Re-probe a SINGLE host live only at the moment you test it (confirm still up); never a
+  full httpx sweep — that just duplicates the http lane.
+- `Http.tech` already fingerprints the stack (target Spring/Tomcat/Java for heapdump/jolokia),
+  and `Http.headers` is stored (you can pre-filter CORS/CSP/actuator candidates from it).
+- A `status_code` of `None` in `Urls` means "never re-probed", not dead — but prefer `Http`
+  over `Urls` for liveness anyway.
 
 **Target selection (the meta-lesson)**
 - Pick param-rich / app hosts, not bare SPA roots. Query `Urls` for in-scope hosts
