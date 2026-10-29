@@ -733,14 +733,23 @@ A CSP bypass that makes a "mitigated" reflection fire is itself worth writing up
 it is the difference between N/A and a paid P3/P2.
 
 **12. DOM XSS** → `hunt-dom` (drive it with the `hermes-domxss-verifier` skill)
-Crawl for client-side sinks, then confirm execution in a REAL browser — a static
-grep is only a lead, DOM XSS counts only when it fires in the DOM.
+Reflected XSS is often absent on hardened targets (dell = 0 across 12k param
+signatures), but DOM XSS hides in the thousands of JS files (dell = 19k live .js).
+Triage source→sink AT SCALE with the scanner, THEN browser-confirm the HOT hits:
 ```bash
+./.venv/bin/python scripts/watch_domxss_scan.py --program dell --limit 1500
+```
+It fetches the live .js, finds every sink with an attacker SOURCE within ~400 chars,
+and buckets: HOT (strong source — location.hash/.search/referrer/window.name/postMessage
+— into an html/exec sink innerHTML/document.write/eval/.html() = real DOM-XSS candidate);
+redirect (strong source → navigation sink = DOM open-redirect / `javascript:` URI); review
+(weak source → html sink, usually library noise). Static match = LEAD only. For each HOT:
+read the function, confirm the source reaches the sink unsanitised, then **fire it in a REAL
+browser** (built-in browser / Playwright) — DOM XSS counts only when it executes in the DOM.
+A hash-based payload (`#`) never hits the server → browser-confirm only.
+```bash
+# (manual deep-dive on a specific host, if the scanner misses dynamically-loaded JS:)
 katana -u https://HOST -jc -d 3 -silent -H "User-Agent: $UA" -o /tmp/crawl.txt
-# fetch the JS and grep for source->sink:
-#   sources: location.hash / .search / document.URL / referrer / postMessage / window.name
-#   sinks:   innerHTML, outerHTML, document.write, eval, setTimeout, insertAdjacentHTML,
-#            .src=, jQuery $(), element.setAttribute, dangerouslySetInnerHTML
 ```
 Trace an attacker-controlled source into a sink with no sanitisation, then PROVE it
 by loading the crafted URL in the built-in browser / Playwright and seeing the script

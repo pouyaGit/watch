@@ -31,8 +31,11 @@ hunter does. Pick a program and rotate: dell | indeed | digicert | wien.
 Run these — each its OWN command, every scan SMALL and on hosts that are live in `Http`:
 - (a) ffuf content discovery on 3–5 live app hosts (hosts from the `Http` collection, §12).
 - (b) x8 hidden params — check `Endpoints.params_from_x8` FIRST; run live only if stale.
-- (c) dalfox reflected-XSS on a SMALL (≤10) batch of live param-rich URLs; verify EACH
-      reflected lead by hand per §5e, and assess CSP/bypass per §11b (skill: hunt-csp-bypass).
+- (c) XSS AT SCALE (don't just dalfox ~15 URLs). Run both triage scanners, then confirm hits:
+      reflected: `./.venv/bin/python scripts/watch_reflect_scan.py --program <P> --limit 12000`
+      DOM:       `./.venv/bin/python scripts/watch_domxss_scan.py --program <P> --limit 2000`
+      Work the HOT buckets only → context+CSP (§11b) / browser-confirm (§12 item 12). dalfox is
+      a follow-up on specific HOT URLs, not the primary scan. XSS every day.
 - (d) ≥2 more §12 classes (NOT SSRF-OOB — interactsh is unreachable here): OAuth/redirect_uri,
       host-header/reset, source/secret-leak in live JS, shadow-API from live JS, open-redirect.
 
