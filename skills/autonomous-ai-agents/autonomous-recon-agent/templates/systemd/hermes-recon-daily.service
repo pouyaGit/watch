@@ -1,0 +1,7 @@
+[Unit]
+Description=HERMES daily report
+[Service]
+Type=oneshot
+WorkingDirectory=/root/hermes-recon
+ExecStart=/bin/bash -c '/root/hermes-recon/bin/hermes-recon daily | xargs -0 -I{} hermes send --to telegram "{}"'
+Nice=10

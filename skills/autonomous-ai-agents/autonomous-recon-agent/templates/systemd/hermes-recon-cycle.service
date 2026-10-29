@@ -1,0 +1,7 @@
+[Unit]
+Description=HERMES recon cycle (30-min autonomous pass)
+[Service]
+Type=oneshot
+WorkingDirectory=/root/hermes-recon
+ExecStart=/root/hermes-recon/bin/hermes-recon cycle --max-hosts 40
+Nice=10
