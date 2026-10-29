@@ -1,63 +1,52 @@
-DAILY HUNT — all in-scope programs. Be aggressive and specific, not a re-triage.
+DAILY HUNT — all in-scope programs. ACTIVE probing with evidence. Not a re-triage.
 
 Read /opt/watch/HUNT_GUIDE.md and follow it literally. Load first:
 bb-methodology, recon-scope-triage, triage-validation, evidence-hygiene.
+DATA ACCESS: findings via the `Finding` model (connects on import). NOT the :5000 API (§3b).
 
-DATA ACCESS: read Watch findings from MongoDB via the `Finding` model
-(`from database.db import Finding`, connects on import). Do NOT use the :5000
-dashboard/API — it is auth-gated and you have no credentials for it (HUNT_GUIDE §3b).
+═══════════════════════════════════════════════════════════════════════════
+THESE DO NOT END YOUR SESSION. Never use them as a reason to stop or to call the
+day "pointless / blocked everywhere / nothing new":
+  • Dell login expired   • no indeed/wien account   • candidate "needs a session"
+  • wayback/gau blocked from this IP
+They affect ONLY Part 2 (authenticated) and two recon sources. They do NOT touch
+Part 1 or Part 3. If your summary blames these, you SKIPPED the real work — go do it.
+═══════════════════════════════════════════════════════════════════════════
 
-═══════════════════════════════════════════════════════════════════════
-THIS IS NOT A RE-TRIAGE OF YESTERDAY. Re-analysing the same CORS sweep is NOT
-work. If the only thing you could report is "the sweep is unprovable without
-accounts", you have done nothing — that is a FAILED session. Expand surface.
-═══════════════════════════════════════════════════════════════════════
+PART 1 — PRE-AUTH ACTIVE SWEEP (MANDATORY, NO login needed). DO THIS FIRST, every day.
+Follow HUNT_GUIDE §12. Core, run it:
+```
+UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+# 1) LIVE hosts only (DB is full of dead/403 hosts — httpx-filter first, §12 helper) -> /tmp/live.txt
+# 2) zero-FP templates on the live list:
+cd /opt/watch && nuclei -l /tmp/live.txt \
+  -t nuclei/private_templates/spring-actuator-heapdump.yaml \
+  -t nuclei/private_templates/jolokia-jmx-exposure.yaml \
+  -t nuclei/private_templates/spring-actuator-exposure.yaml \
+  -t nuclei/private_templates/cors-credentialed-reflection.yaml \
+  -H "User-Agent: $UA" -rl 40 -nc
+# 3) ffuf content discovery on 3–5 live app hosts; x8 (check Endpoints.params_from_x8 first)
+# 4) dalfox reflected-XSS on a SMALL (<=10) batch of LIVE param-rich URLs; verify leads per §5e
+# 5) >=2 more §12 classes: OAuth/redirect_uri, host-header/reset, SSRF-OOB, source-leak in live JS
+```
+MINIMUM to count the session as done: live-host filter + template sweep + ffuf +
+dalfox + 2 more classes, ALL on hosts that actually answered httpx. XSS every day.
+A session with ZERO fresh tool runs on live hosts is a FAILED session.
 
-DEFINITION OF DONE — a session is not complete until ALL of these are met:
+PART 2 — AUTHENTICATED (ONLY if a saved session is still valid).
+Reuse storage_state. Do NOT burn a fresh login/2FA/CAPTCHA unless the human is present.
+If the Dell session is expired: note it in ONE line and MOVE ON — not a stop reason.
+If valid: hunt-idor / bb-authz / hunt-business-logic / shadow-API on your own account.
 
-[A] AUTHENTICATED WORK on every program that has a vault login (§10a).
-    Today that is DELL (1 account). NOTE: the Dell CORS sweep is already CLOSED —
-    all 68 Dell cors-credentialed-reflection findings were disproved logged-in
-    (public bodies, IN==OUT, no session-scoped read). DO NOT redo CORS on Dell.
-    Instead, use the Dell login for the classes you have NOT worked yet:
-      - Log in with dell-login-playwright (resolve creds via
-        VaultStore().resolve_secret(); never print them; save+backup storage_state;
-        logins burn a 2FA code, so reuse storage_state, don't re-login each run).
-      - From inside that Playwright context, spend real time on:
-        hunt-idor (own object refs → tamper the id/other refs, watch for data not
-        yours), bb-authz + hunt-auth-bypass (endpoints/actions your role shouldn't
-        reach), hunt-business-logic (pricing/workflow/state on your own account),
-        hunt-spa-api + hunt-shadow-api (map the authenticated API from the SPA JS,
-        then test authz on each endpoint), authenticated SSRF/CSRF/GraphQL-authz.
-    The Dell session is for DELL targets ONLY — never point it at indeed/wien.
-
-[B] PROACTIVE PRE-AUTH WORK (needs NO account) — work the §12 checklist: at least
-    item 1 plus any 3 of items 2–12, on FRESH surface (not findings you already
-    looked at). XSS (reflected via dalfox + DOM via browser-confirm, §12 items
-    11–12) is a prime target — work it most sessions. Other classes: OAuth/
-    redirect_uri, password-reset/host-header poisoning, open-redirect, SSRF-via-
-    params (OOB), source/secret leak in crawled JS, shadow/undocumented API, and
-    the spring-actuator-heapdump-custom + jolokia-jmx-exposure-custom templates on
-    Spring/Java hosts.
-
-[C] AT LEAST ONE NEW SURFACE mapped that you had not tested before — pull fresh
-    hosts/endpoints (Urls/Endpoints collections, new crawl output), don't just
-    re-read old Finding rows.
-
-RULES:
-- Blocked candidates (need an account you don't have, e.g. indeed/wien CORS behind
-  a login gate): tag ONCE with extra.blocked_on="<program>-account" and SKIP them
-  forever after. Never spend a session re-confirming they're blocked.
-- Skip any finding whose `extra` already records a prior verdict/recheck — you
-  already examined it. Don't re-chew the same candidate daily.
-- If a lane is rate-limited or blocked, ROTATE: move to another program, another
-  host set, or another bug class. "Blocked everywhere" means expand surface
-  (new subdomains, new endpoints, new classes) — it does NOT mean stop.
+PART 3 — VERIFY candidates (reactive).
+Pull open candidates that have NO prior verdict and NO extra.blocked_on tag; classify;
+run the §5 playbook; mark false_positive or triaged. Skip already-parked/blocked ones.
 
 GUARDRAILS: in-scope only (never ooscopes), read-only, your test accounts only,
 mask PII, pace requests, minimal proof.
 
-OUTPUT (5-line summary): what you PROVED (with host + class), what you disproved,
-new surface you mapped, what's queued, blockers. If [A]/[B]/[C] were not all met,
-say which you skipped and why — do not pretend the session is done.
-Report only PROVEN findings, and only after triage-validation passes all 7 questions.
+OUTPUT — EVIDENCE REQUIRED. The summary MUST list the exact Part-1 commands you ran
+and their counts: #live hosts after httpx, template hits, ffuf paths, x8 params,
+dalfox reflected leads, other classes probed. A summary with no Part-1 tool output
+is NOT acceptable — it means you did not hunt. Then: proved / disproved / new surface
+mapped / queued / blockers. Report only PROVEN findings after triage-validation.
