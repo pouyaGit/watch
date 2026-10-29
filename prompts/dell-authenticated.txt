@@ -1,0 +1,53 @@
+AUTHENTICATED HUNT — Dell (program: dell). The human is PRESENT for CAPTCHA + 2FA.
+
+Scope-gate against /opt/watch/programs/dell.json (in scopes[], not in ooscopes[]).
+Load: dell-login-playwright, hunt-idor, bb-authz, hunt-business-logic, hunt-spa-api,
+evidence-hygiene, triage-validation.
+
+── STEP 1: LOG IN (follow dell-login-playwright literally) ──
+- Reuse /tmp/dell_state.json if it is still valid (check an authenticated endpoint
+  returns your data, not a login page). Only do a fresh login if expired.
+- Fresh login: standalone Playwright (NOT browser_exec),
+  PYTHONPATH=/root/.local/lib/python3.12/site-packages; fresh context with a full Chrome UA.
+- Resolve the password from the vault — NEVER print it:
+  VaultStore().resolve_secret(<handle>).get("password","").
+- CAPTCHA: dismiss cookie banner (Tout Refuser) → screenshot → crop the captcha region →
+  SHOW the crop to the human and WAIT for them to read the characters. Fill email + captcha
+  + #btnContinue, then password + #btnSignIn.
+- Email 2FA: fill the 6 #otpBoxmfaOtpBoxN boxes (300ms gaps) from the code the HUMAN gives,
+  #btnVerify. NEVER guess a code (6 bad tries locks the account).
+- Onboarding: addpasskey → click link 'mot de passe'; addmobile → #btnSkip_AddMobilePage.
+- Save storage_state to /tmp/dell_state.json AND cp it to /tmp/dell_state.bak.
+
+── STEP 2: HUNT THE AUTHENTICATED SURFACE (from INSIDE the logged-in Playwright context) ──
+Cookies are fingerprint-bound — do every authenticated request from the SAME Playwright
+context, not curl. The account is a consumer Dell.com account (origin www.dell.com), so the
+surface is the account area: orders, invoices, saved carts/quotes, profile, support tickets,
+address book, warranty/service tags, downloads.
+
+Priority order:
+1. MAP first: browse the account area, capture every authenticated API call the SPA makes
+   (XHR/fetch URLs, params, IDs). Build the list of object-referencing endpoints.
+2. hunt-idor (single-account method — we have ONE account): for each endpoint that takes an
+   id (orderId, quoteId, invoiceId, serviceTag, documentId, customerId, addressId), change
+   it to a nearby / guessed / differently-formatted value. A 200 returning data that is NOT
+   yours = IDOR. STOP at the minimal proof (one foreign record), mask ALL PII, do not page.
+3. bb-authz / hunt-auth-bypass: endpoints/actions your role shouldn't reach (admin/internal
+   API paths found in the JS, privilege params, forced browsing to other users' resources).
+4. hunt-business-logic: pricing/quantity/coupon/workflow tampering within YOUR OWN account
+   (negative qty, price override, step-skipping) — observe only, no real purchase.
+5. hunt-spa-api: test authz on each mapped API endpoint (does it check ownership?).
+
+── GUARDRAILS (authenticated — strict) ──
+- YOUR test account only. Never read, change, or act on another real user's data beyond the
+  single minimal IDOR proof; mask every PII field per evidence-hygiene.
+- NO state-changing actions: no real orders/purchases, no deletes, no profile changes to
+  others. State-changing PoCs only on your own account.
+- Back up storage_state before any logout/session test (it kills the server session).
+- In-scope only. Pace requests. Prove with the lightest action.
+
+── OUTPUT ──
+5-line summary: what you MAPPED (endpoints/IDs), what you PROVED (host+class+minimal proof),
+what you disproved, queued, blockers. Report (HUNT_GUIDE §7) only PROVEN findings after
+triage-validation. IDOR/BOLA and broken-access-control on an authenticated commerce account
+are typically VRT P1–P2 — write them precisely, with the minimal masked proof.
