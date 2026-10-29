@@ -1,0 +1,47 @@
+AUTHENTICATED HUNT — pick a program. START WITH wien (easiest login). Rotate: wien → digicert → dell.
+
+Scope-gate against /opt/watch/programs/<PROG>.json (in scopes[], not ooscopes[]).
+Load: hunt-idor, bb-authz, hunt-business-logic, hunt-spa-api, evidence-hygiene, triage-validation.
+(For dell also load dell-login-playwright.)
+
+Every program has TWO accounts on the SAME app → do CLEAN TWO-ACCOUNT IDOR (the gold standard).
+
+── VAULT ACCOUNTS (resolve passwords by handle via VaultStore().resolve_secret(<handle>); NEVER print) ──
+  wien      (mein.wien.gv.at):   vault_3f9b507faf27 "wien 1" (pouyatotti) | vault_c68a1e6c03d3 "wien 2" (pouyabehnia)
+  digicert  (www.digicert.com):  vault_a85ea4c141cc "digicert 1" (totti)  | vault_1c1c68ccad4c "digicert 2" (behnia, TOTP in vault)
+  dell      (www.dell.com):      vault_2d7b15676045 "dell behnia"         | vault_509ef42e1e71 "dell totti"
+
+── STEP 1: LOG IN BOTH ACCOUNTS (standalone Playwright, full Chrome UA; save each storage_state) ──
+Reuse a saved storage_state if still valid (an authenticated endpoint returns your data, not a login page).
+- wien: simple form login, no MFA. Easiest — just vault creds. Save /tmp/wien_A.json and /tmp/wien_B.json.
+- digicert: form login. "digicert 2" has a TOTP seed in the vault → mint the current 6-digit code
+  from it yourself (VaultStore / pyotp); never print the seed. "digicert 1" has no stored OTP → if it
+  prompts for a code, ask the HUMAN (email/OTP). Save /tmp/dc_A.json, /tmp/dc_B.json.
+- dell: follow dell-login-playwright literally (cookie banner → CAPTCHA crop shown to HUMAN → email
+  2FA code from HUMAN; never guess — 6 bad tries locks it). Save /tmp/dell_A.json, /tmp/dell_B.json.
+Back up each storage_state (cp to .bak) before any logout/session test.
+
+── STEP 2: HUNT (from INSIDE the logged-in Playwright context; cookies may be fingerprint-bound) ──
+1. MAP first (as account A): browse the account area, capture EVERY authenticated API call the SPA
+   makes — XHR/fetch URLs, params, and the object IDs they carry (orderId, documentId, certId,
+   requestId, userId, addressId, petitionId, caseId, …). Build the endpoint+id inventory.
+2. TWO-ACCOUNT IDOR / BOLA (headline): take an object id owned by account A, then FROM ACCOUNT B
+   request it. B seeing A's data = IDOR, proven with no guessing. Do each object type once; STOP at
+   the minimal proof (one foreign record), MASK all PII, never page through records.
+3. bb-authz / hunt-auth-bypass: endpoints/actions a normal user shouldn't reach (admin/internal API
+   paths from the JS, privilege/role params, forced browsing to another user's resource).
+4. hunt-business-logic: pricing/quantity/coupon/workflow/step-skipping within YOUR OWN account —
+   observe only, no real purchase/issuance.
+5. hunt-spa-api: for each mapped endpoint, does it enforce ownership? (the core of IDOR/BOLA).
+
+── GUARDRAILS (strict) ──
+- Your test accounts only. Beyond the single minimal IDOR proof, never read/alter another real
+  user's data; mask every PII field (evidence-hygiene).
+- NO state-changing actions against others: no real orders/cert issuance/deletes/profile edits.
+  State-changing PoCs only on your own account.
+- In-scope only. Pace requests. Lightest possible proof. Back up storage_state before logout tests.
+
+── OUTPUT ──
+5-line summary: MAPPED (endpoints/ids), PROVED (host+class+minimal masked proof), disproved, queued,
+blockers. Report (HUNT_GUIDE §7) only PROVEN findings after triage-validation. Two-account IDOR/BOLA
+and broken-access-control on these accounts are typically VRT P1–P2 — write them precisely.

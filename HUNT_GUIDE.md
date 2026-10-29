@@ -381,14 +381,16 @@ this repo. The model never sees the password: it is injected server-side.
 
 ### 10a. Which targets have a login (keep this current)
 
-| Program | Vault creds | Accounts | Login skill |
-|---|---|---|---|
-| `dell` | ✅ yes | 2 (vault_509e main, vault_89cf dev) | `dell-login-playwright` |
-| `digicert` | ⏳ planned | — | (none yet) |
-| `wien` | ⏳ planned | — | (none yet) |
-| `indeed` | ❌ none | — | — |
+| Program | Accounts (2 each → clean two-account IDOR) | Login / 2FA |
+|---|---|---|
+| `wien` | vault_3f9b507faf27 "wien 1", vault_c68a1e6c03d3 "wien 2" (mein.wien.gv.at) | simple form, NO MFA — easiest, start here |
+| `digicert` | vault_a85ea4c141cc "digicert 1", vault_1c1c68ccad4c "digicert 2" (www.digicert.com) | #2 has a TOTP seed in vault (mint code yourself); #1 needs email/OTP from human |
+| `dell` | vault_2d7b15676045 "dell behnia", vault_509ef42e1e71 "dell totti" (www.dell.com) | `dell-login-playwright`: CAPTCHA + email 2FA, human present |
+| `indeed` | ❌ none | — |
 
-When you add accounts, update this table (and note handles, never passwords).
+Each program has TWO accounts on the SAME app → prefer the gold-standard two-account IDOR
+(A owns an object, B reads it). Prompt: `prompts/authenticated-hunt.txt` (start with wien).
+When accounts change, update this table (handles only, never passwords).
 
 ### 10b. How to log in
 
