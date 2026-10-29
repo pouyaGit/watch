@@ -15,25 +15,42 @@ Part 1 or Part 3. If your summary blames these, you SKIPPED the real work — go
 
 PART 1 — PRE-AUTH ACTIVE SWEEP (MANDATORY, NO login needed). DO THIS FIRST, every day.
 Follow HUNT_GUIDE §12. Core, run it:
+Run this EXACT self-contained block (don't improvise the host lists):
 ```
+cd /opt/watch
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-# 1) LIVE hosts: READ the Http collection (http lane already httpx-probes 2x/day) — do NOT
-#    re-run httpx on the raw list. §12 helper: Http where status_code set + fresh last_update -> /tmp/live.txt
-# 2) zero-FP templates. nuclei overruns a 2-min shell timeout on big lists -> run DETACHED
-#    and POLL the output file; target heapdump/jolokia/actuator at the Java/Spring hosts
-#    (Http.tech, see §12 item 1) NOT all 1460. NEVER re-run an identical timed-out scan
-#    (that loops + trips the guardrail — what halted the last session).
-cd /opt/watch && nohup nuclei -l /tmp/spring.txt \
+PROG=dell   # rotate: dell|indeed|digicert|wien
+
+# (1) Build the SMALL Java/Spring host list from Http.tech (NOT the 1460 live list).
+./.venv/bin/python - "$PROG" <<'PY'
+import sys; from datetime import datetime, timedelta; from database.db import Http
+prog=sys.argv[1]; fresh=datetime.now()-timedelta(days=3)
+kw=("spring","tomcat","java","jetty","jboss","wildfly","weblogic")
+hosts={(h.final_url or h.url) for h in Http.objects(program_name=prog).only("url","final_url","status_code","tech","last_update")
+       if h.status_code and (not h.last_update or h.last_update>=fresh)
+       and any(any(k in (t or '').lower() for k in kw) for t in (h.tech or []))}
+open("/tmp/spring.txt","w").write("\n".join(sorted(hosts))+"\n"); print(len(hosts),"spring hosts -> /tmp/spring.txt")
+PY
+
+# (2) Spring templates on THAT small list ONLY — run DETACHED (a few of the 24 hosts can
+#     hang a connection and stall nuclei past the 2-min shell timeout). Do NOT point -l at
+#     /tmp/live.txt (1460). Launch, then POLL in a separate command.
+nohup nuclei -l /tmp/spring.txt \
   -t nuclei/private_templates/spring-actuator-heapdump.yaml \
   -t nuclei/private_templates/jolokia-jmx-exposure.yaml \
   -t nuclei/private_templates/spring-actuator-exposure.yaml \
-  -H "User-Agent: $UA" -rl 60 -c 40 -timeout 6 -retries 0 -nc \
+  -H "User-Agent: $UA" -rl 60 -c 40 -timeout 6 -retries 0 -duc -ni -nc \
   -o /tmp/spring_hits.txt >/tmp/spring.log 2>&1 &
-# then in a SEPARATE command: wc -l /tmp/spring_hits.txt   (poll, don't block)
-# 3) ffuf content discovery on 3–5 live app hosts; x8 (check Endpoints.params_from_x8 first)
-# 4) dalfox reflected-XSS on a SMALL (<=10) batch of LIVE param-rich URLs; verify leads per §5e
-# 5) >=2 more §12 classes: OAuth/redirect_uri, host-header/reset, SSRF-OOB, source-leak in live JS
+echo "nuclei PID $! — poll later with: wc -l /tmp/spring_hits.txt ; grep -c . /tmp/spring.log"
 ```
+POLL /tmp/spring_hits.txt in a SEPARATE quick command; move on to (3)/(4)/(5) while it runs.
+If any nuclei log says "Targets loaded: 1460" you used the wrong file — rebuild /tmp/spring.txt.
+A timed-out/slow scan must NOT be re-run identically (that loops + trips the guardrail).
+
+Then (each a separate command, not the template list):
+- (3) ffuf content discovery on 3–5 live app hosts; x8 (check `Endpoints.params_from_x8` first).
+- (4) dalfox reflected-XSS on a SMALL (≤10) batch of LIVE param-rich URLs; verify leads per §5e (check CSP, §11b).
+- (5) ≥2 more §12 classes: OAuth/redirect_uri, host-header/reset, SSRF-OOB, source-leak in live JS.
 MINIMUM to count the session as done: live-host filter + template sweep + ffuf +
 dalfox + 2 more classes, ALL on hosts that actually answered httpx. XSS every day.
 A session with ZERO fresh tool runs on live hosts is a FAILED session.

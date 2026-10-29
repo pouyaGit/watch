@@ -570,7 +570,7 @@ nohup nuclei -l /tmp/spring.txt \
   -t nuclei/private_templates/spring-actuator-heapdump.yaml \
   -t nuclei/private_templates/jolokia-jmx-exposure.yaml \
   -t nuclei/private_templates/spring-actuator-exposure.yaml \
-  -H "User-Agent: $UA" -rl 60 -c 40 -timeout 6 -retries 0 -nc -stats=false \
+  -H "User-Agent: $UA" -rl 60 -c 40 -timeout 6 -retries 0 -duc -ni -nc -stats=false \
   -o /tmp/spring_hits.txt >/tmp/spring.log 2>&1 &
 echo "nuclei PID $!"   # later: `kill -0 $! && echo running || cat /tmp/spring_hits.txt`
 ```
