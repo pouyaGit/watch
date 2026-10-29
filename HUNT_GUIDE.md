@@ -307,6 +307,10 @@ execution context; use `dalfox` to validate.
 - "Site not found"/parked page with no claimable resource.
 - Public-by-design assets: published container images, client-side API keys, open CDNs.
 - Static-matcher "IDOR" — IDOR cannot be proven by a template; needs two-account manual testing.
+- `Access-Control-Allow-Origin: *` together with `Allow-Credentials: true` — browsers REJECT
+  wildcard ACAO when credentials are used, so this combo is NOT exploitable. Dismiss it; a
+  credentialed-CORS finding requires ACAO to **reflect a specific attacker origin** + creds
+  (the `cors-credentialed-reflection` template already enforces that — a bare `*`+creds is FP).
 - Anything that does not reproduce on a second manual request.
 
 ---
