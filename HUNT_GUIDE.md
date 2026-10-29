@@ -531,7 +531,7 @@ interactsh-client`). Do not reinstall them.
 - **`ffuf` — content / endpoint discovery** (finds hidden paths, admin panels,
   backups, `.git`/`.env`, old APIs → feeds items 3 and 10):
   ```bash
-  ffuf -u https://HOST/FUZZ -w /opt/watch/wordlists/watch_content_small.txt \
+  ffuf -u https://HOST/FUZZ -w /opt/watch/wordlists/watch_content_medium.txt \
     -H "User-Agent: $UA" -mc 200,204,301,302,401,403 -ac -rate 40 -t 25 -o /tmp/ffuf.json
   ```
   `-ac` auto-calibrates out soft-404s. Point `-w` at a bigger list when a host looks
@@ -788,7 +788,7 @@ the hard way; follow them so you don't waste a run or misread a result.
   block.** Many Dell app hosts are SPAs; path fuzzing finds nothing there — that is
   information, not failure. Do not retry endlessly or call it "blocked".
 - Raise the wordlist (`/usr/share/seclists/...`) only when a host looks worth it;
-  `/opt/watch/wordlists/watch_content_small.txt` is the quick default.
+  `/opt/watch/wordlists/watch_content_medium.txt` is the quick default.
 
 **x8**
 - x8 ALREADY runs in the `watch-param` lane → check `Endpoints.params_from_x8`

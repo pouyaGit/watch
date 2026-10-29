@@ -40,6 +40,19 @@ MINIMUM to count the session as done: ffuf + dalfox + ≥2 more classes, on host
 `Http`. XSS every day. A session with ZERO fresh ffuf/x8/dalfox/other tool runs is a FAILED
 session.
 
+GO DEEP, not just wide. Breadth ≠ hunting. Specifically:
+- ffuf with the 238-path list (wordlists/watch_content_medium.txt), on 15–25 live hosts
+  (rotate which ones each day), not 5. Pick hosts by `Http.title`/`tech` (api/admin/portal/
+  gateway/actuator hosts first).
+- When ffuf finds ANYTHING interesting (actuator, /api, admin, a 200 that isn't the SPA
+  shell), STOP and enumerate it fully — don't just note it. e.g. /actuator exposed →
+  curl every actuator sub-endpoint; /api → map it and test authz.
+- FINISH dalfox: run ≤5-URL batches so they complete; "timed out, incomplete" is not a
+  result — re-run the SAME small batch isn't retrying a failure, it's finishing it, but keep
+  it small enough to finish. Drive every reflected lead to a §5e/§11b yes/no.
+- An honest "no finding" is fine ONLY after real depth. If your summary is a list of
+  one-host spot-checks, you went wide and shallow — go back and go deep on 2–3 hosts.
+
 Spring exposure (heapdump/jolokia/actuator) is run by the watch-heavy lane — read those
 Findings in Part 3. ONLY if a specific Spring host's `Http.last_nuclei_run` is stale, run the
 §12 item-1 templates on THAT host DETACHED (nohup + poll). Never a blocking full-list scan.
