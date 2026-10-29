@@ -38,9 +38,11 @@ PROX = 400  # a source this many chars before a sink = plausible flow
 # HTML-injection / code-exec sinks = DOM XSS if an attacker source reaches them.
 SINKS_XSS = re.compile(
     r"\.innerHTML\s*=|\.outerHTML\s*=|document\.write(?:ln)?\s*\(|"
-    r"\.insertAdjacentHTML\s*\(|\beval\s*\(|new\s+Function\s*\(|"
+    r"\.insertAdjacentHTML\s*\(|\beval\s*\(|new\s+(?-i:Function)\s*\(|"  # Function = constructor, case-sensitive (not `new function(`)
     r"setTimeout\s*\(\s*['\"]|setInterval\s*\(\s*['\"]|"
     r"\.html\s*\(|dangerouslySetInnerHTML", re.I)
+# Safe-escape idiom that produces .html() false positives: `.text(x).html()`.
+_ESCAPE_IDIOM = re.compile(r"\.text\s*\([^)]*\)\s*\.html\s*\(")
 # Navigation sinks = DOM open-redirect, or XSS only via a javascript:/data: URI.
 SINKS_NAV = re.compile(
     r"location\s*=|location\.href\s*=|location\.assign\s*\(|location\.replace\s*\(|"
@@ -95,6 +97,9 @@ def scan(url):
         if not near:
             continue
         sink_txt = body[s:m.end()].strip()
+        # skip the safe-escape idiom `.text(x).html()` (a getter, not an injection sink)
+        if ".html" in sink_txt.lower() and _ESCAPE_IDIOM.search(body[max(0, s - 60):m.end() + 5]):
+            continue
         src_txt = near[-1][1]
         is_xss_sink = bool(SINKS_XSS.match(sink_txt)) or bool(SINKS_XSS.search(sink_txt))
         is_strong_src = bool(SOURCES_STRONG.search(src_txt))
