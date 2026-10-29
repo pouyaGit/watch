@@ -147,6 +147,7 @@ confirm step. All 57 `hunt-*` skills live in `/root/skills-src/murrtada/skills/`
 | Signal | Skill |
 |---|---|
 | reflected / stored XSS | `hunt-xss` |
+| XSS reflection that a CSP seems to block | `hunt-csp-bypass` (§11b) |
 | DOM XSS (sink in JS) | `hunt-dom` |
 | CSRF (state-changing, no token) | `hunt-csrf` |
 | clickjacking (framable) | `hunt-clickjacking` |
@@ -582,7 +583,7 @@ Real only when the FULL payload comes back **unencoded as one block**
 the `alert(1)` substring reflected = FP. Let `dalfox` verify, then reproduce by hand.
 Also try the auth/error/search params and non-GET reflections dalfox misses.
 
-**11b. Reflected + CSP — the decision tree (don't give up at the CSP, don't lie about it either).**
+**11b. Reflected + CSP → load `hunt-csp-bypass`. The decision tree (don't give up at the CSP, don't lie about it either).**
 A reflected param with a strict CSP is a MAYBE, not an automatic FP. Work it in order:
 
 1. **Confirm injection context FIRST** (a dead end makes CSP moot). Reflect a unique
